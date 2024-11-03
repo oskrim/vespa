@@ -192,14 +192,14 @@ public class HuggingFaceEmbedder extends AbstractComponent implements Embedder {
         Map<String, Tensor> inputs = new HashMap<>();
         inputs.put(inputIdsName, inputSequence.expand("d0"));
         inputs.put(attentionMaskName, attentionMask.expand("d0"));
-        
+
         if (!tokenTypeIdsName.isEmpty() && !tokenTypeIds.isEmpty()) {
             inputs.put(tokenTypeIdsName, tokenTypeIds.expand("d0"));
         }
 
         Long taskId = getTaskId(context);
         if (taskId != null) {
-            inputs.put(taskIdName, createTensorRepresentation(List.of(taskId), "d0")); 
+            inputs.put(taskIdName, createTensorRepresentation(List.of(taskId), "d0"));
         }
 
         IndexedTensor tokenEmbeddings = (IndexedTensor) evaluator.evaluate(inputs).get(outputName);
@@ -271,4 +271,3 @@ public class HuggingFaceEmbedder extends AbstractComponent implements Embedder {
     protected record HFEmbeddingResult(IndexedTensor output, Tensor attentionMask, String embedderId) {}
     protected record HFEmbedderCacheKey(String embedderId, Object embeddedValue) { }
 }
-

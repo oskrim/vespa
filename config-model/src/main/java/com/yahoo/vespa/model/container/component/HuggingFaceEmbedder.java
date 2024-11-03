@@ -31,6 +31,7 @@ public class HuggingFaceEmbedder extends TypedComponent implements HuggingFaceEm
     private final String transformerInputIds;
     private final String transformerAttentionMask;
     private final String transformerTokenTypeIds;
+    private final String transformerTaskId;
     private final String transformerOutput;
     private final Boolean normalize;
     private final String poolingStrategy;
@@ -39,7 +40,7 @@ public class HuggingFaceEmbedder extends TypedComponent implements HuggingFaceEm
     private Integer documentTaskId;
 
     private String prependQuery;
-    private String prependDocument; 
+    private String prependDocument;
 
     public HuggingFaceEmbedder(ApplicationContainerCluster cluster, Element xml, DeployState state) {
         super("ai.vespa.embedding.huggingface.HuggingFaceEmbedder", INTEGRATION_BUNDLE_NAME, xml);
@@ -55,6 +56,7 @@ public class HuggingFaceEmbedder extends TypedComponent implements HuggingFaceEm
         transformerInputIds = getChildValue(xml, "transformer-input-ids").orElse(null);
         transformerAttentionMask = getChildValue(xml, "transformer-attention-mask").orElse(null);
         transformerTokenTypeIds = getChildValue(xml, "transformer-token-type-ids").orElse(null);
+        transformerTaskId = getChildValue(xml, "transformer-task-id").orElse(null);
         transformerOutput = getChildValue(xml, "transformer-output").orElse(null);
         normalize = getChildValue(xml, "normalize").map(Boolean::parseBoolean).orElse(null);
         poolingStrategy = getChildValue(xml, "pooling-strategy").orElse(null);
@@ -78,6 +80,7 @@ public class HuggingFaceEmbedder extends TypedComponent implements HuggingFaceEm
         if (transformerInputIds != null) b.transformerInputIds(transformerInputIds);
         if (transformerAttentionMask != null) b.transformerAttentionMask(transformerAttentionMask);
         if (transformerTokenTypeIds != null) b.transformerTokenTypeIds(transformerTokenTypeIds);
+        if (transformerTaskId != null) b.transformerTaskId(transformerTaskId);
         if (transformerOutput != null) b.transformerOutput(transformerOutput);
         if (normalize != null) b.normalize(normalize);
         if (poolingStrategy != null) b.poolingStrategy(PoolingStrategy.Enum.valueOf(poolingStrategy));

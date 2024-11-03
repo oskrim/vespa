@@ -83,6 +83,7 @@ public class EmbedderTestCase {
         var cluster = model.getContainerClusters().get("container");
         var embedderCfg = assertHuggingfaceEmbedderComponentPresent(cluster);
         assertEquals("my_input_ids", embedderCfg.transformerInputIds());
+        assertEquals("my_task_id", embedderCfg.transformerTaskId());
         assertEquals("https://my/url/model.onnx", modelReference(embedderCfg, "transformerModel").url().orElseThrow().value());
         assertEquals(1024, embedderCfg.transformerMaxTokens());
         var tokenizerCfg = assertHuggingfaceTokenizerComponentPresent(cluster);
@@ -90,6 +91,8 @@ public class EmbedderTestCase {
         assertEquals(-1, tokenizerCfg.maxLength());
         assertEquals("Represent this sentence for searching relevant passages:", embedderCfg.prependQuery());
         assertEquals("passage:", embedderCfg.prependDocument());
+        assertEquals(1, embedderCfg.queryTaskId());
+        assertEquals(2, embedderCfg.documentTaskId());
     }
 
     @Test

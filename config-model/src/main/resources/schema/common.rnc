@@ -92,15 +92,22 @@ HuggingFaceEmbedder =
    element transformer-input-ids { xsd:string }? &
    element transformer-attention-mask { xsd:string }? &
    element transformer-token-type-ids { xsd:string }? &
+   element transformer-task-id { xsd:string }? &
    element transformer-output { xsd:string }? &
    element normalize { xsd:boolean }? &
    PrependResources? &
+   TaskIdResources? &
    OnnxModelExecutionParams &
    EmbedderPoolingStrategy
 
 PrependResources = element prepend {
   element query { xsd:string }? &
   element document { xsd:string }?
+}
+
+TaskIdResources = element task-id {
+  element query { xsd:nonNegativeInteger }? &
+  element document { xsd:nonNegativeInteger }?
 }
 
 SpladeEmbedder =
