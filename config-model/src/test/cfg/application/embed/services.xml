@@ -10,8 +10,13 @@
       <transformer-input-ids>my_input_ids</transformer-input-ids>
       <transformer-attention-mask>my_attention_mask</transformer-attention-mask>
       <transformer-token-type-ids>my_token_type_ids</transformer-token-type-ids>
+      <transformer-task-id>my_task_id</transformer-task-id>
       <transformer-output>my_output</transformer-output>
       <normalize>true</normalize>
+      <task-id>
+        <query>1</query>
+        <document>2</document>
+      </task-id>
       <prepend>
         <query>Represent this sentence for searching relevant passages:</query>
         <document>passage:</document>
