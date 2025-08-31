@@ -405,4 +405,19 @@ TEST(DocumentFieldExtractorTest, require_that_unknown_field_gives_null_value)
     EXPECT_EQ(WrapValue(), f.extract("unknown"));
 }
 
+TEST(DocumentFieldExtractorTest, require_that_specific_map_key_gives_value)
+{
+    PrimitiveMapFixture f;
+    f.makeDoc({ {"price", 100}, {"quantity", 5}, {"discount", 10} });
+    
+    // Test extracting value for specific key "price"
+    EXPECT_EQ(WrapValue(std::make_unique<IntFieldValue>(100)), f.extract("map{price}"));
+    
+    // Test extracting value for specific key "quantity"  
+    EXPECT_EQ(WrapValue(std::make_unique<IntFieldValue>(5)), f.extract("map{quantity}"));
+    
+    // Test extracting value for non-existent key
+    EXPECT_EQ(WrapValue(), f.extract("map{nonexistent}"));
+}
+
 GTEST_MAIN_RUN_ALL_TESTS()

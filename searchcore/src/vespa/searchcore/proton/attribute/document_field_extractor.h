@@ -31,6 +31,11 @@ class DocumentFieldExtractor
     std::unique_ptr<document::FieldValue> extractKeyFieldFromMap(const document::FieldPath &fieldPath);
     std::unique_ptr<document::FieldValue> extractValueFieldFromPrimitiveMap(const document::FieldPath &fieldPath);
     std::unique_ptr<document::FieldValue> extractValueFieldFromStructMap(const document::FieldPath &fieldPath);
+<<<<<<< Updated upstream
+    std::unique_ptr<document::FieldValue> extractSpecificValueFromMap(const document::FieldPath &fieldPath);
+=======
+    std::unique_ptr<document::FieldValue> extractSpecificKeyValueFromMap(const document::FieldPath &fieldPath);
+>>>>>>> Stashed changes
 
 public:
     DocumentFieldExtractor(const document::Document &doc);

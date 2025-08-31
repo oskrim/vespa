@@ -131,7 +131,8 @@ DocumentFieldExtractor::isSupported(const FieldPath &fieldPath)
     if (fieldPath.size() == 2) {
         if (fieldPath[1].getType() != FieldPathEntry::Type::STRUCT_FIELD &&
             fieldPath[1].getType() != FieldPathEntry::Type::MAP_ALL_KEYS &&
-            fieldPath[1].getType() != FieldPathEntry::Type::MAP_ALL_VALUES) {
+            fieldPath[1].getType() != FieldPathEntry::Type::MAP_ALL_VALUES &&
+            fieldPath[1].getType() != FieldPathEntry::Type::MAP_KEY) {
             return false;
         }
     } else if (fieldPath.size() == 3) {
@@ -232,6 +233,45 @@ DocumentFieldExtractor::extractValueFieldFromStructMap(const FieldPath &fieldPat
                                                            [](const auto *elem){ return elem->second; });
 }
 
+std::unique_ptr<document::FieldValue>
+<<<<<<< Updated upstream
+DocumentFieldExtractor::extractSpecificValueFromMap(const FieldPath &fieldPath)
+{
+    const auto *outerFieldValue = getCachedFieldValue(fieldPath[0]);
+    if (!outerFieldValue || !outerFieldValue->isA(FieldValue::Type::MAP)) {
+        return std::unique_ptr<FieldValue>();
+    }
+    
+    const auto *outerMap = static_cast<const MapFieldValue *>(outerFieldValue);
+    const auto &lookupKey = fieldPath[1].getLookupKey();
+    
+    // Find the specific key in the map and return its value
+    for (const auto &mapElem : *outerMap) {
+        if (mapElem.first->equals(lookupKey)) {
+            return mapElem.second->clone();
+        }
+    }
+    
+    // Key not found, return null/undefined value
+=======
+DocumentFieldExtractor::extractSpecificKeyValueFromMap(const FieldPath &fieldPath)
+{
+    const FieldValue *mapFieldValue = getCachedFieldValue(fieldPath[0]);
+    if (mapFieldValue && mapFieldValue->isA(FieldValue::Type::MAP)) {
+        const auto *outerMap = static_cast<const MapFieldValue *>(mapFieldValue);
+        const FieldPathEntry &keyEntry = fieldPath[1];
+        const FieldValue &lookupKey = keyEntry.getLookupKey();
+        
+        for (const auto &mapElem : *outerMap) {
+            if (mapElem.first->compare(lookupKey) == 0) {
+                return std::unique_ptr<FieldValue>(mapElem.second->clone());
+            }
+        }
+    }
+>>>>>>> Stashed changes
+    return std::unique_ptr<FieldValue>();
+}
+
 std::unique_ptr<FieldValue>
 DocumentFieldExtractor::getFieldValue(const FieldPath &fieldPath)
 {
@@ -243,6 +283,12 @@ DocumentFieldExtractor::getFieldValue(const FieldPath &fieldPath)
             return extractFieldFromStructArray(fieldPath);
         } else if (lastElemType == FieldPathEntry::Type::MAP_ALL_KEYS) {
             return extractKeyFieldFromMap(fieldPath);
+        } else if (lastElemType == FieldPathEntry::Type::MAP_KEY) {
+<<<<<<< Updated upstream
+            return extractSpecificValueFromMap(fieldPath);
+=======
+            return extractSpecificKeyValueFromMap(fieldPath);
+>>>>>>> Stashed changes
         } else {
             return extractValueFieldFromPrimitiveMap(fieldPath);
         }
