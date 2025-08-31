@@ -199,7 +199,9 @@ FastS_SortSpec::Add(IAttributeContext & vecMan, const FieldSortSpec & field_sort
         }
     }
 
-    auto sort_blob_writer = make_sort_blob_writer(vector, field_sort_spec);
+    std::unique_ptr<search::attribute::ISortBlobWriter> sort_blob_writer;
+    sort_blob_writer = make_sort_blob_writer(vector, field_sort_spec);
+    
     if (vector != nullptr && !sort_blob_writer) {
         return false;
     }
