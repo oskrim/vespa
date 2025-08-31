@@ -68,18 +68,22 @@ public:
         ASC_RANK    = 2,
         DESC_RANK   = 3,
         ASC_DOCID   = 4,
-        DESC_DOCID  = 5
+        DESC_DOCID  = 5,
+        ASC_FIELDPATH = 6,
+        DESC_FIELDPATH = 7
     };
 
     struct VectorRef
     {
         VectorRef(uint32_t type, const search::attribute::IAttributeVector * vector,
                   std::unique_ptr<search::attribute::ISortBlobWriter> writer) noexcept;
+        VectorRef(uint32_t type, std::string fieldpath_spec) noexcept;
         uint32_t                 _type;
         const search::attribute::IAttributeVector *_vector;
         std::unique_ptr<search::attribute::ISortBlobWriter> _writer;
+        std::string              _fieldpath_spec;
         bool has_ascending_sort_order() const {
-            return _type == ASC_VECTOR || _type == ASC_RANK || _type == ASC_DOCID;
+            return _type == ASC_VECTOR || _type == ASC_RANK || _type == ASC_DOCID || _type == ASC_FIELDPATH;
         }
     };
 

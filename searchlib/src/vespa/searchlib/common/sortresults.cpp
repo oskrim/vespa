@@ -168,7 +168,16 @@ FastS_SortSpec::VectorRef::VectorRef(uint32_t type, const search::attribute::IAt
                                      std::unique_ptr<search::attribute::ISortBlobWriter> writer) noexcept
     : _type(type),
       _vector(vector),
-      _writer(std::move(writer))
+      _writer(std::move(writer)),
+      _fieldpath_spec()
+{
+}
+
+FastS_SortSpec::VectorRef::VectorRef(uint32_t type, std::string fieldpath_spec) noexcept
+    : _type(type),
+      _vector(nullptr),
+      _writer(nullptr),
+      _fieldpath_spec(std::move(fieldpath_spec))
 {
 }
 
@@ -187,6 +196,17 @@ FastS_SortSpec::Add(IAttributeContext & vecMan, const FieldSortSpec & field_sort
         type = (field_sort_spec.is_ascending()) ? ASC_DOCID : DESC_DOCID;
         vector = vecMan.getAttribute(_documentmetastore);
     } else {
+        // Check if this is a fieldpath expression (contains curly braces for map keys)
+        if (field_sort_spec._field.find('{') != std::string::npos) {
+            type = (field_sort_spec.is_ascending()) ? ASC_FIELDPATH : DESC_FIELDPATH;
+            
+            LOG(spam, "SortSpec: adding fieldpath (%s)'%s'",
+                (field_sort_spec.is_ascending()) ? "+" : "-", field_sort_spec._field.c_str());
+
+            _vectors.emplace_back(type, field_sort_spec._field);
+            return true;
+        }
+        
         type = (field_sort_spec.is_ascending()) ? ASC_VECTOR : DESC_VECTOR;
         vector = vecMan.getAttribute(field_sort_spec._field);
         if ( !vector) {
@@ -199,7 +219,9 @@ FastS_SortSpec::Add(IAttributeContext & vecMan, const FieldSortSpec & field_sort
         }
     }
 
-    auto sort_blob_writer = make_sort_blob_writer(vector, field_sort_spec);
+    std::unique_ptr<search::attribute::ISortBlobWriter> sort_blob_writer;
+    sort_blob_writer = make_sort_blob_writer(vector, field_sort_spec);
+    
     if (vector != nullptr && !sort_blob_writer) {
         return false;
     }
@@ -301,6 +323,12 @@ FastS_SortSpec::initSortData(const VectorRef & vec, const RankedHit & hit, size_
                 break;
             case DESC_VECTOR:
                 written = vec._writer->write(hit.getDocId(), mySortData, available);
+                break;
+            case ASC_FIELDPATH:
+            case DESC_FIELDPATH:
+                // For now, fieldpath expressions need document-aware sorting
+                // This is a placeholder - full implementation requires document access
+                written = 0; // No sorting data for fieldpath expressions yet
                 break;
         }
         if (written < 0) {

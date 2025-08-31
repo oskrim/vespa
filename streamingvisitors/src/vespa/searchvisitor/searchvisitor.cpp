@@ -18,6 +18,7 @@
 #include <vespa/searchcommon/attribute/i_sort_blob_writer.h>
 #include <vespa/searchlib/aggregation/modifiers.h>
 #include <vespa/searchlib/attribute/make_sort_blob_writer.h>
+using search::attribute::make_fieldpath_sort_blob_writer;
 #include <vespa/searchlib/attribute/single_raw_ext_attribute.h>
 #include <vespa/searchlib/common/packets.h>
 #include <vespa/searchlib/features/setup.h>
@@ -1013,34 +1014,66 @@ SearchVisitor::setupAttributeVectorsForSorting(const search::common::SortSpec & 
 {
     if ( ! sortList.empty() ) {
         for (const search::common::FieldSortSpec & field_sort_spec : sortList) {
-            vsm::FieldIdT fid = _fieldSearchSpecMap.nameIdMap().fieldNo(field_sort_spec._field);
-            if ( fid != StringFieldIdTMap::npos ) {
-                AttributeGuard::UP attr(_attrMan.getAttribute(field_sort_spec._field));
-                if (attr->valid()) {
-                    if (attr->get()->is_sortable()) {
-                        size_t index(_attributeFields.size());
-                        auto sort_blob_writer = make_sort_blob_writer(attr->get(), field_sort_spec);
-                        if (!sort_blob_writer) {
-                            continue;
-                        }
-                        for (size_t j(0); j < index; j++) {
-                            if ((_attributeFields[j]._field == fid) && notContained(_sortList, j)) {
-                                index = j;
+            // Check if this is a FieldPath (contains {...} syntax)
+            size_t open_brace = field_sort_spec._field.find('{');
+            if (open_brace != std::string::npos && field_sort_spec._field.find('}', open_brace) != std::string::npos) {
+                // FieldPath: extract key from {...} syntax
+                size_t close_brace = field_sort_spec._field.find('}', open_brace);
+                std::string key = field_sort_spec._field.substr(open_brace + 1, close_brace - open_brace - 1);
+                
+                // Get key and value attributes for the map
+                std::string base_attr = field_sort_spec._field.substr(0, open_brace);
+                AttributeGuard::UP keyAttr(_attrMan.getAttribute(base_attr + ".key"));
+                AttributeGuard::UP valueAttr(_attrMan.getAttribute(base_attr + ".value"));
+                
+                if (!keyAttr->valid() || !valueAttr->valid()) {
+                    Issue::report("FieldPath '%s' requires both .key and .value attributes. Skipped in sorting", 
+                                 field_sort_spec._field.c_str());
+                    continue;
+                }
+                
+                auto sort_blob_writer = make_fieldpath_sort_blob_writer(keyAttr->get(), valueAttr->get(), key, field_sort_spec);
+                if (!sort_blob_writer) {
+                    continue;
+                }
+                
+                // Use a synthetic field id for FieldPath sorting
+                vsm::FieldIdT fid = StringFieldIdTMap::npos - _attributeFields.size();
+                size_t index(_attributeFields.size());
+                _attributeFields.emplace_back(fid, std::move(valueAttr)); // Store value attribute as primary
+                _attributeFields[index]._sort_blob_writer = std::move(sort_blob_writer);
+                _sortList.push_back(index);
+            } else {
+                // Regular attribute handling
+                vsm::FieldIdT fid = _fieldSearchSpecMap.nameIdMap().fieldNo(field_sort_spec._field);
+                if ( fid != StringFieldIdTMap::npos ) {
+                    AttributeGuard::UP attr(_attrMan.getAttribute(field_sort_spec._field));
+                    if (attr->valid()) {
+                        if (attr->get()->is_sortable()) {
+                            size_t index(_attributeFields.size());
+                            auto sort_blob_writer = make_sort_blob_writer(attr->get(), field_sort_spec);
+                            if (!sort_blob_writer) {
+                                continue;
                             }
+                            for (size_t j(0); j < index; j++) {
+                                if ((_attributeFields[j]._field == fid) && notContained(_sortList, j)) {
+                                    index = j;
+                                }
+                            }
+                            if (index == _attributeFields.size()) {
+                                _attributeFields.emplace_back(fid, std::move(attr));
+                            }
+                            _attributeFields[index]._sort_blob_writer = std::move(sort_blob_writer);
+                            _sortList.push_back(index);
+                        } else {
+                            Issue::report("Attribute '%s' is not sortable", field_sort_spec._field.c_str());
                         }
-                        if (index == _attributeFields.size()) {
-                            _attributeFields.emplace_back(fid, std::move(attr));
-                        }
-                        _attributeFields[index]._sort_blob_writer = std::move(sort_blob_writer);
-                        _sortList.push_back(index);
                     } else {
-                        Issue::report("Attribute '%s' is not sortable", field_sort_spec._field.c_str());
+                        Issue::report("Attribute '%s' is not valid", field_sort_spec._field.c_str());
                     }
                 } else {
-                    Issue::report("Attribute '%s' is not valid", field_sort_spec._field.c_str());
+                    Issue::report("Cannot locate field '%s' in field name registry", field_sort_spec._field.c_str());
                 }
-            } else {
-                Issue::report("Cannot locate field '%s' in field name registry", field_sort_spec._field.c_str());
             }
         }
     } else {
