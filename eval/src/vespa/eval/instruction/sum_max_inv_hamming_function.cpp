@@ -62,7 +62,7 @@ void my_max_sum_max_inv_hamming_op(InterpretedFunction::State& state, uint64_t p
         state.pop_pop_push(state.stash.create<DoubleValue>(0.0));
         return;
     }
-    double result = aggr::Max<double>::null_value();
+    float result = aggr::Max<float>::null_value();
     std::unordered_map<uint32_t, size_t> chunk_indexes;
     std::vector<size_t> best_distances;
     size_t num_chunks = 0;
@@ -91,15 +91,15 @@ void my_max_sum_max_inv_hamming_op(InterpretedFunction::State& state, uint64_t p
         }
     }
     if (num_chunks == 0) {
-        result = 0.0;
+        result = 0.0f;
     }
     for (size_t chunk_idx = 0; chunk_idx < num_chunks; ++chunk_idx) {
-        double chunk_score = 0.0;
+        float chunk_score = 0.0f;
         const size_t* chunk_distances = best_distances.data() + (chunk_idx * query_vectors);
         for (size_t query_idx = 0; query_idx < query_vectors; ++query_idx) {
             chunk_score += 1.0f / (1.0f + chunk_distances[query_idx]);
         }
-        result = aggr::Max<double>::combine(result, chunk_score);
+        result = aggr::Max<float>::combine(result, chunk_score);
     }
     state.pop_pop_push(state.stash.create<DoubleValue>(result));
 }

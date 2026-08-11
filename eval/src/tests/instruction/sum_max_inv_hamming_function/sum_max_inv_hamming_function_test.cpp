@@ -186,6 +186,20 @@ TEST(SumMaxInvHamming, chunked_optimization_works_with_empty_tensors) {
     assert_chunked_optimized(empty_query, empty_document, 7, 0);
 }
 
+TEST(SumMaxInvHamming, chunked_optimization_preserves_generic_float_accumulation) {
+    auto many_query_vectors = GenSpec::from_desc("x32_1z16").cells(CellType::INT8).seq(Seq({0}));
+    auto one_document_vector = GenSpec::from_desc("c1_1y1_1z16")
+                                   .cells(CellType::INT8)
+                                   .seq(Seq({3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}));
+    EvalFixture::ParamRepo param_repo;
+    param_repo.add("a", many_query_vectors);
+    param_repo.add("b", one_document_vector);
+    EvalFixture generic_fixture(prod_factory, chunked_expr, param_repo, false);
+    EvalFixture fused_fixture(prod_factory, chunked_expr, param_repo, true);
+    EXPECT_EQ(fused_fixture.result(), generic_fixture.result());
+    EXPECT_EQ(fused_fixture.find_all<MaxSumMaxInvHammingFunction>().size(), 1);
+}
+
 TEST(SumMaxInvHamming, chunked_optimization_requires_exact_supported_types) {
     assert_chunked_not_optimized(query, make_spec("c2y5_1z7", CellType::INT8));
     assert_chunked_not_optimized(query, make_spec("c2_1y5z7", CellType::INT8));
