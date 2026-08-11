@@ -3,7 +3,7 @@
 #include "sum_max_inv_hamming_function.h"
 
 #include <vespa/eval/eval/value.h>
-#include <vespa/vespalib/util/binary_hamming_distance.h>
+#include <vespa/vespalib/hwaccelerated/functions.h>
 
 #include <algorithm>
 #include <array>
@@ -33,7 +33,8 @@ void my_sum_max_inv_hamming_op(InterpretedFunction::State& state, uint64_t vec_s
             for (const int8_t* document = document_cells.data();
                  document < document_cells.data() + document_cells.size(); document += vec_size)
             {
-                float my_inv_hamming = 1.0f / (1.0f + binary_hamming_distance(query, document, vec_size));
+                float my_inv_hamming =
+                        1.0f / (1.0f + hwaccelerated::binary_hamming_distance(query, document, vec_size));
                 max_inv_hamming = aggr::Max<float>::combine(max_inv_hamming, my_inv_hamming);
             }
             result += max_inv_hamming;
@@ -84,9 +85,9 @@ void my_max_sum_max_inv_hamming_op(InterpretedFunction::State& state, uint64_t p
         for (size_t query_idx = 0; query_idx < query_vectors; ++query_idx) {
             if (chunk_distances[query_idx] != 0) {
                 const int8_t* query_vector = query_cells.data() + (query_idx * params.vec_size);
-                chunk_distances[query_idx] = std::min(chunk_distances[query_idx],
-                                                      binary_hamming_distance(query_vector, document_vector,
-                                                                              params.vec_size));
+                chunk_distances[query_idx] =
+                        std::min(chunk_distances[query_idx],
+                                 hwaccelerated::binary_hamming_distance(query_vector, document_vector, params.vec_size));
             }
         }
     }
