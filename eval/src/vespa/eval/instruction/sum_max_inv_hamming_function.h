@@ -42,4 +42,39 @@ public:
     static const TensorFunction& optimize(const TensorFunction& expr, Stash& stash);
 };
 
+/**
+ * Chunk-aware version of SumMaxInvHammingFunction producing the
+ * maximum score across chunks without materializing intermediate
+ * tensors.
+ *
+ * inputs:
+ *   query:    tensor<int8>(qt{},x[32])
+ *   document: tensor<int8>(chunk{},dt{},x[32])
+ *
+ * expression:
+ *   reduce(
+ *     reduce(
+ *       reduce(
+ *         1/(1+reduce(hamming(query, document), sum, x)),
+ *         max, dt
+ *       ),
+ *       sum, qt
+ *     ),
+ *     max, chunk
+ *   )
+ **/
+class MaxSumMaxInvHammingFunction : public tensor_function::Op2 {
+private:
+    size_t _vec_size;
+    size_t _chunk_dimension;
+
+public:
+    MaxSumMaxInvHammingFunction(const ValueType& res_type_in, const TensorFunction& query,
+                                const TensorFunction& document, size_t vec_size, size_t chunk_dimension);
+    InterpretedFunction::Instruction compile_self(const ValueBuilderFactory& factory, Stash& stash) const override;
+    size_t vec_size() const { return _vec_size; }
+    size_t chunk_dimension() const { return _chunk_dimension; }
+    bool result_is_mutable() const override { return true; }
+};
+
 } // namespace vespalib::eval
