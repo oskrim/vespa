@@ -19,6 +19,7 @@ import com.yahoo.tensor.TensorType;
 import com.yahoo.tensor.Tensors;
 import com.yahoo.text.Text;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.logging.Logger;
@@ -42,17 +43,20 @@ public class HuggingFaceEmbedder extends AbstractComponent implements Embedder {
     private final HuggingFaceTokenizer tokenizer;
     private final OnnxEvaluator evaluator;
     private final TextPrepender prepender;
+    private final int queryTaskId;
+    private final int documentTaskId;
 
-    record ModelAnalysis(int numInputs,
-                         String inputIdsName,
+    record ModelAnalysis(String inputIdsName,
                          String attentionMaskName,
                          String tokenTypeIdsName,
+                         String taskIdName,
                          String outputName,
                          int outputDimensions,
                          PoolingStrategy poolingStrategy)
     {
         boolean useAttentionMask() { return ! attentionMaskName.isEmpty(); }
         boolean useTokenTypeIds() { return ! tokenTypeIdsName.isEmpty(); }
+        boolean useTaskId() { return ! taskIdName.isEmpty(); }
     }
 
     static ModelAnalysis analyze(OnnxEvaluator evaluator, HuggingFaceEmbedderConfig config) {
@@ -61,16 +65,19 @@ public class HuggingFaceEmbedder extends AbstractComponent implements Embedder {
         String inputIdsName = config.transformerInputIds();
         String attentionMaskName = "";
         String tokenTypeIdsName = "";
+        String taskIdName = config.transformerTaskId();
+        int standardInputs = numInputs - (taskIdName.isEmpty() ? 0 : 1);
         validateName(inputs, inputIdsName, "input");
+        if ( ! taskIdName.isEmpty()) validateName(inputs, taskIdName, "input");
         // some new models have only 1 input
-        if (numInputs > 1) {
+        if (standardInputs > 1) {
             attentionMaskName = config.transformerAttentionMask();
             validateName(inputs, attentionMaskName, "input");
             // newer models have only 2 inputs (they do not use token type IDs)
-            if (numInputs > 2) {
+            if (standardInputs > 2) {
                 tokenTypeIdsName = config.transformerTokenTypeIds();
                 validateName(inputs, tokenTypeIdsName, "input");
-                if (numInputs > 3) {
+                if (standardInputs > 3) {
                     throw new IllegalArgumentException("Model needs more than 3 inputs: " + inputs.keySet());
                 }
             }
@@ -91,10 +98,10 @@ public class HuggingFaceEmbedder extends AbstractComponent implements Embedder {
         } else {
             throw new IllegalArgumentException("Expected 2 or 3 output dimensions for '" + outputName + "', but got type: " + outputs.get(outputName));
         }
-        return new ModelAnalysis(numInputs,
-                                 inputIdsName,
+        return new ModelAnalysis(inputIdsName,
                                  attentionMaskName,
                                  tokenTypeIdsName,
+                                 taskIdName,
                                  outputName,
                                  outputDimensions,
                                  poolingStrategy);
@@ -112,6 +119,8 @@ public class HuggingFaceEmbedder extends AbstractComponent implements Embedder {
         this.analysis = analyze(evaluator, embedderConfig);
         normalize = embedderConfig.normalize();
         prepender = new TextPrepender(embedderConfig.prependQuery(), embedderConfig.prependDocument());
+        queryTaskId = embedderConfig.queryTaskId();
+        documentTaskId = embedderConfig.documentTaskId();
         var tokenizerPath = modelHelper.getModelPathResolvingIfNecessary(embedderConfig.tokenizerPathReference());
         var builder = new HuggingFaceTokenizer.Builder()
                 .addSpecialTokens(true)
@@ -170,7 +179,10 @@ public class HuggingFaceEmbedder extends AbstractComponent implements Embedder {
     }
 
     private HuggingFaceEmbedder.HFEmbeddingResult lookupOrEvaluate(Context context, String text) {
-        var key = new HFEmbedderCacheKey(context.getEmbedderId(), text);
+        Object cacheValue = analysis.useTaskId()
+                ? new TaskScopedInput(text, taskId(context, queryTaskId, documentTaskId))
+                : text;
+        var key = new HFEmbedderCacheKey(context.getEmbedderId(), cacheValue);
         return context.computeCachedValueIfAbsent(key, () -> evaluate(context, text));
     }
 
@@ -180,20 +192,16 @@ public class HuggingFaceEmbedder extends AbstractComponent implements Embedder {
         runtime.sampleSequenceLength(encoding.ids().size(), context);
         Tensor inputSequence = createTensorRepresentation(encoding.ids(), "d1").expand("d0");
         Tensor attentionMask = createTensorRepresentation(encoding.attentionMask(), "d1").expand("d0");
-        Map<String, Tensor> inputs;
+        Map<String, Tensor> inputs = new HashMap<>();
+        inputs.put(analysis.inputIdsName(), inputSequence);
         if (analysis.useAttentionMask()) {
-             if (analysis.useTokenTypeIds()) {
-                 Tensor tokenTypeIds = createTensorRepresentation(encoding.typeIds(), "d1").expand("d0");
-                 inputs = Map.of(analysis.inputIdsName(), inputSequence,
-                                 analysis.attentionMaskName(), attentionMask,
-                                 analysis.tokenTypeIdsName(), tokenTypeIds);
-             } else {
-                 inputs = Map.of(analysis.inputIdsName(), inputSequence,
-                                 analysis.attentionMaskName, attentionMask);
-             }
-        } else {
-            inputs = Map.of(analysis.inputIdsName(), inputSequence);
+            inputs.put(analysis.attentionMaskName(), attentionMask);
         }
+        if (analysis.useTokenTypeIds()) {
+            Tensor tokenTypeIds = createTensorRepresentation(encoding.typeIds(), "d1").expand("d0");
+            inputs.put(analysis.tokenTypeIdsName(), tokenTypeIds);
+        }
+        addTaskIdInput(inputs, analysis.taskIdName(), context, queryTaskId, documentTaskId);
         IndexedTensor tokenEmbeddings = (IndexedTensor) evaluator
                 .evaluate(inputs, OnnxEmbedderTimeout.remainingOrThrow(context))
                 .get(analysis.outputName());
@@ -205,6 +213,18 @@ public class HuggingFaceEmbedder extends AbstractComponent implements Embedder {
         }
         runtime.sampleEmbeddingLatency((System.nanoTime() - start)/1_000_000d, context);
         return new HFEmbeddingResult(tokenEmbeddings, attentionMask, context.getEmbedderId());
+    }
+
+    static void addTaskIdInput(Map<String, Tensor> inputs, String taskIdName, Context context,
+                               int queryTaskId, int documentTaskId) {
+        if (taskIdName.isEmpty()) return;
+        inputs.put(taskIdName, createTensorRepresentation(List.of(taskId(context, queryTaskId, documentTaskId)), "d0"));
+    }
+
+    private static long taskId(Context context, int queryTaskId, int documentTaskId) {
+        if (context.getDestination().startsWith("query") && queryTaskId >= 0) return queryTaskId;
+        if (documentTaskId >= 0) return documentTaskId;
+        throw new IllegalArgumentException("No task id configured for destination '" + context.getDestination() + "'");
     }
 
     private Tensor binaryQuantization(HuggingFaceEmbedder.HFEmbeddingResult embeddingResult, TensorType targetType) {
@@ -228,7 +248,7 @@ public class HuggingFaceEmbedder extends AbstractComponent implements Embedder {
         return packedResult;
     }
 
-    private IndexedTensor createTensorRepresentation(List<Long> input, String dimension) {
+    private static IndexedTensor createTensorRepresentation(List<Long> input, String dimension) {
         int size = input.size();
         TensorType type = new TensorType.Builder(TensorType.Value.FLOAT).indexed(dimension, size).build();
         IndexedTensor.Builder builder = IndexedTensor.Builder.of(type);
@@ -239,6 +259,7 @@ public class HuggingFaceEmbedder extends AbstractComponent implements Embedder {
     }
 
     protected record HFEmbeddingResult(IndexedTensor output, Tensor attentionMask, String embedderId) {}
+    protected record TaskScopedInput(String text, long taskId) {}
     protected record HFEmbedderCacheKey(String embedderId, Object embeddedValue) { }
 
 }

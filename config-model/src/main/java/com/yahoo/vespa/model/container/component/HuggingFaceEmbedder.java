@@ -10,6 +10,7 @@ import org.w3c.dom.Element;
 import java.util.Set;
 
 import static com.yahoo.embedding.huggingface.HuggingFaceEmbedderConfig.PoolingStrategy;
+import static com.yahoo.text.XML.getChild;
 import static com.yahoo.text.XML.getChildValue;
 import static com.yahoo.vespa.model.container.component.EmbedderPrependConfig.parsePrependElement;
 import static com.yahoo.vespa.model.container.ContainerModelEvaluation.INTEGRATION_BUNDLE_NAME;
@@ -29,9 +30,12 @@ public class HuggingFaceEmbedder extends OnnxEmbedder implements HuggingFaceEmbe
     private final String transformerInputIds;
     private final String transformerAttentionMask;
     private final String transformerTokenTypeIds;
+    private final String transformerTaskId;
     private final String transformerOutput;
     private final Boolean normalize;
     private final String poolingStrategy;
+    private final Integer queryTaskId;
+    private final Integer documentTaskId;
     private final EmbedderPrependConfig prepend;
 
     public HuggingFaceEmbedder(ApplicationContainerCluster cluster, Element xml, DeployState state) {
@@ -43,10 +47,14 @@ public class HuggingFaceEmbedder extends OnnxEmbedder implements HuggingFaceEmbe
         transformerInputIds = getChildValue(xml, "transformer-input-ids").orElse(null);
         transformerAttentionMask = getChildValue(xml, "transformer-attention-mask").orElse(null);
         transformerTokenTypeIds = getChildValue(xml, "transformer-token-type-ids").orElse(null);
+        transformerTaskId = getChildValue(xml, "transformer-task-id").orElse(null);
         transformerOutput = getChildValue(xml, "transformer-output").orElse(null);
         normalize = getChildValue(xml, "normalize").map(Boolean::parseBoolean).orElse(null);
         poolingStrategy = getChildValue(xml, "pooling-strategy").orElse(null);
         prepend = parsePrependElement(xml);
+        Element taskId = getChild(xml, "task-id");
+        queryTaskId = taskId == null ? null : getChildValue(taskId, "query").map(Integer::parseInt).orElse(null);
+        documentTaskId = taskId == null ? null : getChildValue(taskId, "document").map(Integer::parseInt).orElse(null);
         model.registerOnnxModelCost(cluster, onnxModelOptions);
     }
 
@@ -57,9 +65,12 @@ public class HuggingFaceEmbedder extends OnnxEmbedder implements HuggingFaceEmbe
         if (transformerInputIds != null) b.transformerInputIds(transformerInputIds);
         if (transformerAttentionMask != null) b.transformerAttentionMask(transformerAttentionMask);
         if (transformerTokenTypeIds != null) b.transformerTokenTypeIds(transformerTokenTypeIds);
+        if (transformerTaskId != null) b.transformerTaskId(transformerTaskId);
         if (transformerOutput != null) b.transformerOutput(transformerOutput);
         if (normalize != null) b.normalize(normalize);
         if (poolingStrategy != null) b.poolingStrategy(PoolingStrategy.Enum.valueOf(poolingStrategy));
         if (prepend != null) prepend.applyTo(b::prependQuery, b::prependDocument);
+        if (queryTaskId != null) b.queryTaskId(queryTaskId);
+        if (documentTaskId != null) b.documentTaskId(documentTaskId);
     }
 }

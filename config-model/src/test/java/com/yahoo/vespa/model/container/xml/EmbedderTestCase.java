@@ -83,35 +83,38 @@ public class EmbedderTestCase {
                               "Unknown model id 'my_model_id' on 'model'",
                               true);
     }
-    
+
     @Test
     void huggingfaceEmbedder_selfhosted() throws Exception {
         var model = loadModel(Path.fromString("src/test/cfg/application/embed/"), false);
         var cluster = model.getContainerClusters().get("container");
-        
+
         var embedder = assertHuggingfaceEmbedderComponentPresent(cluster);
         var embedderCfgBuilder = new HuggingFaceEmbedderConfig.Builder();
         embedder.getConfig(embedderCfgBuilder);
         var embedderCfg = embedderCfgBuilder.build();
-        
+
         assertEquals("my_input_ids", embedderCfg.transformerInputIds());
+        assertEquals("my_task_id", embedderCfg.transformerTaskId());
         assertEquals("https://my/url/model.onnx", modelReference(embedderCfg, "transformerModel").url().orElseThrow().value());
         assertEquals(1024, embedderCfg.transformerMaxTokens());
-        
+
         var tokenizer = assertHuggingfaceTokenizerComponentPresent(cluster);
         var tokenizerCfgBuilder = new HuggingFaceTokenizerConfig.Builder();
         tokenizer.getConfig(tokenizerCfgBuilder);
         var tokenizerCfg = tokenizerCfgBuilder.build();
-        
+
         assertEquals("https://my/url/tokenizer.json", modelReference(tokenizerCfg.model().get(0), "path").url().orElseThrow().value());
         assertEquals(-1, tokenizerCfg.maxLength());
         assertEquals("Represent this sentence for searching relevant passages:", embedderCfg.prependQuery());
         assertEquals("passage:", embedderCfg.prependDocument());
-        
+        assertEquals(1, embedderCfg.queryTaskId());
+        assertEquals(2, embedderCfg.documentTaskId());
+
         var onnxCfgBuilder = new OnnxEvaluatorConfig.Builder();
         embedder.getConfig(onnxCfgBuilder);
         var onnxCfg = onnxCfgBuilder.build();
-        
+
         assertEquals(OnnxEvaluatorConfig.ExecutionMode.Enum.parallel, onnxCfg.executionMode());
         assertEquals(10, onnxCfg.intraOpThreads());
         assertEquals(8, onnxCfg.interOpThreads());

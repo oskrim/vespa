@@ -22,7 +22,9 @@ import org.junit.Test;
 
 import java.nio.file.Path;
 import java.time.Instant;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
 
 import static org.junit.Assert.assertNotEquals;
@@ -207,6 +209,21 @@ public class HuggingFaceEmbedderTest {
                 "src/test/models/onnx/transformer/mock_sentence_embedder.onnx"
         )));
         return huggingFaceEmbedder;
+    }
+
+    @Test
+    public void addsDestinationSpecificTaskIdInput() {
+        Map<String, Tensor> queryInputs = new HashMap<>();
+        HuggingFaceEmbedder.addTaskIdInput(queryInputs, "task_id", new Embedder.Context("query.qt"), 3, 7);
+        assertEquals(3.0, queryInputs.get("task_id").get(TensorAddress.of(0)));
+
+        Map<String, Tensor> documentInputs = new HashMap<>();
+        HuggingFaceEmbedder.addTaskIdInput(documentInputs, "task_id", new Embedder.Context("schema.indexing"), 3, 7);
+        assertEquals(7.0, documentInputs.get("task_id").get(TensorAddress.of(0)));
+
+        Map<String, Tensor> regularInputs = new HashMap<>();
+        HuggingFaceEmbedder.addTaskIdInput(regularInputs, "", new Embedder.Context("query.qt"), -1, -1);
+        assertTrue(regularInputs.isEmpty());
     }
 
     private static HuggingFaceEmbedder getEmbedder() {
