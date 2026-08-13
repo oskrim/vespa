@@ -15,7 +15,8 @@ INJECT SchemaParser:
     import com.yahoo.language.simple.SimpleLinguistics;
 
     import com.yahoo.schema.DistributableResource;
-    import com.yahoo.schema.FeatureNames;
+    import com.yahoo.searchlib.ranking.features.FeatureNames;
+    import com.yahoo.search.query.ranking.ElementGap;
     import com.yahoo.schema.OnnxModel;
     import com.yahoo.schema.RankProfile.DiversitySettings;
     import com.yahoo.schema.RankProfile.MatchPhaseSettings;
@@ -124,14 +125,14 @@ INJECT SchemaParser:
             lastConsumedToken = nextToken(lastConsumedToken);
 
             if (lastConsumedToken.getType() == TokenType.LBRACE) {
-                braceLevel++;
+                ++braceLevel;
             }
 
             if(lastConsumedToken.getType() == TokenType.RBRACE) {
-                braceLevel--;
+                --braceLevel;
             }
         }
-        
+
         int endSplit = lastConsumedToken.getEndOffset();
 
         inputString = inputString.substring(startSplit, endSplit);
@@ -164,6 +165,44 @@ INJECT SchemaParser:
         return null;
     }
 
+    // Consumes ranking expression or feature list to be parsed
+    // by the RankingExpressionParser later.
+    //
+    // Note: This implementation allows unlimited nesting of curly braces,
+    //       where the original parser only accepts a finite depth of nesting (because regex cannot count).
+    private SubLanguageData consumeRankingExpression(boolean multiline) {
+        TokenSource tokS = lastConsumedToken.getTokenSource();
+        String inputString = tokS.toString();
+        int startSplit = lastConsumedToken.getEndOffset();
+        int leadingStripped = startSplit - lastConsumedToken.getPrevious().getBeginOffset();
+
+        int braceLevel = (multiline ? 1 : 0);
+
+        while (nextTokenType() != TokenType.EOF) {
+            if (!multiline && nextTokenType() == TokenType.NL) break;
+
+            if (nextTokenType() == TokenType.LBRACE) {
+                ++braceLevel;
+            }
+
+            if (nextTokenType() == TokenType.RBRACE) {
+                --braceLevel;
+            }
+
+            if (multiline && braceLevel <= 0) {
+                // break before consuming token so that
+                // the parser can consume it.
+                break;
+            }
+
+            lastConsumedToken = nextToken(lastConsumedToken);
+        }
+
+        int endSplit = lastConsumedToken.getEndOffset();
+        inputString = inputString.substring(startSplit, endSplit);
+
+        return new SubLanguageData(inputString, leadingStripped);
+    }
 }
 
 INJECT SchemaParserLexer:
@@ -174,7 +213,7 @@ INJECT SchemaParserLexer:
 }
 
 /**
- * The following stores the indexinglanguage script at the AST node 
+ * The following stores the indexinglanguage script at the AST node
  * for parsing later.
  */
 INJECT indexingElm:
@@ -192,36 +231,29 @@ INJECT indexingElm:
     }
 }
 
-/**
- * The following stores feature list string at the AST node 
- * for parsing later
- */
-INJECT featureListElm:
+INJECT consumedExpressionElm:
 {
-    private String featureListString = null;
+    private SubLanguageData expressionData = null;
 
-    public boolean hasFeatureListString() { return featureListString != null; }
-    public String getFeatureListString() { return featureListString; }
+    public String getRankingExpression() {
+        return expressionData == null ? "" : expressionData.content();
+    }
 
-    public void setFeatureListString(String features) {
-        this.featureListString = features;
+    public void setRankingExpressionData(SubLanguageData data) {
+        this.expressionData = data;
     }
 }
 
-/**
- * The following stores rank expression string at the AST node 
- * for parsing later
- */
-INJECT expression:
-
+INJECT consumedFeatureListElm:
 {
-    private String expressionString = null;
+    private SubLanguageData featureListData = null;
 
-    public boolean hasExpressionString() { return expressionString != null; }
-    public String getExpressionString() { return expressionString; }
+    public String getFeatureList() {
+        return featureListData == null ? "" : featureListData.content();
+    }
 
-    public void setExpressionString(String expression) {
-        this.expressionString = expression;
+    public void setFeatureListData(SubLanguageData data) {
+        this.featureListData = data;
     }
 }
 
@@ -265,9 +297,9 @@ INJECT valueType:
  *
  * ParseExceptions are syntactical errors, so storing them is mainly to provide a better indication on
  * where the error occurred (rather than "there is some error in this document").
- * 
+ *
  * IllegalArgumentExceptions come from the Parsed* classes in config-model, these are more semantic errors
- * coming from invalid constructs that can be caught early during parsing. They do however not cover all errors that 
+ * coming from invalid constructs that can be caught early during parsing. They do however not cover all errors that
  * can occur in schemas when deploying an application.
  */
 INJECT Token :
@@ -308,9 +340,9 @@ INJECT Token :
     }
 
     private IllegalArgumentException illegalArgumentException;
-    public IllegalArgumentException getIllegalArguemntException() { return illegalArgumentException; }
+    public IllegalArgumentException getIllegalArgumentException() { return illegalArgumentException; }
 
-    void addIllegalArugmentException(IllegalArgumentException e) {
+    void addIllegalArgumentException(IllegalArgumentException e) {
         illegalArgumentException = e;
     }
 
@@ -359,12 +391,16 @@ TOKEN :
 | < AS: "as" >
 | < INDEXING: "indexing" >
 | < SUMMARY_TO: "summary-to" >
+| < DOCUMENTID: "documentid" >
 | < DOCUMENT_SUMMARY: "document-summary" >
+| < ELEMENT_GAP: "element-gap" >
+| < INFINITY: "infinity" >
 | < RANK_TYPE: "rank-type" >
 | < WEIGHT: "weight" >
 | < TYPE: "type" >
 | < INDEX: "index" >
 | < INPUTS: "inputs">
+| < LINGUISTICS: "linguistics">
 | < MTOKEN: "token" >
 | < TEXT: "text" >
 | < WORD: "word" >
@@ -374,16 +410,23 @@ TOKEN :
 | < MAX_OCCURRENCES: "max-occurrences" >
 | < MAX_TOKEN_LENGTH: "max-token-length" >
 | < PREFIX: "prefix" >
+| < PROFILE: "profile" >
 | < SUBSTRING: "substring" >
 | < SUFFIX: "suffix" >
 | < CONSTANT: "constant">
 | < ONNX_MODEL: "onnx-model">
 | < SIGNIFICANCE: "significance">
 | < USE_MODEL: "use-model">
+| < WEAKAND: "weakand">
+| < STOPWORD_LIMIT: "stopword-limit">
+| < ADJUST_TARGET: "adjust-target">
+| < ALLOW_DROP_ALL: "allow-drop-all">
+| < FILTER_THRESHOLD: "filter-threshold">
 | < INTRAOP_THREADS: "intraop-threads">
 | < INTEROP_THREADS: "interop-threads">
 | < GPU_DEVICE: "gpu-device">
 | < EXECUTION_MODE: "execution-mode">
+| < OPTIMIZE_MODEL: "optimize-model">
 | < PARALLEL: "parallel">
 | < SEQUENTIAL: "sequential">
 | < MODEL: "model" >
@@ -460,6 +503,15 @@ TOKEN :
 | < TENSOR_TYPE: "tensor" ("<" (~["<",">"])+ ">")? "(" (~["(",")"])* ")" >
 | < TENSOR_VALUE_SL: "value" (" ")* ":" (" ")* ("{"<BRACE_SL_LEVEL_1>) ("\n")? >
 | < TENSOR_VALUE_ML: "value" (<SEARCHLIB_SKIP>)? "{" (["\n"," "])* ("{"<BRACE_ML_LEVEL_1>) (["\n"," "])* "}" ("\n")? >
+| < #BRACE_SL_LEVEL_1: (("{"<BRACE_SL_LEVEL_2>)|<BRACE_SL_CONTENT>)* "}" >
+| < #BRACE_SL_LEVEL_2: (("{"<BRACE_SL_LEVEL_3>)|<BRACE_SL_CONTENT>)* "}" >
+| < #BRACE_SL_LEVEL_3: <BRACE_SL_CONTENT> "}" >
+| < #BRACE_ML_LEVEL_1: (("{"<BRACE_ML_LEVEL_2>)|<BRACE_ML_CONTENT>)* "}" >
+| < #BRACE_ML_LEVEL_2: (("{"<BRACE_ML_LEVEL_3>)|<BRACE_ML_CONTENT>)* "}" >
+| < #BRACE_ML_LEVEL_3: <BRACE_ML_CONTENT> "}" >
+| < #BRACE_SL_CONTENT: (~["{","}","\n"])+ >
+| < #BRACE_ML_CONTENT: (~["{","}"])+ >
+| < #SEARCHLIB_SKIP: ([" ","\f","\n","\r","\t"])+ >
 | < LBRACE: "{" >
 | < RBRACE: "}" >
 | < COLON: ":" >
@@ -478,6 +530,7 @@ TOKEN :
 | < ORDER: "order" >
 | < MAX_FILTER_COVERAGE: "max-filter-coverage" >
 | < MAX_HITS: "max-hits" >
+| < TOTAL_MAX_HITS: "total-max-hits" >
 | < FIRST_PHASE: "first-phase" >
 | < SECOND_PHASE: "second-phase" >
 | < GLOBAL_PHASE: "global-phase" >
@@ -497,35 +550,27 @@ TOKEN :
 | < DISTANCE_METRIC: "distance-metric" >
 | < NEIGHBORS_TO_EXPLORE_AT_INSERT: "neighbors-to-explore-at-insert" >
 | < MULTI_THREADED_INDEXING: "multi-threaded-indexing" >
-| < MATCHFEATURES_SL: "match-features" (" ")* ":" (~["}","\n"])* ("\n")? >
-| < MATCHFEATURES_ML: "match-features" (<SEARCHLIB_SKIP>)? "{" (~["}"])* "}" >
-| < MATCHFEATURES_ML_INHERITS: "match-features inherits " (<IDENTIFIER_WITH_DASH>) (<SEARCHLIB_SKIP>)? "{" (~["}"])* "}" >
-| < SUMMARYFEATURES_SL: "summary-features" (" ")* ":" (~["}","\n"])* ("\n")? >
-| < SUMMARYFEATURES_ML: "summary-features" (<SEARCHLIB_SKIP>)? "{" (~["}"])* "}" >
-| < SUMMARYFEATURES_ML_INHERITS: "summary-features inherits " (<IDENTIFIER_WITH_DASH>) (<SEARCHLIB_SKIP>)? "{" (~["}"])* "}" >
-| < RANKFEATURES_SL: "rank-features" (" ")* ":" (~["}","\n"])* ("\n")? >
-| < RANKFEATURES_ML: "rank-features" (<SEARCHLIB_SKIP>)? "{" (~["}"])* "}" >
-| < EXPRESSION_SL: "expression" (" ")* ":" (("{"<BRACE_SL_LEVEL_1>)|<BRACE_SL_CONTENT>)* ("\n")? >
-| < EXPRESSION_ML: "expression" (<SEARCHLIB_SKIP>)? "{" (("{"<BRACE_ML_LEVEL_1>)|<BRACE_ML_CONTENT>)* "}" >
-| < #BRACE_SL_LEVEL_1: (("{"<BRACE_SL_LEVEL_2>)|<BRACE_SL_CONTENT>)* "}" >
-| < #BRACE_SL_LEVEL_2: (("{"<BRACE_SL_LEVEL_3>)|<BRACE_SL_CONTENT>)* "}" >
-| < #BRACE_SL_LEVEL_3: <BRACE_SL_CONTENT> "}" >
-| < #BRACE_SL_CONTENT: (~["{","}","\n"])+ >
-| < #BRACE_ML_LEVEL_1: (("{"<BRACE_ML_LEVEL_2>)|<BRACE_ML_CONTENT>)* "}" >
-| < #BRACE_ML_LEVEL_2: (("{"<BRACE_ML_LEVEL_3>)|<BRACE_ML_CONTENT>)* "}" >
-| < #BRACE_ML_LEVEL_3: <BRACE_ML_CONTENT> "}" >
-| < #BRACE_ML_CONTENT: (~["{","}"])+ >
-| < #SEARCHLIB_SKIP: ([" ","\f","\n","\r","\t"])+ >
+| < MATCH_FEATURES: "match-features" >
+| < SELECT_ELEMENTS_BY: "select-elements-by" >
+| < SUMMARY_FEATURES: "summary-features" >
+| < RANK_FEATURES: "rank-features" >
+| < EXPRESSION: "expression" >
 | < RANK_PROPERTIES: "rank-properties" >
 | < RERANK_COUNT: "rerank-count" >
+| < TOTAL_RERANK_COUNT: "total-rerank-count" >
 | < NUM_THREADS_PER_SEARCH: "num-threads-per-search" >
 | < MIN_HITS_PER_THREAD: "min-hits-per-thread" >
 | < NUM_SEARCH_PARTITIONS: "num-search-partitions" >
 | < TERMWISE_LIMIT: "termwise-limit" >
 | < POST_FILTER_THRESHOLD: "post-filter-threshold" >
 | < APPROXIMATE_THRESHOLD: "approximate-threshold" >
+| < FILTER_FIRST_THRESHOLD: "filter-first-threshold" >
+| < FILTER_FIRST_EXPLORATION: "filter-first-exploration" >
+| < EXPLORATION_SLACK: "exploration-slack" >
+| < PREFETCH_TENSORS: "prefetch-tensors" >
 | < TARGET_HITS_MAX_ADJUSTMENT_FACTOR: "target-hits-max-adjustment-factor" >
 | < KEEP_RANK_COUNT: "keep-rank-count" >
+| < TOTAL_KEEP_RANK_COUNT: "total-keep-rank-count" >
 | < RANK_SCORE_DROP_LIMIT: "rank-score-drop-limit" >
 | < CONSTANTS: "constants" >
 | < FILE: "file" >
@@ -544,9 +589,9 @@ TOKEN :
 | < URI_PATH: <HTTP> <COLON> ("//")? (["a"-"z","A"-"Z","0"-"9","_","-", "/", ".",":"])+ >
 | < LESSTHAN: "<" >
 | < GREATERTHAN: ">" >
+| < INPUT: "input" >
+| < OUTPUT: "output" >
 | < VARIABLE: "$" <IDENTIFIER> >
-| < ONNX_INPUT_SL: "input" (" ")* (<IDENTIFIER>|<DOUBLEQUOTEDSTRING>) (" ")* ":" (" ")* (~["\n"])* ("\n")? >
-| < ONNX_OUTPUT_SL: "output" (" ")* (<IDENTIFIER>|<DOUBLEQUOTEDSTRING>) (" ")* ":" (" ")* (~["\n"])* ("\n")? >
 ;
 
 
@@ -580,7 +625,7 @@ ParsedSchema Root :
  * This rule should only be used for parsing *.profile files.
  */
 void RootRankProfile : { }
-    (<NL>)* rankProfile(null) (<NL>)* <EOF>
+    (<NL>)* rankProfile(null, null) (<NL>)* <EOF>
 ;
 
 
@@ -612,13 +657,14 @@ ParsedSchema rootSchema :
  * @param schema the schema object to modify.
  */
 rootSchemaItem(ParsedSchema schema) : {}
-    ( 
+    (
         documentElm(schema)
+       | documentIdElm(schema)
        | rawAsBase64(schema)
        | searchStemming(schema)
        | importField(schema)
        | rankingConstant(schema) // Deprecated: TODO: Vespa > 8: Emit warning
-       | rankProfile(schema)
+       | rankProfile(schema, null)
        | documentSummary(schema)
        | fieldOutsideDoc(schema)
        | indexOutsideDoc(schema)
@@ -639,7 +685,7 @@ ParsedSchema rootDocument() :
 {
     ParsedSchema schema = null;
 }
- 
+
     ( (schema = rootDocumentItem(schema) | <NL>)*<EOF> )
     {
         return schema;
@@ -655,7 +701,7 @@ ParsedSchema rootDocumentItem(ParsedSchema schema) :
 {
     ParsedDocument doc = null;
 }
- 
+
     ( doc = namedDocument() {
         if (schema == null) schema = new ParsedSchema(doc.name());
         schema.addDocument(doc);
@@ -687,7 +733,7 @@ void documentElm(ParsedSchema schema) :
         try {
             schema.addDocument(document);
         } catch (IllegalArgumentException e) {
-            beginToken.addIllegalArugmentException(e);
+            beginToken.addIllegalArgumentException(e);
         }
     }
 ;
@@ -700,10 +746,10 @@ ParsedDocument namedDocument() :
     String name;
     ParsedDocument document;
 }
- 
+
     ( <DOCUMENT> name = identifierStr() (<NL>)* { document = new ParsedDocument(name); }
       [ inheritsDocument(document) (<NL>)* ]
-      <LBRACE> (<NL>)* (documentBodyElm(document) | <NL>)* <RBRACE> )
+      openLbrace() (documentBodyElm(document) | <NL>)* <RBRACE> )
     {
         return document;
     }
@@ -727,7 +773,7 @@ void rawAsBase64(ParsedSchema schema) :
 {
     boolean enabled = false;
 }
- 
+
     <RAW_AS_BASE64_IN_SUMMARY>
     {
         enabled = true;
@@ -747,7 +793,7 @@ void inheritsStruct(ParsedStruct struct) :
 {
     String name;
 }
- 
+
     <INHERITS> name = identifierStr() { struct.inherit(name); }
     ( <COMMA>  name = identifierStr() { struct.inherit(name); } )*
 ;
@@ -761,7 +807,7 @@ void inheritsDocument(ParsedDocument document) :
 {
     String name;
 }
- 
+
     <INHERITS> name = identifierStr() { document.inherit(name); }
     ( <COMMA>  name = identifierStr() { document.inherit(name); } )*
 ;
@@ -782,7 +828,7 @@ void fieldInsideDoc(ParsedDocument document) :
             document.addField(field);
         } catch (IllegalArgumentException e) {
             // This exception is due to a duplicate name
-            beginToken.getNext().addIllegalArugmentException(e);
+            beginToken.getNext().addIllegalArgumentException(e);
         }
     }
 ;
@@ -814,7 +860,7 @@ ParsedField fieldElm() :
     {
         if (Schema.isReservedName(name.toLowerCase())) {
             lastConsumedToken.addParseException(new ParseException(
-                "Reserved name '" + lastConsumedToken.toString() + "' can not be used as a field name.",
+                "Reserved name '" + lastConsumedToken.toString() + "' cannot be used as a field name.",
                 lastConsumedToken,
                 parsingStack
             ));
@@ -874,7 +920,7 @@ void annotationOutside(ParsedSchema schema) :
     String name;
     ParsedAnnotation type;
 }
- 
+
     <ANNOTATION> name = identifierStr() { type = new ParsedAnnotation(name); }
     [ inheritsAnnotation(type) (<NL>)* ]
     openLbrace() annotationBody(type) <RBRACE>
@@ -893,7 +939,7 @@ void annotationElm(ParsedDocument document) :
     String name;
     ParsedAnnotation type;
 }
- 
+
     <ANNOTATION> name = identifierStr() { type = new ParsedAnnotation(name); }
     [ inheritsAnnotation(type) (<NL>)* ]
     openLbrace() annotationBody(type) <RBRACE>
@@ -910,7 +956,7 @@ void annotationBody(ParsedAnnotation type) :
     ParsedStruct struct = new ParsedStruct("annotation." + type.name());
     boolean seenField = false;
 }
- 
+
     (structFieldDefinition(struct) { seenField = true; } (<NL>)*)*
     {
         if (seenField) type.setStruct(struct);
@@ -921,7 +967,7 @@ void inheritsAnnotation(ParsedAnnotation annotation) :
 {
     String name;
 }
- 
+
     <INHERITS> name = identifierStr() { annotation.inherit(name); }
 ;
 
@@ -983,45 +1029,45 @@ ParsedType dataType() :
     TensorType tensorType;
     ParsedType referenceType;
 }
-    (     SCAN(<ARRAY> <LESSTHAN>)               => ( <ARRAY> <LESSTHAN> arrayType = dataType() <GREATERTHAN> 
-            { 
+    (     SCAN(<ARRAY> <LESSTHAN>)               => ( <ARRAY> <LESSTHAN> arrayType = dataType() <GREATERTHAN>
+            {
 
-                ParsedType type = ParsedType.arrayOf(arrayType); 
+                ParsedType type = ParsedType.arrayOf(arrayType);
                 thisProduction.setParsedType(type);
                 return type;
-            } 
+            }
     )
-        | SCAN(<WEIGHTEDSET> <LESSTHAN>)         => ( <WEIGHTEDSET> <LESSTHAN> wsetType = dataType() <GREATERTHAN> 
-            { 
-                ParsedType type = ParsedType.wsetOf(wsetType); 
+        | SCAN(<WEIGHTEDSET> <LESSTHAN>)         => ( <WEIGHTEDSET> <LESSTHAN> wsetType = dataType() <GREATERTHAN>
+            {
+                ParsedType type = ParsedType.wsetOf(wsetType);
                 thisProduction.setParsedType(type);
                 return type;
-            } 
+            }
     )
-        | SCAN(<MAP> <LESSTHAN>)                 => ( mapType = mapDataType() 
-            { 
+        | SCAN(<MAP> <LESSTHAN>)                 => ( mapType = mapDataType()
+            {
                 thisProduction.setParsedType(mapType);
-                return mapType; 
-            } 
+                return mapType;
+            }
     )
-        | SCAN(<ANNOTATIONREFERENCE> <LESSTHAN>) => ( mapType = annotationRefDataType() 
-            { 
+        | SCAN(<ANNOTATIONREFERENCE> <LESSTHAN>) => ( mapType = annotationRefDataType()
+            {
                 thisProduction.setParsedType(mapType);
-                return mapType; 
-            } 
+                return mapType;
+            }
     )
-        | SCAN(<TENSOR_TYPE>)                    => ( tensorType = tensorTypeElm("Field type") 
-            { 
-                ParsedType type = ParsedType.tensorType(tensorType); 
+        | SCAN(<TENSOR_TYPE>)                    => ( tensorType = tensorTypeElm("Field type")
+            {
+                ParsedType type = ParsedType.tensorType(tensorType);
                 thisProduction.setParsedType(type);
                 return type;
-            } 
+            }
     )
-        | SCAN(<REFERENCE>)                      => ( <REFERENCE> <LESSTHAN> referenceType = referenceType() <GREATERTHAN> 
-            { 
+        | SCAN(<REFERENCE>)                      => ( <REFERENCE> <LESSTHAN> referenceType = referenceType() <GREATERTHAN>
+            {
                 thisProduction.setParsedType(referenceType);
-                return ParsedType.documentRef(referenceType); 
-            } 
+                return ParsedType.documentRef(referenceType);
+            }
     )
         | ( typeName = identifierStr ["[]" { isArrayOldStyle = true; }] )
     )
@@ -1106,13 +1152,13 @@ void structFieldElm(ParsedField field) :
 }
     <STRUCT_FIELD> name = identifierStr {
         if (name != null && Schema.isReservedName(name.toLowerCase())) {
-            throw new IllegalArgumentException("Reserved name '" + name + "' can not be used as a field name.");
+            throw new IllegalArgumentException("Reserved name '" + name + "' cannot be used as a field name.");
         }
         structField = new ParsedField(name, null);
     }
     openLbrace() (structFieldBodyElm(structField) | <NL>)* <RBRACE>
-    { 
-        field.addStructField(structField); 
+    {
+        field.addStructField(structField);
     }
 ;
 
@@ -1132,6 +1178,7 @@ void fieldBodyElm(ParsedField field) : { }
        summaryInField(field) |
        indexInsideField(field) |
        indexingElm(field) |
+       linguisticsElm(field) |
        matchSettingsElm(field.matchSettings()) |
        normalizingElm(field) |
        queryCommandInField(field) |
@@ -1168,7 +1215,7 @@ void structFieldBodyElm(ParsedField field) : { }
  *
  * @param field The field to modify.
  */
-void indexingElm(ParsedField field) : 
+void indexingElm(ParsedField field) :
 {
     SubLanguageData ILScript;
 }
@@ -1186,15 +1233,42 @@ void indexingElm(ParsedField field) :
  *
  * @param field The field to modify.
  */
-SubLanguageData indexingOperationElm(ParsedField field, boolean multiLine) : { }
+SubLanguageData indexingOperationElm(ParsedField field, boolean multiLine) : {
+    SubLanguageData result = null;
+}
+    (
+        <EOF>
+        |
+        { result = newIndexingOperation(multiLine); }
+    )
+    { return result; }
+;
 
+/**
+ * A linguistics block of a field.
+ */
+void linguisticsElm(ParsedField field) :
+{
+    String indexProfile = null;
+    String searchProfile = null;
+}
+    <LINGUISTICS> openLbrace() <PROFILE> (
+      ( <COLON> indexProfile = identifierStr() (<NL>)* )
+      |
+      ( openLbrace()
+          (
+              ( <INDEX>  <COLON> indexProfile  = identifierStr() (<NL>)* ) |
+              ( <SEARCH> <COLON> searchProfile = identifierStr() (<NL>)* )
+          )+
+        <RBRACE> (<NL>)*
+      )
+    )
+    <RBRACE>
     {
-        return newIndexingOperation(multiLine);
-        //IndexingOperation oldOp = newIndexingOperation(multiLine);
-        //if (oldOp != null) {
-        //    //ParsedIndexingOp newOp = new ParsedIndexingOp(oldOp.getScript());
-        //    //field.setIndexingOperation(newOp);
-        //}
+      if (searchProfile == null)
+          searchProfile = indexProfile;
+      field.setSearchLinguisticsProfile(searchProfile);
+      field.setIndexLinguisticsProfile(indexProfile);
     }
 ;
 
@@ -1316,7 +1390,7 @@ void sortingSetting(ParsedSorting sorting) :
 {
     String locale;
 }
- 
+
     (
         <ASCENDING> { sorting.setAscending(); }
       | <DESCENDING> { sorting.setDescending(); }
@@ -1402,7 +1476,7 @@ void summaryInDocument(ParsedDocumentSummary docsum) :
  * @param field The field to modify.
  */
 void summaryInField(ParsedField field) : { }
- 
+
     <SUMMARY> ( SCAN([identifierStr] <COLON>) => summaryInFieldShort(field)
               | summaryInFieldLong(field) )
 ;
@@ -1415,7 +1489,7 @@ void summaryInFieldShort(ParsedField field) :
     String name = field.name();
     ParsedSummaryField psf;
 }
- 
+
     [ name = identifierStr() ]
     {
         psf = field.summaryFieldFor(name);
@@ -1437,7 +1511,7 @@ void summaryInFieldLong(ParsedField field) :
     boolean explicitType = false;
     ParsedSummaryField psf;
 }
- 
+
     ( [ name = identifierStr() [ <TYPE> { type = dataType(); explicitType = true; } ] ]
       openLbrace()
       {
@@ -1455,8 +1529,9 @@ void summaryInFieldLong(ParsedField field) :
  * @param field The field to modify.
  */
 void summaryItem(ParsedSummaryField field) : { }
- 
+
     ( summaryTransform(field)
+      | summaryElementsSelection(field)
       | summaryBolding(field)
       | summarySourceList(field)
       | summaryDestinationList(field)
@@ -1469,12 +1544,35 @@ void summaryItem(ParsedSummaryField field) : { }
  * @param field            The field to modify.
  */
 void summaryTransform(ParsedSummaryField field) : { }
- 
+
     ( <DYNAMIC>              { field.setDynamic(); }
-     | <MATCHED_ELEMENTS_ONLY> { field.setMatchedElementsOnly(); }
      | (<FULL> | <STATIC>)   { field.setFull(); }
      | <TOKENS> { field.setTokens(); }
     )
+;
+
+void summaryElementsSelection(ParsedSummaryField field) : { }
+
+     ( <MATCHED_ELEMENTS_ONLY> { field.setMatchedElementsOnly(); }
+       | summaryElementsBy(field)
+     )
+;
+
+void summaryElementsBy(ParsedSummaryField field) :
+{
+    Node featureListNode = null;
+}
+    ( <SELECT_ELEMENTS_BY> <COLON> { featureListNode = consumedFeatureListElm(false); } )
+    {
+        var features = ((consumedFeatureListElm)featureListNode).getFeatureList();
+        featureListNode.setBeginOffset(featureListNode.getBeginOffset() + features.length());
+        var featureList = getFeatureList(features);
+        if (featureList.size() != 1) {
+            throw new IllegalArgumentException("select-elements-by: feature list must have 1 feature, got " +
+                                               featureList.size() + " features: " + featureList);
+        }
+        field.setSelectElementsBySummaryFeature(featureList.get(0).toString());
+    }
 ;
 
 /**
@@ -1486,7 +1584,7 @@ void summaryBolding(ParsedSummaryField field) :
 {
     boolean bold;
 }
- 
+
     <BOLDING> <COLON> bold = bool()
     { field.setBold(bold); }
 ;
@@ -1500,7 +1598,7 @@ void summarySourceList(ParsedSummaryField field) :
 {
     String str;
 }
- 
+
     ( <SOURCE> <COLON> str = identifierStr() { field.addSource(str); }
       (        <COMMA> str = identifierStr() { field.addSource(str); } )* ) +
 ;
@@ -1514,7 +1612,7 @@ void summaryDestinationList(ParsedSummaryField field) :
 {
     String str;
 }
- 
+
     <TO> <COLON> str = identifierStr() { field.addDestination(str); }
     (    <COMMA> str = identifierStr() { field.addDestination(str); } )*
 ;
@@ -1528,7 +1626,7 @@ void fieldStemming(ParsedField field) :
 {
     String setting;
 }
- 
+
     <STEMMING> <COLON> setting = identifierWithDashStr
     {
         field.setStemming(Stemming.get(setting));
@@ -1544,7 +1642,7 @@ void searchStemming(ParsedSchema schema) :
 {
     String setting;
 }
- 
+
     <STEMMING> <COLON> setting = identifierWithDashStr
     { schema.setStemming(Stemming.get(setting)); }
 ;
@@ -1559,7 +1657,7 @@ void normalizingElm(ParsedField field) :
 {
     String setting;
 }
- 
+
     <NORMALIZING> <COLON> setting = identifierWithDashStr
     {
         field.setNormalizing(setting);
@@ -1575,7 +1673,7 @@ void boldingElm(ParsedField field) :
 {
     boolean bold;
 }
- 
+
     <BOLDING> <COLON> bold = bool() { field.setBolding(bold); }
 ;
 
@@ -1585,14 +1683,14 @@ void boldingElm(ParsedField field) :
  * @param field The field to modify.
  */
 void dictionaryElm(ParsedField field) : { }
- 
+
     <DICTIONARY>
     ( (<COLON> dictionarySetting(field))
     | (openLbrace() (dictionarySetting(field) | <NL>)* <RBRACE>))
 ;
 
 void dictionarySetting(ParsedField field) : { }
- 
+
     (   <HASH>            { field.dictionary(DictionaryOption.HASH); }
       | <BTREE>           { field.dictionary(DictionaryOption.BTREE); }
       | <CASED>           { field.dictionary(DictionaryOption.CASED); }
@@ -1604,7 +1702,7 @@ void queryCommandInField(ParsedField field) :
 {
     String command;
 }
- 
+
     <QUERY_COMMAND> <COLON> ( command = identifierWithDashStr() | command = quotedString() )
     {
         field.addQueryCommand(command);
@@ -1649,7 +1747,7 @@ void matchType(ParsedMatchSettings matchInfo) : { }
  * @param matchInfo The settings to modify.
  */
 void matchItem(ParsedMatchSettings matchInfo) : { }
- 
+
     ( matchType(matchInfo) | exactTerminator(matchInfo) | gramSize(matchInfo) | matchSize(matchInfo) |
      maxTermOccurrences(matchInfo) | maxTokenLength(matchInfo) )
 ;
@@ -1658,7 +1756,7 @@ void exactTerminator(ParsedMatchSettings matchInfo) :
 {
     String terminator;
 }
- 
+
     <EXACT_TERMINATOR> <COLON> terminator = quotedString()
     {
         matchInfo.setExactTerminator(terminator);
@@ -1669,7 +1767,7 @@ void gramSize(ParsedMatchSettings matchInfo) :
 {
     int gramSize;
 }
- 
+
     <GRAM_SIZE> <COLON> gramSize = integerElm()
     {
         matchInfo.setGramSize(gramSize);
@@ -1680,7 +1778,7 @@ void matchSize(ParsedMatchSettings matchInfo) :
 {
     int matchSize;
 }
- 
+
     <MAX_LENGTH> <COLON> matchSize = integerElm() {
         matchInfo.setMaxLength(matchSize);
     }
@@ -1690,7 +1788,7 @@ void maxTermOccurrences(ParsedMatchSettings matchInfo) :
 {
     int maxTermOccurrences;
 }
- 
+
     <MAX_OCCURRENCES> <COLON> maxTermOccurrences = integerElm() {
         matchInfo.setMaxTermOccurrences(maxTermOccurrences);
     }
@@ -1700,7 +1798,7 @@ void maxTokenLength(ParsedMatchSettings matchInfo) :
 {
     int maxTokenLength;
 }
- 
+
     <MAX_TOKEN_LENGTH> <COLON> maxTokenLength = integerElm() {
         matchInfo.setMaxTokenLength(maxTokenLength);
     }
@@ -1747,6 +1845,23 @@ void idElm(ParsedField field) :
 ;
 
 /**
+ * Consumes the documentid setting.
+ *
+ * @param schema the schema object to add setting to
+ */
+void documentIdElm(ParsedSchema schema) :
+{
+    boolean attribute = false;
+}
+
+    <DOCUMENTID>
+    <COLON> ( ( <ATTRIBUTE> { attribute = true; } ) | ( <FROM_DISK> { attribute = false; } ) )
+    {
+        schema.enableDocumentIdAttribute(attribute);
+    }
+;
+
+/**
  * Consumes a document-summary block from within a schema block.
  *
  * @param schema the schema object to add content to
@@ -1756,7 +1871,7 @@ void documentSummary(ParsedSchema schema) :
     String name;
     ParsedDocumentSummary summary;
 }
- 
+
     ( <DOCUMENT_SUMMARY>
       name = identifierWithDashStr() { summary = new ParsedDocumentSummary(name); }
       [inheritsDocumentSummary(summary)]
@@ -1781,7 +1896,7 @@ void inheritsDocumentSummary(ParsedDocumentSummary documentSummary) :
 {
     String name;
 }
- 
+
     <INHERITS> name = identifierWithDashStr() { documentSummary.inherit(name); }
     ( <COMMA>  name = identifierWithDashStr() { documentSummary.inherit(name); } )*
 ;
@@ -1792,7 +1907,7 @@ void inheritsDocumentSummary(ParsedDocumentSummary documentSummary) :
  * @param summary The document summary to modify.
  */
 void documentSummaryItem(ParsedDocumentSummary summary) : { }
- 
+
     summaryInDocument(summary)
 ;
 
@@ -1806,7 +1921,7 @@ void indexOutsideDoc(ParsedSchema schema) :
     ParsedIndex op;
     String indexName;
 }
- 
+
     <INDEX> indexName = identifierStr()
     {
         op = new ParsedIndex(indexName);
@@ -1828,7 +1943,7 @@ void indexInsideField(ParsedField field) :
     ParsedIndex op;
     String indexName = field.name();
 }
- 
+
     <INDEX> [indexName = identifierStr()]
     {
         // TODO: Remove support for index with different name than field name in Vespa 9
@@ -1858,7 +1973,7 @@ void indexBody(ParsedIndex index) :
     long num;
     double threshold;
 }
- 
+
     ( <PREFIX>                                                       { index.setPrefix(true); }
       | <ALIAS> <COLON> str = identifierWithDashStr()                   { index.addAlias(str); }
       | <STEMMING> <COLON> str = identifierWithDashStr()                { index.setStemming(Stemming.get(str)); }
@@ -1875,7 +1990,7 @@ void hnswIndex(ParsedIndex index) :
 {
     HnswIndexParams.Builder params = new HnswIndexParams.Builder();
 }
- 
+
     ( SCAN(<HNSW> openLbrace()) =>
       (<HNSW> ( (openLbrace() (hnswIndexBody(params) | <NL>)* <RBRACE>) )) |
       <HNSW> )
@@ -1890,7 +2005,7 @@ void hnswIndexBody(HnswIndexParams.Builder params) :
     int num;
     boolean bool;
 }
- 
+
     ( <MAX_LINKS_PER_NODE> <COLON> num = integerElm() { params.setMaxLinksPerNode(num); }
       | <NEIGHBORS_TO_EXPLORE_AT_INSERT> <COLON> num = integerElm() { params.setNeighborsToExploreAtInsert(num); }
       | <MULTI_THREADED_INDEXING> <COLON> bool = bool() { params.setMultiThreadedIndexing(bool); } )
@@ -1900,7 +2015,7 @@ void onnxModelInSchema(ParsedSchema schema) :
 {
     OnnxModel onnxModel;
 }
- 
+
     onnxModel = onnxModel() { schema.add(onnxModel); }
 ;
 
@@ -1908,7 +2023,7 @@ void onnxModelInProfile(ParsedRankProfile profile) :
 {
     OnnxModel onnxModel;
 }
- 
+
     onnxModel = onnxModel() { profile.add(onnxModel); }
 ;
 
@@ -1918,11 +2033,58 @@ OnnxModel onnxModel() :
     String name;
     OnnxModel onnxModel;
 }
- 
+
     ( <ONNX_MODEL> name = identifierStr() { onnxModel = new OnnxModel(name); }
       openLbrace() (onnxModelItem(onnxModel) | <NL>)+ <RBRACE> )
     { return onnxModel; }
 ;
+
+String onnxModelIOName() :
+{ }
+    (<IDENTIFIER>) {
+        return lastConsumedToken.toString();
+    } |
+    (<DOUBLEQUOTEDSTRING>) {
+        String name = lastConsumedToken.toString();
+        return name.substring(1, name.length() - 1);
+    }
+;
+
+// This production replaces the big regex from before:
+//   < ONNX_INPUT_SL: "input" (" ")* (<IDENTIFIER>|<DOUBLEQUOTEDSTRING>) (" ")* ":" (" ")* (~["\n"])* >
+void onnxModelInput(OnnxModel onnxModel) :
+{
+    String name = null;
+    Token inputToken = null;
+    Node sourceFeatureNode;
+}
+    ( (inputToken = <INPUT>) (name = onnxModelIOName()) <COLON> sourceFeatureNode = consumedFeatureListElm(false) )
+    {
+        String sourceExpressionString = ((consumedFeatureListElm)sourceFeatureNode).getFeatureList();
+        sourceFeatureNode.setBeginOffset(sourceFeatureNode.getBeginOffset() - sourceExpressionString.length());
+        try {
+            onnxModel.addInputNameMapping(name, sourceExpressionString.trim());
+        } catch (IllegalArgumentException ex) {
+            inputToken.addIllegalArgumentException(ex);
+        }
+    }
+;
+
+// This production replaces the regex:
+//   < ONNX_OUTPUT_SL: "output" (" ")* (<IDENTIFIER>|<DOUBLEQUOTEDSTRING>) (" ")* ":" (" ")* (~["\n"])* >
+// Only allowing identifierStr after the colon should be fine, as this rule is checked
+// by the call to addOutputNameMapping anyways..
+void onnxModelOutput(OnnxModel onnxModel) :
+{
+    String name = null;
+    String as = null;
+}
+    ( (<OUTPUT>) (name = onnxModelIOName()) <COLON> (as = identifierStr()) )
+    {
+        onnxModel.addOutputNameMapping(name, as);
+    }
+;
+
 
 /**
  * Consumes an onnx-model block.
@@ -1933,28 +2095,70 @@ void onnxModelItem(OnnxModel onnxModel) :
 {
     String path = null;
     int num;
+    boolean enable;
+    Node inputNode = null;
 }
- 
+
     (
-        (path = fileItem()) { onnxModel.setFileName(path); } |
-        (path = uriItem()) { onnxModel.setUri(path); } |
-        <GPU_DEVICE> <COLON> num = integerElm() { onnxModel.setGpuDevice(num, false); } |
-        <INTRAOP_THREADS> <COLON> num = integerElm() { onnxModel.setStatelessIntraOpThreads(num); } |
-        <INTEROP_THREADS> <COLON> num = integerElm() { onnxModel.setStatelessInterOpThreads(num); } |
-        <EXECUTION_MODE> <COLON> ( <PARALLEL> { onnxModel.setStatelessExecutionMode("parallel"); }
-                                  | <SEQUENTIAL> { onnxModel.setStatelessExecutionMode("sequential"); } ) |
-        (<ONNX_INPUT_SL>) {
-            String name = lastConsumedToken.toString().substring(5, lastConsumedToken.toString().lastIndexOf(":")).trim();
-            if (name.startsWith("\"")) { name = name.substring(1, name.length() - 1); }
-            String source = lastConsumedToken.toString().substring(lastConsumedToken.toString().lastIndexOf(":") + 1).trim();
-            onnxModel.addInputNameMapping(name, source);
-        } |
-        (<ONNX_OUTPUT_SL>) {
-            String name = lastConsumedToken.toString().substring(6, lastConsumedToken.toString().lastIndexOf(":")).trim();
-            if (name.startsWith("\"")) { name = name.substring(1, name.length() - 1); }
-            String as = lastConsumedToken.toString().substring(lastConsumedToken.toString().lastIndexOf(":") + 1).trim();
-            onnxModel.addOutputNameMapping(name, as);
-        }
+        (path = fileItem())
+            {
+                try {
+                    onnxModel.setFileName(path);
+                } catch (IllegalArgumentException ex) {
+                    lastConsumedToken.addIllegalArgumentException(ex);
+                }
+            }
+        | (uriInOnnxModel(onnxModel))
+        | <GPU_DEVICE> <COLON> num = integerElm()
+            {
+                try {
+                    onnxModel.setGpuDevice(num, false);
+                } catch (IllegalArgumentException ex) {
+                    lastConsumedToken.addIllegalArgumentException(ex);
+                }
+            }
+        | <INTRAOP_THREADS> <COLON> num = integerElm()
+            {
+                try {
+                    onnxModel.setStatelessIntraOpThreads(num);
+                } catch (IllegalArgumentException ex) {
+                    lastConsumedToken.addIllegalArgumentException(ex);
+                }
+            }
+        | <INTEROP_THREADS> <COLON> num = integerElm()
+            {
+                try {
+                    onnxModel.setStatelessInterOpThreads(num);
+                } catch (IllegalArgumentException ex) {
+                    lastConsumedToken.addIllegalArgumentException(ex);
+                }
+            }
+        | <EXECUTION_MODE> <COLON> (
+            <PARALLEL> {
+                try {
+                    onnxModel.setStatelessExecutionMode("parallel");
+                } catch (IllegalArgumentException ex) {
+                    lastConsumedToken.addIllegalArgumentException(ex);
+                }
+            }
+            | <SEQUENTIAL> {
+                try {
+                    onnxModel.setStatelessExecutionMode("sequential");
+                } catch (IllegalArgumentException ex) {
+                    lastConsumedToken.addIllegalArgumentException(ex);
+                }
+            }
+        )
+        | <OPTIMIZE_MODEL> <COLON> enable = bool()
+            {
+                try {
+                    onnxModel.setOptimizeModel(enable);
+                } catch (IllegalArgumentException ex) {
+                    lastConsumedToken.addIllegalArgumentException(ex);
+                }
+            }
+        | onnxModelInput(onnxModel)
+        | onnxModelOutput(onnxModel)
     )
 ;
 
@@ -1970,7 +2174,7 @@ void rankingConstant(ParsedSchema schema) :
     DistributableResource.PathType pathType = DistributableResource.PathType.FILE;
     TensorType type = null;
 }
- 
+
     ( <CONSTANT> name = identifierStr() openLbrace()
       (path = fileItem() { pathType = DistributableResource.PathType.FILE; }
        | path = uriItem() { pathType = DistributableResource.PathType.URI; } // Undocumented. Remove?
@@ -1989,7 +2193,7 @@ String fileItem() :
 {
    String path;
 }
- 
+
   (<FILE> <COLON> ( <FILE_PATH> | <STRING> | <IDENTIFIER>) { path = com.yahoo.path.Path.fromString(lastConsumedToken.toString()).getRelative(); } { } (<NL>)*) { return path; }
 ;
 
@@ -1997,13 +2201,36 @@ String uriItem() :
 {
    String path;
 }
- 
+
   (<URI> <COLON> ( <URI_PATH> ) { path = lastConsumedToken.toString(); } (<NL>)*) { return path; }
 ;
 
-String rankingConstantErrorMessage(String name) : {}
- 
-    { return "For ranking constant ' " + name + "'"; }
+void uriInOnnxModel(OnnxModel onnxModel) :
+{
+   String path;
+   Token uriToken;
+}
+
+  (<URI> { uriToken = lastConsumedToken; } <COLON> ( <URI_PATH> ) { path = lastConsumedToken.toString(); } (<NL>)*)
+{
+    try {
+        onnxModel.setUri(path);
+    } catch (IllegalArgumentException ex) {
+        uriToken.addIllegalArgumentException(ex);
+    }
+  }
+;
+
+
+String rankingConstantErrorMessage(String name) : {
+    String result = null;
+}
+    (
+        <EOF>
+        |
+        { result = "For ranking constant ' " + name + "'"; }
+    )
+    { return result; }
 ;
 
 
@@ -2012,7 +2239,7 @@ String rankingConstantErrorMessage(String name) : {}
  *
  * @param schema the schema object to add content to
  */
-void rankProfile(ParsedSchema schema) :
+void rankProfile(ParsedSchema schema, ParsedRankProfile outer) :
 {
     String name;
     ParsedRankProfile profile;
@@ -2020,7 +2247,7 @@ void rankProfile(ParsedSchema schema) :
 }
 
     ( <MODEL> | <RANK_PROFILE> ) name = identifierWithDashStr
-    { profile = new ParsedRankProfile(name); identifierToken = lastConsumedToken; }
+    { profile = new ParsedRankProfile(name, outer); identifierToken = lastConsumedToken; }
     [inheritsRankProfile(profile)]
     openLbrace() (rankProfileItem(schema, profile) | <NL>)* <RBRACE>
     {
@@ -2029,7 +2256,7 @@ void rankProfile(ParsedSchema schema) :
                 schema.addRankProfile(profile);
             } catch(IllegalArgumentException ex) {
                 if (identifierToken != null) {
-                    identifierToken.addIllegalArugmentException(ex);
+                    identifierToken.addIllegalArgumentException(ex);
                 }
             }
         }
@@ -2059,6 +2286,10 @@ void rankProfileItem(ParsedSchema schema, ParsedRankProfile profile) : { }
        | termwiseLimit(profile)
        | postFilterThreshold(profile)
        | approximateThreshold(profile)
+       | filterFirstThreshold(profile)
+       | filterFirstExploration(profile)
+       | explorationSlack(profile)
+       | prefetchTensors(profile)
        | targetHitsMaxAdjustmentFactor(profile)
        | rankProperties(profile)
        | secondPhase(profile)
@@ -2066,12 +2297,12 @@ void rankProfileItem(ParsedSchema schema, ParsedRankProfile profile) : { }
        | inputsElm(profile)
        | constantsElm(schema, profile)
        | featureListElm(profile) // Captures rank, match and summary-features
-       //| rankFeaturesElm(profile)
-       //| matchFeaturesElm(profile)
-       //| summaryFeaturesElm(profile)
        | onnxModelInProfile(profile)
        | strictElm(profile)
        | significanceElm(profile)
+       | weakandElm(profile)
+       | filterThreshold(profile)
+       | rankProfile(schema, profile)
     )
 ;
 
@@ -2095,7 +2326,7 @@ void inheritsRankProfile(ParsedRankProfile profile) :
  * @param profile The profile to modify.
  */
 void mutateElm(ParsedRankProfile profile) : { }
- 
+
     <MUTATE> openLbrace() (mutate_operation(profile) <NL>)+ <RBRACE>
 ;
 
@@ -2104,7 +2335,7 @@ void mutate_operation(ParsedRankProfile profile) :
     String attribute, operation;
     RankProfile.MutateOperation.Phase phase;
 }
- 
+
    ( <ON_MATCH> { phase = RankProfile.MutateOperation.Phase.on_match; }
    | <ON_FIRST_PHASE> { phase = RankProfile.MutateOperation.Phase.on_first_phase; }
    | <ON_SECOND_PHASE> { phase = RankProfile.MutateOperation.Phase.on_second_phase; }
@@ -2119,7 +2350,7 @@ String mutate_expr() :
      String op;
      Number constant = null;
 }
- 
+
     (("+=" | "-=" | "=") { op = lastConsumedToken.toString(); } constant = number())
     { return constant != null ? (op + constant) : op; }
 ;
@@ -2135,14 +2366,14 @@ void functionElm(ParsedRankProfile profile) :
     boolean inline = false;
     ParsedRankFunction func;
 }
- 
+
     (  ( <FUNCTION> | <MACRO> ) inline = inlineElm() name = identifierStr() [ "$" { name = name + lastConsumedToken.toString(); } ]
       "("
                                              { func = new ParsedRankFunction(name); }
           [ parameter = identifierStr()         { func.addParameter(parameter); }
           ( <COMMA> parameter = identifierStr() { func.addParameter(parameter); } )* ]
       ")"
-      openLbrace() expression = expression() (<NL>)* <RBRACE> )
+      openLbrace() expression = expressionElm() (<NL>)* <RBRACE> )
     {
         func.setExpression(expression);
         func.setInline(inline);
@@ -2156,7 +2387,7 @@ void functionElm(ParsedRankProfile profile) :
 ;
 
 boolean inlineElm() : { }
- 
+
     ( <INLINE> { return true; } ) ?
     { return false; }
 ;
@@ -2171,7 +2402,7 @@ void matchPhase(ParsedRankProfile profile) :
 {
     MatchPhaseSettings settings = new MatchPhaseSettings();
 }
- 
+
     <MATCH_PHASE> openLbrace() (matchPhaseItem(profile, settings) | <NL>)* <RBRACE>
     {
         settings.checkValid();
@@ -2181,17 +2412,19 @@ void matchPhase(ParsedRankProfile profile) :
 
 void matchPhaseItem(ParsedRankProfile profile, MatchPhaseSettings settings) :
 {
-    String str;
-    int num;
+    String string;
+    int count;
+    int totalCount;
     double multiplier;
     double coverage;
 }
- 
-    ( <ATTRIBUTE> <COLON> str = identifierStr() { settings.setAttribute(str); }
+
+    ( <ATTRIBUTE> <COLON> string = identifierStr() { settings.setAttribute(string); }
       | diversityDeprecated(profile)
-      | <ORDER> <COLON> ( <ASCENDING> { settings.setAscending(true); } 
+      | <ORDER> <COLON> ( <ASCENDING> { settings.setAscending(true); }
                           | <DESCENDING> { settings.setAscending(false); } )
-      | <MAX_HITS> <COLON> num = integerElm() { settings.setMaxHits(num); }
+      | <MAX_HITS> <COLON> count = integerElm() { settings.setMaxHits(count); }
+      | <TOTAL_MAX_HITS> <COLON> totalCount = integerElm() { settings.setTotalMaxHits(totalCount); }
       | <MAX_FILTER_COVERAGE> <COLON> coverage = floatValue() { settings.setMaxFilterCoverage(coverage); }
       | <EVALUATION_POINT> <COLON> multiplier = floatValue() { settings.setEvaluationPoint(multiplier); }
       | <PRE_POST_FILTER_TIPPING_POINT> <COLON> multiplier = floatValue() { settings.setPrePostFilterTippingPoint(multiplier); }
@@ -2208,7 +2441,7 @@ void diversityElm(ParsedRankProfile profile) :
 {
     DiversitySettings settings = new DiversitySettings();
 }
- 
+
     <DIVERSITY> openLbrace() (diversityItem(settings) | <NL>)* <RBRACE>
     {
  	    profile.setDiversity(settings);
@@ -2219,7 +2452,7 @@ void diversityDeprecated(ParsedRankProfile profile) :
 {
     DiversitySettings settings = new DiversitySettings();
 }
- 
+
     <DIVERSITY> openLbrace() (diversityItem(settings) | <NL>)* <RBRACE>
     {
  	    profile.setDiversity(settings);
@@ -2233,7 +2466,7 @@ void diversityItem(DiversitySettings settings) :
     int num;
     double multiplier;
 }
- 
+
     (   <ATTRIBUTE> <COLON> str = identifierStr() { settings.setAttribute(str); }
       | <MIN_GROUPS> <COLON> num = integerElm() { settings.setMinGroups(num); }
       | <CUTOFF_FACTOR> <COLON> multiplier = floatValue() { settings.setCutoffFactor(multiplier); }
@@ -2263,11 +2496,13 @@ void firstPhaseItem(ParsedRankProfile profile) :
 {
     String expression;
     int keepRankCount;
+    int totalKeepRankCount;
     double dropLimit;
 }
 
-    ( expression = expression()                               { profile.setFirstPhaseRanking(expression); }
+    ( expression = expressionElm()                               { profile.setFirstPhaseRanking(expression); }
     | (<KEEP_RANK_COUNT> <COLON> keepRankCount = integerElm())     { profile.setKeepRankCount(keepRankCount); }
+    | (<TOTAL_KEEP_RANK_COUNT> <COLON> totalKeepRankCount = integerElm()) { profile.setTotalKeepRankCount(totalKeepRankCount); }
     | (<RANK_SCORE_DROP_LIMIT> <COLON> dropLimit = floatValue()) { profile.setRankScoreDropLimit(dropLimit); }
     )
 ;
@@ -2278,7 +2513,7 @@ void firstPhaseItem(ParsedRankProfile profile) :
  * @param profile The rank profile to modify.
  */
 void secondPhase(ParsedRankProfile profile) : { }
- 
+
     <SECOND_PHASE> openLbrace() (secondPhaseItem(profile) | <NL>)* <RBRACE>
 ;
 
@@ -2291,11 +2526,13 @@ void secondPhaseItem(ParsedRankProfile profile) :
 {
     String expression;
     int rerankCount;
+    int totalRerankCount;
     double dropLimit;
 }
- 
-    ( expression = expression()                       { profile.setSecondPhaseRanking(expression); }
+
+    ( expression = expressionElm()                       { profile.setSecondPhaseRanking(expression); }
     | (<RERANK_COUNT> <COLON> rerankCount = integerElm()) { profile.setRerankCount(rerankCount); }
+    | (<TOTAL_RERANK_COUNT> <COLON> totalRerankCount = integerElm()) { profile.setTotalRerankCount(totalRerankCount); }
     | (<RANK_SCORE_DROP_LIMIT> <COLON> dropLimit = floatValue()) { profile.setSecondPhaseRankScoreDropLimit(dropLimit); }
     )
 ;
@@ -2306,7 +2543,7 @@ void secondPhaseItem(ParsedRankProfile profile) :
  * @param profile The rank profile to modify.
  */
 void globalPhase(ParsedRankProfile profile) : { }
- 
+
     <GLOBAL_PHASE> openLbrace() (globalPhaseItem(profile) | <NL>)* <RBRACE>
 ;
 
@@ -2319,10 +2556,12 @@ void globalPhaseItem(ParsedRankProfile profile) :
 {
     String expression;
     int rerankCount;
+    double dropLimit;
 }
- 
-    ( expression = expression()                       { profile.setGlobalPhaseExpression(expression); }
+
+    ( expression = expressionElm()                       { profile.setGlobalPhaseExpression(expression); }
     | (<RERANK_COUNT> <COLON> rerankCount = integerElm()) { profile.setGlobalPhaseRerankCount(rerankCount); }
+    | (<RANK_SCORE_DROP_LIMIT> <COLON> dropLimit = floatValue()) { profile.setGlobalPhaseRankScoreDropLimit(dropLimit); }
     )
 ;
 
@@ -2335,8 +2574,8 @@ void inputsElm(ParsedRankProfile profile) :
     TensorType type;
     List<Reference> seenInputs = new ArrayList<>();
 }
- 
-    <INPUTS> <LBRACE> (<NL>)*
+
+    <INPUTS> openLbrace()
     (
         reference = inputElm(profile) { seenInputs.add(reference); }
         (<NL> { seenInputs.add(null); })*
@@ -2359,7 +2598,7 @@ Reference inputElm(ParsedRankProfile profile) :
     InputType type = new InputType(TensorType.empty, false);
     Tensor defaultValue = null;
 }
- 
+
     reference = inputName() ( type = valueType(reference))? ( <COLON> (<NL>)* defaultValue = tensorValue(type.tensorType()) )?
     {
         profile.addInput(reference, new RankProfile.Input(reference, type, Optional.ofNullable(defaultValue)));
@@ -2372,7 +2611,7 @@ Reference inputName() :
 {
     String name;
 }
- 
+
     (
         ( <QUERY> "(" name = identifierStr() ")" )
         |
@@ -2386,7 +2625,7 @@ InputType valueType(Reference reference) :
     TensorType type;
     InputType result;
 }
- 
+
     (
       ( type = tensorTypeElm("Type of " + reference) { result = new InputType(type, false); } )
       |
@@ -2412,15 +2651,33 @@ InputType valueType(Reference reference) :
     }
 ;
 
+/*
+ * Wrapper CST node for the call to consumeRankingExpression.
+ * See details about why this is needed in consumedExpressionElm.
+ */
+Node consumedFeatureListElm(boolean multiline) :
+{}
+    (
+        <EOF>
+        |
+        {
+            SubLanguageData featureList = consumeRankingExpression(multiline);
+            thisProduction.setFeatureListData(featureList);
+        }
+    )
+    { return thisProduction; }
+;
+
+/**
+ * Consumes either a summary-features match-features or rank-features block of a rank profile.
+ *
+ * @param profile the rank profile to modify
+ */
 void featureListElm(ParsedRankProfile profile) :
 {
-    String features;
 }
 
-    ( (features = summaryFeaturesElm(profile)) | (features = matchFeaturesElm(profile)) | (features = rankFeaturesElm(profile)))
-    {
-        thisProduction.setFeatureListString(features);
-    }
+    ( summaryFeaturesElm(profile) | matchFeaturesElm(profile) | rankFeaturesElm(profile) )
 ;
 
 /**
@@ -2428,34 +2685,36 @@ void featureListElm(ParsedRankProfile profile) :
  *
  * @param profile the rank profile to modify
  */
-String summaryFeaturesElm(ParsedRankProfile profile) :
+void summaryFeaturesElm(ParsedRankProfile profile) :
 {
     String features;
-    String inherited = null;
+    String inheritName;
+    List<String> inherited = new ArrayList<>();
+    Node featureListNode = null;
 }
- 
-    ( <SUMMARYFEATURES_SL> { features = lastConsumedToken.toString().substring(lastConsumedToken.toString().indexOf(":") + 1);/*.trim();*/ } |
-      <SUMMARYFEATURES_ML> { features = lastConsumedToken.toString().substring(lastConsumedToken.toString().indexOf("{") + 1,
-                                                              lastConsumedToken.toString().lastIndexOf("}"));/*.trim();*/ } |
-      <SUMMARYFEATURES_ML_INHERITS> {
-          int inheritsIndex = lastConsumedToken.toString().indexOf("inherits ");
-          String rest = lastConsumedToken.toString().substring(inheritsIndex + "inherits ".length());
-          profile.setInheritedSummaryFeatures(rest.substring(0, rest.indexOf(" ")).trim());
-          features = lastConsumedToken.toString().substring(lastConsumedToken.toString().indexOf("{") + 1, lastConsumedToken.toString().lastIndexOf("}"));/*.trim();*/
-      }
-    )
+
+    (<SUMMARY_FEATURES> (
+        (<COLON> featureListNode = consumedFeatureListElm(false) ) |
+        (openLbrace() featureListNode = consumedFeatureListElm(true) <RBRACE> ) |
+        (<INHERITS>
+            inheritName = identifierWithDashStr() { inherited.add(inheritName); }
+            (<COMMA>
+                inheritName = identifierWithDashStr() { inherited.add(inheritName); }
+            )*
+            openLbrace()
+            featureListNode = consumedFeatureListElm(true)
+         <RBRACE>)
+    ))
     {
-        //FeatureList featureList = getFeatureList(features);
-        //if (featureList != null) {
-        //    profile.addSummaryFeatures(featureList);
-        //}
-        return features;
+        features = ((consumedFeatureListElm)featureListNode).getFeatureList();
+        featureListNode.setBeginOffset(featureListNode.getBeginOffset() - features.length());
+        profile.setInheritedSummaryFeatures(inherited);
     }
 ;
 
 void strictElm(ParsedRankProfile profile) :
 {}
- 
+
     <STRICT> <COLON> (
         ( <TRUE> { profile.setStrict(true); } ) |
         ( <FALSE> { profile.setStrict(false); } )
@@ -2464,18 +2723,60 @@ void strictElm(ParsedRankProfile profile) :
 
 void significanceElm(ParsedRankProfile profile) :
 {}
- 
+
     <SIGNIFICANCE> openLbrace() (significanceItem(profile) | <NL>)* <RBRACE>
     {}
 ;
 
 void significanceItem(ParsedRankProfile profile) :
 {}
- 
+
     <USE_MODEL> <COLON> (
         ( <TRUE>  { profile.setUseSignificanceModel(true);  } ) |
         ( <FALSE> { profile.setUseSignificanceModel(false); } )
     )
+;
+
+void weakandElm(ParsedRankProfile profile) :
+{}
+
+    <WEAKAND> openLbrace() (weakandItem(profile) | <NL>)* <RBRACE>
+    {}
+;
+
+void weakandItem(ParsedRankProfile profile) :
+{}
+    ( weakandStopwordLimit(profile)
+      | weakandAllowDropAll(profile)
+      | weakandAdjustTarget(profile))
+;
+
+void weakandStopwordLimit(ParsedRankProfile profile) :
+{
+    double limit;
+}
+    (<STOPWORD_LIMIT> <COLON> limit = floatValue()) { profile.setWeakandStopwordLimit(limit); }
+;
+
+void weakandAllowDropAll(ParsedRankProfile profile) :
+{
+    boolean allow;
+}
+    (<ALLOW_DROP_ALL> <COLON> allow = bool()) { profile.setWeakandAllowDropAll(allow); }
+;
+
+void weakandAdjustTarget(ParsedRankProfile profile) :
+{
+    double target;
+}
+    (<ADJUST_TARGET> <COLON> target = floatValue()) { profile.setWeakandAdjustTarget(target); }
+;
+
+void filterThreshold(ParsedRankProfile profile) :
+{
+    double threshold;
+}
+    (<FILTER_THRESHOLD> <COLON> threshold = floatValue()) { profile.setFilterThreshold(threshold); }
 ;
 
 /**
@@ -2483,45 +2784,46 @@ void significanceItem(ParsedRankProfile profile) :
  *
  * @param profile the rank profile to modify
  */
-String matchFeaturesElm(ParsedRankProfile profile) :
+void matchFeaturesElm(ParsedRankProfile profile) :
 {
     String features;
+    String inheritName;
+    List<String> inherited = new ArrayList<>();
+    Node featureListNode;
 }
 
-    ( <MATCHFEATURES_SL> { features = lastConsumedToken.toString().substring(lastConsumedToken.toString().indexOf(":") + 1);/*.trim();*/ } |
-      <MATCHFEATURES_ML> { features = lastConsumedToken.toString().substring(lastConsumedToken.toString().indexOf("{") + 1,
-                                                                             lastConsumedToken.toString().lastIndexOf("}"));/*.trim();*/ } |
-      <MATCHFEATURES_ML_INHERITS> {
-          int inheritsIndex = lastConsumedToken.toString().indexOf("inherits ");
-          String rest = lastConsumedToken.toString().substring(inheritsIndex + "inherits ".length());
-          profile.setInheritedMatchFeatures(rest.substring(0, rest.indexOf(" ")).trim());
-          features = lastConsumedToken.toString().substring(lastConsumedToken.toString().indexOf("{") + 1, lastConsumedToken.toString().lastIndexOf("}"));/*.trim();*/
-      }
-    )
+    ( <MATCH_FEATURES> (
+        (<COLON> featureListNode = consumedFeatureListElm(false) ) |
+        (openLbrace() featureListNode = consumedFeatureListElm(true) <RBRACE> ) |
+        (<INHERITS>
+            inheritName = identifierWithDashStr() { inherited.add(inheritName); }
+            (<COMMA>
+                inheritName = identifierWithDashStr() { inherited.add(inheritName); }
+            )*
+            openLbrace()
+            featureListNode = consumedFeatureListElm(true)
+         <RBRACE>)
+    ))
     {
-        //FeatureList featureList = getFeatureList(features);
-        //if (featureList != null) {
-        //    profile.addMatchFeatures(featureList);
-        //}
-        return features;
+        features = ((consumedFeatureListElm)featureListNode).getFeatureList();
+        featureListNode.setBeginOffset(featureListNode.getBeginOffset() - features.length());
+        profile.setInheritedMatchFeatures(inherited);
     }
 ;
 
 /** Consumes a rank-features block of a rank profile */
-String rankFeaturesElm(ParsedRankProfile profile) :
+void rankFeaturesElm(ParsedRankProfile profile) :
 {
     String features;
+    Node featureListNode;
 }
-
-    ( <RANKFEATURES_SL> { features = lastConsumedToken.toString().substring(lastConsumedToken.toString().indexOf(":") + 1);/*.trim();*/ } 
-    | <RANKFEATURES_ML> { features = lastConsumedToken.toString().substring(lastConsumedToken.toString().indexOf("{") + 1,
-                                                                            lastConsumedToken.toString().lastIndexOf("}"));/*.trim();*/ } )
+    ( <RANK_FEATURES> (
+        (<COLON> featureListNode = consumedFeatureListElm(false) ) |
+        (openLbrace() featureListNode = consumedFeatureListElm(true) <RBRACE> )
+    ))
     {
-        //FeatureList featureList = getFeatureList(features);
-        //if (featureList != null) {
-        //    profile.addRankFeatures(featureList);
-        //}
-        return features;
+        features = ((consumedFeatureListElm)featureListNode).getFeatureList();
+        featureListNode.setBeginOffset(featureListNode.getBeginOffset() - features.length());
     }
 ;
 
@@ -2532,7 +2834,7 @@ String rankFeaturesElm(ParsedRankProfile profile) :
  * @param profile The rank profile to modify.
  */
 void ignoreRankFeatures(ParsedRankProfile profile) : { }
- 
+
     <IGNORE_DEFAULT_RANK_FEATURES> { profile.setIgnoreDefaultRankFeatures(true); }
 ;
 
@@ -2545,7 +2847,7 @@ void numThreadsPerSearch(ParsedRankProfile profile) :
 {
     int num;
 }
- 
+
     (<NUM_THREADS_PER_SEARCH> <COLON> num = integerElm()) { profile.setNumThreadsPerSearch(num); }
 ;
 
@@ -2558,7 +2860,7 @@ void minHitsPerThread(ParsedRankProfile profile) :
 {
     int num;
 }
- 
+
     (<MIN_HITS_PER_THREAD> <COLON> num = integerElm()) { profile.setMinHitsPerThread(num); }
 ;
 
@@ -2571,7 +2873,7 @@ void numSearchPartitions(ParsedRankProfile profile) :
 {
     int num;
 }
- 
+
     (<NUM_SEARCH_PARTITIONS> <COLON> num = integerElm()) { profile.setNumSearchPartitions(num); }
 ;
 
@@ -2584,7 +2886,7 @@ void termwiseLimit(ParsedRankProfile profile) :
 {
     double num;
 }
- 
+
     (<TERMWISE_LIMIT> <COLON> num = floatValue()) { profile.setTermwiseLimit(num); }
 ;
 
@@ -2597,7 +2899,7 @@ void postFilterThreshold(ParsedRankProfile profile) :
 {
     double threshold;
 }
- 
+
     (<POST_FILTER_THRESHOLD> <COLON> threshold = floatValue()) { profile.setPostFilterThreshold(threshold); }
 ;
 
@@ -2610,8 +2912,60 @@ void approximateThreshold(ParsedRankProfile profile) :
 {
     double threshold;
 }
- 
+
     (<APPROXIMATE_THRESHOLD> <COLON> threshold = floatValue()) { profile.setApproximateThreshold(threshold); }
+;
+
+/**
+ * This rule consumes a filter-first-threshold statement for a rank profile.
+ *
+ * @param profile the rank profile to modify
+ */
+void filterFirstThreshold(ParsedRankProfile profile) :
+{
+    double threshold;
+}
+
+    (<FILTER_FIRST_THRESHOLD> <COLON> threshold = floatValue()) { profile.setFilterFirstThreshold(threshold); }
+;
+
+/**
+ * This rule consumes a filter-first-exploration statement for a rank profile.
+ *
+ * @param profile the rank profile to modify
+ */
+void filterFirstExploration(ParsedRankProfile profile) :
+{
+    double exploration;
+}
+
+    (<FILTER_FIRST_EXPLORATION> <COLON> exploration = floatValue()) { profile.setFilterFirstExploration(exploration); }
+;
+
+/**
+ * This rule consumes an exploration-slack statement for a rank profile.
+ *
+ * @param profile the rank profile to modify
+ */
+void explorationSlack(ParsedRankProfile profile) :
+{
+    double slack;
+}
+
+    (<EXPLORATION_SLACK> <COLON> slack = floatValue()) { profile.setExplorationSlack(slack); }
+;
+
+/**
+ * This rule consumes a prefetch-tensors statement for a rank profile.
+ *
+ * @param profile the rank profile to modify
+ */
+void prefetchTensors(ParsedRankProfile profile) :
+{
+    boolean value;
+}
+
+    (<PREFETCH_TENSORS> <COLON> value = bool()) { profile.setPrefetchTensors(value); }
 ;
 
 /**
@@ -2623,7 +2977,7 @@ void targetHitsMaxAdjustmentFactor(ParsedRankProfile profile) :
 {
     double factor;
 }
- 
+
     (<TARGET_HITS_MAX_ADJUSTMENT_FACTOR> <COLON> factor = floatValue()) { profile.setTargetHitsMaxAdjustmentFactor(factor); }
 ;
 
@@ -2635,7 +2989,7 @@ void targetHitsMaxAdjustmentFactor(ParsedRankProfile profile) :
  * @param profile the rank profile to modify
  */
 void rankProperties(ParsedRankProfile profile) : { }
- 
+
     <RANK_PROPERTIES> openLbrace() (SCAN(rankPropertyItem() <COLON> rankPropertyItem() <NL>) =>
                                (rankProperty(profile) (<NL>)+))* [rankProperty(profile)] <RBRACE>
 ;
@@ -2649,7 +3003,7 @@ void rankProperty(ParsedRankProfile profile) :
 {
     String key, val;
 }
- 
+
     key = rankPropertyItem() <COLON> val = rankPropertyItem()
     { profile.addRankProperty(key, val); }
 ;
@@ -2665,7 +3019,7 @@ String rankPropertyItem() :
     String ret = "";
     Token dToken = null;
 }
- 
+
     ( ( image = identifierWithDashStr() { ret += image; }
         | dToken = <DOUBLE> { ret += dToken.toString(); }
         | image = quotedString()                  { ret += image; }
@@ -2683,7 +3037,7 @@ void fieldWeight(ParsedRankProfile profile) :
     Integer num;
     String name;
 }
- 
+
     <WEIGHT> name = identifierStr() <COLON> num = integerElm()
     { profile.addFieldRankWeight(name, num); }
 ;
@@ -2698,7 +3052,7 @@ void fieldRankType(ParsedRankProfile profile) :
     String name;
     String type;
 }
- 
+
     <RANK_TYPE> name = identifierStr() <COLON> type = identifierStr()
     { profile.addFieldRankType(name, type); }
 ;
@@ -2712,9 +3066,35 @@ void fieldRankFilter(ParsedRankProfile profile) :
 {
     String name;
 }
- 
-    <RANK> name = identifierStr() <COLON> <FILTER>
-    { profile.addFieldRankFilter(name, true); }
+
+    <RANK> name = identifierStr()
+    ( ( <COLON> <FILTER> ) { profile.addFieldRankFilter(name, true); }
+    | ( openLbrace() ( fieldRankItem(profile, name) ( <NL> )* )* <RBRACE> )
+    )
+;
+
+void fieldRankItem(ParsedRankProfile profile, String field) :
+{
+    double filterThreshold;
+    ElementGap elementGap;
+}
+    (   <FILTER_THRESHOLD> <COLON> filterThreshold = floatValue()
+            { profile.addFieldRankFilterThreshold(field, filterThreshold); }
+    |   <ELEMENT_GAP> <COLON> elementGap = elementGapValue()
+            { profile.addFieldRankElementGap(field, elementGap); } )
+;
+
+ElementGap elementGapValue() :
+{
+    int gap;
+    ElementGap elementGap;
+}
+    (   gap = integerElm() { elementGap = ElementGap.of(gap); }
+    |   <INFINITY> { elementGap = ElementGap.empty(); }
+    )
+    {
+        return elementGap;
+    }
 ;
 
 /**
@@ -2724,8 +3104,8 @@ void constantsElm(ParsedSchema schema, ParsedRankProfile profile) :
 {
     String name;
 }
- 
-    <CONSTANTS> <LBRACE> (<NL>)*
+
+    <CONSTANTS> openLbrace()
     ( constantElm(schema, profile) (<NL>)* )*
     <RBRACE>
 ;
@@ -2737,11 +3117,11 @@ void constantElm(ParsedSchema schema, ParsedRankProfile profile) :
     Tensor value = null;
     String valuePath = null;
 }
- 
+
     (
       name = constantName()
       (
-        SCAN( (type = valueType(name))? <COLON> (<NL>)* (tensorValue(type.tensorType()) | fileItem)) => 
+        SCAN( (type = valueType(name))? <COLON> (<NL>)* (tensorValue(type.tensorType()) | fileItem)) =>
         ( ( type = valueType(name) )? <COLON> (<NL>)* ( value = tensorValue(type.tensorType()) | valuePath = fileItem())
         {
             if (value != null)
@@ -2761,7 +3141,7 @@ Reference constantName() :
 {
     String name;
 }
- 
+
     (
         ( <CONSTANT> "(" name = identifierStr() ")" )
         |
@@ -2775,7 +3155,7 @@ void constantValue(ParsedRankProfile profile, Reference name) :
 {
     Token value;
 }
- 
+
     <COLON> ( value = <DOUBLE> | value = <INTEGER> | value = <IDENTIFIER> )
     { profile.add(new RankProfile.Constant(name, Tensor.from(value.toString()))); }
 ;
@@ -2786,30 +3166,36 @@ void constantTensor(ParsedRankProfile profile, Reference name) :
     String tensorString = "";
     TensorType type = null;
 }
- 
-    <LBRACE> (<NL>)*
+
+    openLbrace
       (( tensorString = tensorValuePrefixedByValue() |
          type = tensorTypeWithPrefix(constantTensorErrorMessage(profile.name(), name)) ) (<NL>)* )* <RBRACE>
     { profile.add(new RankProfile.Constant(name, type != null ? Tensor.from(type, tensorString) : Tensor.from(tensorString)));
     }
 ;
 
-String constantTensorErrorMessage(String rankProfileName, Reference name) : {}
- 
-    { return "For constant tensor '" + name + "' in rank profile '" + rankProfileName + "'"; }
+String constantTensorErrorMessage(String rankProfileName, Reference name) : {
+    String result = null;
+}
+    (
+        <EOF>
+        |
+        { result = "For constant tensor '" + name + "' in rank profile '" + rankProfileName + "'"; }
+    )
+    { return result; }
 ;
 
 
 /**
  * Parses a tensor written in a tensor literal form,
- * https://docs.vespa.ai/en/reference/tensor.html#tensor-literal-form
+ * https://docs.vespa.ai/en/reference/ranking/tensor.html#tensor-literal-form
  */
 Tensor tensorValue(TensorType type) :
 {
     Tensor.Builder builder = Tensor.Builder.of(type);
     Number doubleValue = null;
 }
- 
+
     ( mappedTensorValue(builder) | indexedTensorValues(builder) |  doubleValue = number() )
     {
         if (doubleValue != null) {
@@ -2823,7 +3209,7 @@ Tensor tensorValue(TensorType type) :
 
 /** A mapped or mixed tensor value. */
 void mappedTensorValue(Tensor.Builder builder) : {}
- 
+
     "{"
     ( mappedTensorBlock(builder) )*
     ( <COMMA> (<NL>)* mappedTensorBlock(builder) )*
@@ -2835,7 +3221,7 @@ void mappedTensorBlock(Tensor.Builder builder) :
 {
     TensorAddress mappedAddress;
 }
- 
+
     mappedAddress = tensorAddress(builder.type()) <COLON> (<NL>)*
     ( mappedTensorCellValue(mappedAddress, builder) | indexedTensorBlockValues(mappedAddress, builder) )
 ;
@@ -2844,7 +3230,7 @@ void indexedTensorBlockValues(TensorAddress mappedAddress, Tensor.Builder builde
 {
     List<Double> values = new ArrayList<Double>();
 }
- 
+
     arrayTensorValues(values)
     {
         MixedTensor.BoundBuilder boundBuilder = (MixedTensor.BoundBuilder)builder;
@@ -2860,7 +3246,7 @@ void indexedTensorValues(Tensor.Builder builder) :
 {
     List<Double> values = new ArrayList<Double>();
 }
- 
+
     arrayTensorValues(values)
     {
         IndexedTensor.BoundBuilder boundBuilder = (IndexedTensor.BoundBuilder)builder;
@@ -2874,7 +3260,7 @@ void indexedTensorValues(Tensor.Builder builder) :
 
 /** Tensor array values. Using sub-bracketing for multiple dimensions is optional and therefore ignored here. */
 void arrayTensorValues(List<Double> values) : {}
- 
+
     "[" (                 ( indexedTensorValue(values) | arrayTensorValues(values)) )*
         ( <COMMA> (<NL>)* ( indexedTensorValue(values) | arrayTensorValues(values)) )*
     "]"
@@ -2884,7 +3270,7 @@ void indexedTensorValue(List<Double> values) :
 {
     Number value;
 }
- 
+
     value = number()
     { values.add(value.doubleValue()); }
 ;
@@ -2893,7 +3279,7 @@ void mappedTensorCellValue(TensorAddress address, Tensor.Builder builder) :
 {
     double value;
 }
- 
+
     value = tensorCellValue()
     { builder.cell(address, value); }
 ;
@@ -2903,7 +3289,7 @@ TensorAddress tensorAddress(TensorType type) :
     TensorAddress.Builder builder = new TensorAddress.PartialBuilder(type);
     String label;
 }
- 
+
     (
         label = tensorAddressLabel() { builder.add(label); }
         |
@@ -2917,7 +3303,7 @@ void tensorAddressElement(TensorAddress.Builder builder) :
     String dimension;
     String label;
 }
- 
+
     dimension = identifierStr() <COLON> (<NL>)* label = tensorAddressLabel()
     { builder.add(dimension, label); }
 ;
@@ -2926,7 +3312,7 @@ String tensorAddressLabel() :
 {
     String label;
 }
- 
+
     ( label = identifierStr() | label = quotedString() )
     { return label; }
 ;
@@ -2935,7 +3321,7 @@ double tensorCellValue() :
 {
     Number value;
 }
- 
+
     value = number()
     { return value.doubleValue(); }
 ;
@@ -2945,7 +3331,7 @@ String tensorValuePrefixedByValue() :
 {
     String tensor;
 }
- 
+
     ( <TENSOR_VALUE_SL> { tensor = lastConsumedToken.toString().substring(lastConsumedToken.toString().indexOf(":") + 1); } |
       <TENSOR_VALUE_ML> { tensor = lastConsumedToken.toString().substring(lastConsumedToken.toString().indexOf("{") + 1,
                                                          lastConsumedToken.toString().lastIndexOf("}")); } )
@@ -2956,7 +3342,7 @@ String tensorValuePrefixedByValue() :
 
 TensorType tensorTypeWithPrefix(String errorMessage) :
 { TensorType type; }
- 
+
     <TYPE> <COLON> type = tensorTypeElm(errorMessage)
     { return type; }
 ;
@@ -2974,7 +3360,7 @@ TensorType tensorTypeElm(String errorMessage) :
             tensorType = TensorType.fromSpec(tensorTypeString);
         } catch (IllegalArgumentException e) {
             //throw new IllegalArgumentException(errorMessage + ": Illegal tensor type spec: " + e.getMessage());
-            lastConsumedToken.addIllegalArugmentException(e);
+            lastConsumedToken.addIllegalArgumentException(e);
             return TensorType.empty;
         }
         return tensorType;
@@ -2986,7 +3372,7 @@ void importField(ParsedSchema schema) :
     String fieldRefSpec;
     String aliasFieldName;
 }
- 
+
     <IMPORT> <FIELD> fieldRefSpec = identifierStr() <AS> aliasFieldName = identifierStr() openLbrace()
     <RBRACE>
     {
@@ -3002,21 +3388,49 @@ void importField(ParsedSchema schema) :
 ;
 
 /**
+ * Wrapper for the call to consumeRankingExpression that essentially
+ * places an empty node in the tree which holds the ranking expression string.
+ *
+ * Using this wrapper is a trick used to manipulate the offsets of the syntax tree node.
+ * Since the call to consumeRankingExpression eats tokens without the parser knowing about it,
+ * we need to manipulate the offsets of the resulting node in order for the CST to be correct.
+ *
+ * However, when a call to a production returns, the generated parser will 'close its scope',
+ * which means among other things setting a begin/end offset for the node. Therefore,
+ * if we had registered the offsets in the body of this production, the parser would simply overwrite them.
+ *
+ * Returning the production node itself allows for manipulating the offsets after scope closing,
+ * allowing the manipulated offsets to propagate upwards in the tree.
+ */
+Node consumedExpressionElm(boolean multiline) :
+{}
+    (
+        <EOF>
+        |
+        {
+            SubLanguageData expr = consumeRankingExpression(multiline);
+            thisProduction.setRankingExpressionData(expr);
+        }
+    )
+    { return thisProduction; }
+;
+
+/**
  * This rule consumes an expression token and returns its image.
  *
  * @return The consumed token image.
  */
-String expression() :
+String expressionElm() :
 {
-    String exp;
+    Node expressionNode;
 }
 
-    ( <EXPRESSION_SL> { exp = lastConsumedToken.toString().substring(lastConsumedToken.toString().indexOf(":") + 1); } |
-      <EXPRESSION_ML> { exp = lastConsumedToken.toString().substring(lastConsumedToken.toString().indexOf("{") + 1,
-                                                                     lastConsumedToken.toString().lastIndexOf("}")); } )
+    (<EXPRESSION> (( <COLON> expressionNode = consumedExpressionElm(false) ) |
+                  ( openLbrace() expressionNode = consumedExpressionElm(true) <RBRACE> )))
     {
-        thisProduction.setExpressionString(exp);
-        return exp;
+        String expr = ((consumedExpressionElm)expressionNode).getRankingExpression();
+        expressionNode.setBeginOffset(expressionNode.getBeginOffset() - expr.length());
+        return expr;
     }
 ;
 
@@ -3028,6 +3442,8 @@ String identifierWithDashStr :
     ( identifier = identifierStr { return identifier; } )
     |
     ( <IDENTIFIER_WITH_DASH>
+    | <ADJUST_TARGET>
+    | <ALLOW_DROP_ALL>
     | <APPROXIMATE_THRESHOLD>
     | <CREATE_IF_NONEXISTENT>
     | <CUTOFF_FACTOR>
@@ -3035,15 +3451,21 @@ String identifierWithDashStr :
     | <DENSE_POSTING_LIST_THRESHOLD>
     | <DISTANCE_METRIC>
     | <DOCUMENT_SUMMARY>
+    | <ELEMENT_GAP>
     | <ENABLE_BIT_VECTORS>
     | <ENABLE_BM25>
     | <ENABLE_ONLY_BIT_VECTOR>
     | <EVALUATION_POINT>
     | <EXACT_TERMINATOR>
     | <EXECUTION_MODE>
+    | <EXPLORATION_SLACK>
+    | <PREFETCH_TENSORS>
     | <FAST_ACCESS>
     | <FAST_RANK>
     | <FAST_SEARCH>
+    | <FILTER_FIRST_EXPLORATION>
+    | <FILTER_FIRST_THRESHOLD>
+    | <FILTER_THRESHOLD>
     | <FIRST_PHASE>
     | <FROM_DISK>
     | <GLOBAL_PHASE>
@@ -3073,6 +3495,7 @@ String identifierWithDashStr :
     | <ONNX_MODEL>
     | <ON_SECOND_PHASE>
     | <ON_SUMMARY>
+    | <OPTIMIZE_MODEL>
     | <POST_FILTER_THRESHOLD>
     | <PRE_POST_FILTER_TIPPING_POINT>
     | <QUERY_COMMAND>
@@ -3084,10 +3507,15 @@ String identifierWithDashStr :
     | <REMOVE_IF_ZERO>
     | <RERANK_COUNT>
     | <SECOND_PHASE>
+    | <SELECT_ELEMENTS_BY>
+    | <STOPWORD_LIMIT>
     | <STRUCT_FIELD>
     | <SUMMARY_TO>
     | <TARGET_HITS_MAX_ADJUSTMENT_FACTOR>
     | <TERMWISE_LIMIT>
+    | <TOTAL_KEEP_RANK_COUNT>
+    | <TOTAL_MAX_HITS>
+    | <TOTAL_RERANK_COUNT>
     | <UPPER_BOUND>
     | <USE_MODEL>
     ) {
@@ -3122,6 +3550,7 @@ String identifierStr :
       | <DIRECT>
       | <DIVERSITY>
       | <DOCUMENT>
+      | <DOCUMENTID>
       | <DOUBLE_KEYWORD>
       | <FLOAT_KEYWORD>
       | <LONG_KEYWORD>
@@ -3145,10 +3574,13 @@ String identifierStr :
       | <IMPORT>
       | <INDEX>
       | <INDEXING>
+      | <INFINITY>
       | <INHERITS>
       | <INLINE>
+      | <INPUT>
       | <INPUTS>
       | <INTEGER>
+      | <LINGUISTICS>
       | <LITERAL>
       | <LOCALE>
       | <LONG>
@@ -3169,10 +3601,12 @@ String identifierStr :
       | <ON>
       | <OPERATION>
       | <ORDER>
+      | <OUTPUT>
       | <PAGED>
       | <PARALLEL>
       | <PREFIX>
       | <PRIMARY>
+      | <PROFILE>
       | <PROPERTIES>
       | <QUATERNARY>
       | <QUERY>
@@ -3210,6 +3644,7 @@ String identifierStr :
       | <UNCASED>
       | <URI>
       | <VARIABLE>
+      | <WEAKAND>
       | <WEIGHT>
       | <WEIGHTEDSET>
       | <WORD>
@@ -3241,7 +3676,20 @@ Boolean bool() :
 /** Consumes an integer token and returns its numeric value. */
 int integerElm() : { }
 
-    <INTEGER> { return Integer.parseInt(lastConsumedToken.toString()); }
+    <INTEGER> {
+        try {
+            return Integer.parseInt(lastConsumedToken.toString());
+        } catch (NumberFormatException ex) {
+            lastConsumedToken.addIllegalArgumentException(
+                new IllegalArgumentException(
+                    "Expected an integer literal, got \""
+                    + lastConsumedToken.toString().trim()
+                    + "\""
+                )
+            );
+            return 0;
+        }
+    }
 ;
 
 /** Consumes a long or integer token and returns its numeric value. */

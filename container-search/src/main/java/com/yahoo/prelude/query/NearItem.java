@@ -1,8 +1,10 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.prelude.query;
 
+import ai.vespa.searchlib.searchprotocol.protobuf.SearchProtocol;
 import com.yahoo.compress.IntegerCompressor;
 import com.yahoo.prelude.query.textualrepresentation.Discloser;
+import com.yahoo.search.dispatch.rpc.ProtobufSerialization;
 
 import java.nio.ByteBuffer;
 import java.util.Objects;
@@ -17,6 +19,8 @@ import java.util.Objects;
 public class NearItem extends CompositeItem {
 
     protected int distance;
+    protected int numNegativeItems;
+    protected int exclusionDistance;
 
     /** The default distance used if none is specified: 2 */
     public static final int defaultDistance = 2;
@@ -45,6 +49,22 @@ public class NearItem extends CompositeItem {
         return distance;
     }
 
+    public void setNumNegativeItems(int numNegativeItems) {
+        this.numNegativeItems = numNegativeItems;
+    }
+
+    public int getNumNegativeItems() {
+        return numNegativeItems;
+    }
+
+    public void setExclusionDistance(int exclusionDistance) {
+        this.exclusionDistance = exclusionDistance;
+    }
+
+    public int getExclusionDistance() {
+        return exclusionDistance;
+    }
+
     @Override
     public ItemType getItemType() {
         return ItemType.NEAR;
@@ -56,9 +76,12 @@ public class NearItem extends CompositeItem {
     }
 
     @Override
-    protected void encodeThis(ByteBuffer buffer) {
-        super.encodeThis(buffer);
+    protected void encodeThis(ByteBuffer buffer, SerializationContext context) {
+        super.encodeThis(buffer, context);
         IntegerCompressor.putCompressedPositiveNumber(distance, buffer);
+        if (numNegativeItems != 0 && !ProtobufSerialization.isProtobufAlsoSerialized()) {
+            throw new IllegalArgumentException("cannot serialize negative items in old protocol");
+        }
     }
 
     @Override
@@ -73,6 +96,12 @@ public class NearItem extends CompositeItem {
         buffer.append(getName());
         buffer.append("(");
         buffer.append(distance);
+        if (numNegativeItems != 0 || exclusionDistance != 0) {
+            buffer.append(",");
+            buffer.append(numNegativeItems);
+            buffer.append(",");
+            buffer.append(exclusionDistance);
+        }
         buffer.append(")");
         buffer.append(" ");
     }
@@ -82,12 +111,28 @@ public class NearItem extends CompositeItem {
         if (!super.equals(object)) return false;
         NearItem other = (NearItem) object; // Ensured by superclass
         if (this.distance != other.distance) return false;
+        if (this.numNegativeItems != other.numNegativeItems) return false;
+        if (this.exclusionDistance != other.exclusionDistance) return false;
         return true;
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(super.hashCode(), distance);
+        return Objects.hash(super.hashCode(), distance, numNegativeItems, exclusionDistance);
+    }
+
+    @Override
+    SearchProtocol.QueryTreeItem toProtobuf(SerializationContext context) {
+        var builder = SearchProtocol.ItemNear.newBuilder();
+        builder.setDistance(distance);
+        builder.setNumNegativeTerms(numNegativeItems);
+        builder.setExclusionDistance(exclusionDistance);
+        for (var child : items()) {
+            builder.addChildren(child.toProtobuf(context));
+        }
+        return SearchProtocol.QueryTreeItem.newBuilder()
+                .setItemNear(builder.build())
+                .build();
     }
 
 }

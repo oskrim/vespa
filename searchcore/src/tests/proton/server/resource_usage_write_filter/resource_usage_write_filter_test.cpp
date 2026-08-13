@@ -1,0 +1,280 @@
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+
+#include <vespa/searchcore/proton/server/resource_usage_notifier.h>
+#include <vespa/searchcore/proton/server/resource_usage_with_limit.h>
+#include <vespa/searchcore/proton/server/resource_usage_write_filter.h>
+#include <vespa/searchlib/attribute/address_space_components.h>
+#include <vespa/searchlib/queryeval/isourceselector.h>
+#include <vespa/vespalib/gtest/gtest.h>
+#include <vespa/vespalib/util/hw_info.h>
+#include <vespa/vespalib/util/size_literals.h>
+
+using namespace proton;
+using search::AddressSpaceComponents;
+using search::AddressSpaceUsage;
+using search::queryeval::ISourceSelector;
+using searchcorespi::common::ResourceUsage;
+using searchcorespi::common::TransientResourceUsage;
+using vespalib::HwInfo;
+using vespalib::ProcessMemoryStats;
+
+namespace fs = std::filesystem;
+
+namespace {
+
+vespalib::AddressSpace enumStoreOverLoad(30_Gi, 0, 32_Gi);
+
+vespalib::AddressSpace multiValueOverLoad(127_Mi, 0, 128_Mi);
+
+vespalib::AddressSpace source_selector_overload(250, 0, ISourceSelector::SOURCE_LIMIT);
+
+constexpr uint64_t zero_size_on_disk = 0;
+
+class MyAttributeStats : public AttributeUsageStats {
+public:
+    MyAttributeStats() : AttributeUsageStats("test") {}
+    void triggerEnumStoreLimit() {
+        AddressSpaceUsage usage;
+        usage.set(AddressSpaceComponents::enum_store, enumStoreOverLoad);
+        merge(usage, "enumeratedName", "ready");
+    }
+
+    void triggerMultiValueLimit() {
+        AddressSpaceUsage usage;
+        usage.set(AddressSpaceComponents::multi_value, multiValueOverLoad);
+        merge(usage, "multiValueName", "ready");
+    }
+
+    void trigger_source_selector_limit() {
+        AddressSpaceUsage usage;
+        usage.set("", source_selector_overload);
+        merge(usage, "index_shards", "");
+    }
+};
+
+} // namespace
+
+struct ResourceUsageWriteFilterTest : public ::testing::Test {
+    ResourceUsageWriteFilter _filter;
+    ResourceUsageNotifier    _notifier;
+    using State = ResourceUsageWriteFilter::State;
+    using Config = ResourceUsageNotifier::Config;
+
+    ResourceUsageWriteFilterTest()
+        : _filter(HwInfo(HwInfo::Disk(100, false, false), HwInfo::Memory(1000), HwInfo::Cpu(0))), _notifier(_filter) {
+        _notifier.set_resource_usage(ResourceUsage(), ProcessMemoryStats(297, 298, 300), DiskUsage(20, 100),
+                                     ReservedDiskSpaceAndMemory());
+    }
+
+    void testWrite(const std::string& exp) {
+        if (exp.empty()) {
+            EXPECT_TRUE(_filter.acceptWriteOperation());
+            State state = _filter.getAcceptState();
+            EXPECT_TRUE(state.acceptWriteOperation());
+            EXPECT_EQ(exp, state.message());
+        } else {
+            EXPECT_FALSE(_filter.acceptWriteOperation());
+            State state = _filter.getAcceptState();
+            EXPECT_FALSE(state.acceptWriteOperation());
+            EXPECT_EQ(exp, state.message());
+        }
+    }
+
+    void triggerDiskLimit() {
+        _notifier.set_resource_usage(_notifier.get_resource_usage(), _notifier.getMemoryStats(), DiskUsage(90, 100),
+                                     ReservedDiskSpaceAndMemory());
+    }
+
+    void triggerMemoryLimit() {
+        _notifier.set_resource_usage(ResourceUsage(), ProcessMemoryStats(897, 898, 900), _notifier.disk_usage(),
+                                     ReservedDiskSpaceAndMemory());
+    }
+
+    void notify_attribute_usage(const AttributeUsageStats& usage) { _notifier.notify_attribute_usage(usage, 0); }
+};
+
+TEST_F(ResourceUsageWriteFilterTest, default_filter_allows_write) {
+    testWrite("");
+}
+
+TEST_F(ResourceUsageWriteFilterTest, stats_are_wired_through) {
+    EXPECT_EQ(297u, _notifier.getMemoryStats().getVirt());
+    triggerMemoryLimit();
+    EXPECT_EQ(897u, _notifier.getMemoryStats().getVirt());
+}
+
+void assertResourceUsage(double usage, double limit, double utilization, const ResourceUsageWithLimit& state) {
+    EXPECT_EQ(usage, state.usage());
+    EXPECT_EQ(limit, state.limit());
+    EXPECT_DOUBLE_EQ(utilization, state.utilization());
+}
+
+TEST_F(ResourceUsageWriteFilterTest, reconfig_with_identical_config_is_noop) {
+    EXPECT_TRUE(_notifier.setConfig(Config(1.0, 0.8, 0.0, 0.0, AttributeUsageFilterConfig())));
+    assertResourceUsage(0.2, 0.8, 0.25, _notifier.usageState().diskState());
+    EXPECT_FALSE(_notifier.setConfig(Config(1.0, 0.8, 0.0, 0.0, AttributeUsageFilterConfig())));
+    assertResourceUsage(0.2, 0.8, 0.25, _notifier.usageState().diskState());
+}
+
+TEST_F(ResourceUsageWriteFilterTest, disk_limit_can_be_reached) {
+    EXPECT_TRUE(_notifier.setConfig(Config(1.0, 0.8, 0.0, 0.0, AttributeUsageFilterConfig())));
+    assertResourceUsage(0.2, 0.8, 0.25, _notifier.usageState().diskState());
+    triggerDiskLimit();
+    testWrite("diskLimitReached: { "
+              "action: \"add more content nodes\", "
+              "reason: \"disk used (0.9) > disk limit (0.8)\", "
+              "stats: { "
+              "capacity: 100, used: 90, diskUsed: 0.9, diskLimit: 0.8}}");
+    assertResourceUsage(0.9, 0.8, 1.125, _notifier.usageState().diskState());
+}
+
+TEST_F(ResourceUsageWriteFilterTest, disk_usage_ratios_follow_sampled_capacity) {
+    _notifier.set_resource_usage(ResourceUsage{TransientResourceUsage{40, 0}, zero_size_on_disk},
+                                 _notifier.getMemoryStats(), DiskUsage(100, 200),
+                                 ReservedDiskSpaceAndMemory(60, 0, 0, 0));
+    EXPECT_DOUBLE_EQ(0.5, _notifier.usageState().diskState().usage());    // 100 / 200
+    EXPECT_DOUBLE_EQ(0.2, _notifier.usageState().transient_disk_usage()); // 40 / 200
+    EXPECT_DOUBLE_EQ(0.3, _notifier.usageState().reserved_disk_space());  // 60 / 200
+}
+
+TEST_F(ResourceUsageWriteFilterTest, disk_limit_message_reports_sampled_capacity) {
+    EXPECT_TRUE(_notifier.setConfig(Config(1.0, 0.8, 0.0, 0.0, AttributeUsageFilterConfig())));
+    _notifier.set_resource_usage(_notifier.get_resource_usage(), _notifier.getMemoryStats(), DiskUsage(180, 200),
+                                 ReservedDiskSpaceAndMemory());
+    testWrite("diskLimitReached: { "
+              "action: \"add more content nodes\", "
+              "reason: \"disk used (0.9) > disk limit (0.8)\", "
+              "stats: { "
+              "capacity: 200, used: 180, diskUsed: 0.9, diskLimit: 0.8}}");
+}
+
+TEST_F(ResourceUsageWriteFilterTest, memory_limit_can_be_reached) {
+    EXPECT_TRUE(_notifier.setConfig(Config(0.8, 1.0, 0.0, 0.0, AttributeUsageFilterConfig())));
+    assertResourceUsage(0.3, 0.8, 0.375, _notifier.usageState().memoryState());
+    triggerMemoryLimit();
+    testWrite("memoryLimitReached: { "
+              "action: \"add more content nodes\", "
+              "reason: \"memory used (0.9) > memory limit (0.8)\", "
+              "stats: { "
+              "virt: 897, "
+              "rss: { mapped: 898, anonymous: 900}, "
+              "physicalMemory: 1000, memoryUsed: 0.9, memoryLimit: 0.8}}");
+    assertResourceUsage(0.9, 0.8, 1.125, _notifier.usageState().memoryState());
+}
+
+TEST_F(ResourceUsageWriteFilterTest, transient_memory_is_subtracted_from_reported_memory) {
+    _notifier.set_resource_usage(ResourceUsage({0, 5}, 0), ProcessMemoryStats(897, 898, 900, 50),
+                                 _notifier.disk_usage(), ReservedDiskSpaceAndMemory(0, 0, 50, 5));
+    assertResourceUsage(0.9, 1.0, 0.9, _notifier.usageState().memoryState());
+    EXPECT_DOUBLE_EQ(0.845, _notifier.usageState().reported_memory_usage());
+    EXPECT_DOUBLE_EQ(0.055, _notifier.usageState().transient_memory_usage());
+    EXPECT_DOUBLE_EQ(0.055, _notifier.usageState().reserved_memory());
+    // Lower reserved memory => transient memory is capped
+    _notifier.set_resource_usage(ResourceUsage({0, 5}, 0), ProcessMemoryStats(897, 898, 900, 50),
+                                 _notifier.disk_usage(), ReservedDiskSpaceAndMemory(0, 0, 40, 5));
+    assertResourceUsage(0.9, 1.0, 0.9, _notifier.usageState().memoryState());
+    EXPECT_DOUBLE_EQ(0.855, _notifier.usageState().reported_memory_usage());
+    EXPECT_DOUBLE_EQ(0.045, _notifier.usageState().transient_memory_usage());
+    EXPECT_DOUBLE_EQ(0.045, _notifier.usageState().reserved_memory());
+}
+
+TEST_F(ResourceUsageWriteFilterTest, both_disk_limit_and_memory_limit_can_be_reached) {
+    EXPECT_TRUE(_notifier.setConfig(Config(0.8, 0.8, 0.0, 0.0, AttributeUsageFilterConfig())));
+    triggerMemoryLimit();
+    triggerDiskLimit();
+    testWrite("memoryLimitReached: { "
+              "action: \"add more content nodes\", "
+              "reason: \"memory used (0.9) > memory limit (0.8)\", "
+              "stats: { "
+              "virt: 897, "
+              "rss: { mapped: 898, anonymous: 900}, "
+              "physicalMemory: 1000, memoryUsed: 0.9, memoryLimit: 0.8}}, "
+              "diskLimitReached: { "
+              "action: \"add more content nodes\", "
+              "reason: \"disk used (0.9) > disk limit (0.8)\", "
+              "stats: { "
+              "capacity: 100, used: 90, diskUsed: 0.9, diskLimit: 0.8}}");
+}
+
+TEST_F(ResourceUsageWriteFilterTest, transient_and_non_transient_disk_usage_tracked_in_usage_state_and_metrics) {
+    _notifier.set_resource_usage(ResourceUsage{TransientResourceUsage{15, 0}, zero_size_on_disk},
+                                 _notifier.getMemoryStats(), _notifier.disk_usage(),
+                                 ReservedDiskSpaceAndMemory(100, 0, 0, 0));
+    EXPECT_DOUBLE_EQ(0.15, _notifier.usageState().transient_disk_usage());
+    EXPECT_DOUBLE_EQ(0.15, _notifier.get_metrics().transient_disk_usage());
+    EXPECT_DOUBLE_EQ(0.05, _notifier.usageState().non_transient_disk_usage());
+    EXPECT_DOUBLE_EQ(0.05, _notifier.get_metrics().non_transient_disk_usage());
+    _notifier.set_resource_usage(ResourceUsage{TransientResourceUsage{15, 0}, zero_size_on_disk},
+                                 _notifier.getMemoryStats(), _notifier.disk_usage(),
+                                 ReservedDiskSpaceAndMemory(10, 0, 0, 0));
+    EXPECT_DOUBLE_EQ(0.10, _notifier.usageState().transient_disk_usage());
+    EXPECT_DOUBLE_EQ(0.10, _notifier.usageState().non_transient_disk_usage());
+}
+
+TEST_F(ResourceUsageWriteFilterTest, transient_and_non_transient_memory_usage_tracked_in_usage_state_and_metrics) {
+    _notifier.set_resource_usage(ResourceUsage{TransientResourceUsage{0, 100}, zero_size_on_disk},
+                                 _notifier.getMemoryStats(), _notifier.disk_usage(),
+                                 ReservedDiskSpaceAndMemory(100, 0, 0, 100));
+    EXPECT_DOUBLE_EQ(0.1, _notifier.usageState().transient_memory_usage());
+    EXPECT_DOUBLE_EQ(0.1, _notifier.get_metrics().transient_memory_usage());
+    EXPECT_DOUBLE_EQ(0.2, _notifier.usageState().non_transient_memory_usage());
+    EXPECT_DOUBLE_EQ(0.2, _notifier.get_metrics().non_transient_memory_usage());
+    _notifier.set_resource_usage(ResourceUsage{TransientResourceUsage{0, 100}, zero_size_on_disk},
+                                 _notifier.getMemoryStats(), _notifier.disk_usage(),
+                                 ReservedDiskSpaceAndMemory(100, 0, 0, 50));
+    EXPECT_DOUBLE_EQ(0.05, _notifier.usageState().transient_memory_usage());
+    EXPECT_DOUBLE_EQ(0.25, _notifier.usageState().non_transient_memory_usage());
+}
+
+TEST_F(ResourceUsageWriteFilterTest, check_that_enum_store_limit_can_be_reached) {
+    EXPECT_TRUE(_notifier.setConfig(Config(0.8, 0.8, 0.0, 0.0, AttributeUsageFilterConfig(0.8))));
+    MyAttributeStats stats;
+    stats.triggerEnumStoreLimit();
+    notify_attribute_usage(stats);
+    testWrite("addressSpaceLimitReached: { "
+              "action: \""
+              "add more content nodes"
+              "\", "
+              "reason: \""
+              "max address space in attribute vector components used (0.9375) > limit (0.8)"
+              "\", "
+              "addressSpace: { used: 32212254720, dead: 0, limit: 34359738368}, "
+              "document_type: \"test\", "
+              "attributeName: \"enumeratedName\", componentName: \"enum-store\", subdb: \"ready\"}");
+}
+
+TEST_F(ResourceUsageWriteFilterTest, check_that_multivalue_limit_can_be_reached) {
+    EXPECT_TRUE(_notifier.setConfig(Config(0.8, 0.8, 0.0, 0.0, AttributeUsageFilterConfig(0.8))));
+    MyAttributeStats stats;
+    stats.triggerMultiValueLimit();
+    notify_attribute_usage(stats);
+    testWrite("addressSpaceLimitReached: { "
+              "action: \""
+              "add more content nodes"
+              "\", "
+              "reason: \""
+              "max address space in attribute vector components used (0.992188) > limit (0.8)"
+              "\", "
+              "addressSpace: { used: 133169152, dead: 0, limit: 134217728}, "
+              "document_type: \"test\", "
+              "attributeName: \"multiValueName\", componentName: \"multi-value\", subdb: \"ready\"}");
+}
+
+TEST_F(ResourceUsageWriteFilterTest, check_that_source_selector_limit_can_be_reached) {
+    EXPECT_TRUE(_notifier.setConfig(Config(0.8, 0.8, 0.0, 0.0, AttributeUsageFilterConfig(0.8))));
+    MyAttributeStats stats;
+    stats.trigger_source_selector_limit();
+    notify_attribute_usage(stats);
+    testWrite("addressSpaceLimitReached: { "
+              "action: \""
+              "add more content nodes"
+              "\", "
+              "reason: \""
+              "max address space in attribute vector components used (0.984252) > limit (0.8)"
+              "\", "
+              "addressSpace: { used: 250, dead: 0, limit: 254}, "
+              "document_type: \"test\", "
+              "attributeName: \"index_shards\"}");
+}
+
+GTEST_MAIN_RUN_ALL_TESTS()

@@ -8,7 +8,10 @@ import com.yahoo.document.DocumentTypeManagerConfigurer;
 import com.yahoo.document.StructDataType;
 import com.yahoo.document.datatypes.StringFieldValue;
 import com.yahoo.document.datatypes.Struct;
-import com.yahoo.document.serialization.*;
+import com.yahoo.document.serialization.DocumentDeserializer;
+import com.yahoo.document.serialization.DocumentDeserializerFactory;
+import com.yahoo.document.serialization.DocumentSerializer;
+import com.yahoo.document.serialization.DocumentSerializerFactory;
 import com.yahoo.io.GrowableByteBuffer;
 import org.junit.Before;
 import org.junit.Test;
@@ -18,6 +21,7 @@ import java.util.Iterator;
 /**
  * @author Einar M R Rosenvinge
  */
+@SuppressWarnings({"deprecation", "removal"})
 public class SystemTestCase {
 
     DocumentTypeManager manager;
@@ -129,10 +133,10 @@ public class SystemTestCase {
         annotate(inDocument);
 
         GrowableByteBuffer buffer = new GrowableByteBuffer();
-        DocumentSerializer serializer = DocumentSerializerFactory.create6(buffer);
+        DocumentSerializer serializer = DocumentSerializerFactory.createHead(buffer);
         serializer.write(inDocument);
         buffer.flip();
-        DocumentDeserializer deserializer = DocumentDeserializerFactory.create6(manager, buffer);
+        DocumentDeserializer deserializer = DocumentDeserializerFactory.createHead(manager, buffer);
 
         Document outDocument = new Document(deserializer);
         consume(outDocument);

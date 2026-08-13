@@ -13,6 +13,8 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -35,6 +37,7 @@ public abstract class GroupingOperation extends GroupingNode {
     private final Set<String> hints = LazySet.newHashSet();
 
     private GroupingExpression groupBy = null;
+    private FilterExpression filterBy = null;
     private GroupingOperation parent = null;
     private String where = null;
     private boolean forceSinglePass = false;
@@ -47,6 +50,8 @@ public abstract class GroupingOperation extends GroupingNode {
         super(image, label);
     }
 
+    /** @deprecated pass a FilterExpression (which can be null) */
+    @Deprecated // TODO: Remove on Vespa 9
     protected GroupingOperation(GroupingOperation parentOfCopy,
                                 String image,
                                 String label,
@@ -62,6 +67,27 @@ public abstract class GroupingOperation extends GroupingNode {
                                 int precision,
                                 int level,
                                 int max) {
+        this(parentOfCopy, image, label, orderBy, outputs, children, aliases, hints, groupBy, null, where,
+             forceSinglePass, accuracy, precision, level, max);
+    }
+
+
+    protected GroupingOperation(GroupingOperation parentOfCopy,
+                                String image,
+                                String label,
+                                List<GroupingExpression> orderBy,
+                                List<GroupingExpression> outputs,
+                                List<GroupingOperation> children,
+                                Map<String, GroupingExpression> aliases,
+                                Set<String> hints,
+                                GroupingExpression groupBy,
+                                FilterExpression filterBy,
+                                String where,
+                                boolean forceSinglePass,
+                                double accuracy,
+                                int precision,
+                                int level,
+                                int max) {
         super(image, label);
         this.parent = parentOfCopy;
         orderBy.forEach(item -> this.orderBy.add(item.copy()));
@@ -70,6 +96,7 @@ public abstract class GroupingOperation extends GroupingNode {
         aliases.forEach((key, value) -> this.aliases.put(key, value.copy()));
         this.hints.addAll(hints);
         if (groupBy != null) this.groupBy = groupBy.copy();
+        if (filterBy != null) this.filterBy = filterBy.copy();
         this.where = where;
         this.forceSinglePass = forceSinglePass;
         this.accuracy = accuracy;
@@ -96,7 +123,7 @@ public abstract class GroupingOperation extends GroupingNode {
 
     /**
      * Returns the alias associated with the given name. If no alias can be found in this node, this method queries its
-     * parent grouping node. If the alias still can not be found, this method returns null.
+     * parent grouping node. If the alias still cannot be found, this method returns null.
      *
      * @param id the id of the alias to return
      * @return the expression associated with the id
@@ -194,6 +221,20 @@ public abstract class GroupingOperation extends GroupingNode {
         return groupBy;
     }
 
+    /** Assigns an {@link FilterExpression} as the filter-by clause of this operation. */
+    @Beta
+    public GroupingOperation setFilterBy(FilterExpression exp) {
+        filterBy = Objects.requireNonNull(exp, "Filter expression cannot be null");
+        return this;
+    }
+
+    /**
+     * Returns the {@link FilterExpression} assigned as the filter-by clause of this operation.
+     * @return the filter expression or {@code null} if not specified
+     */
+    @Beta
+    public FilterExpression getFilterBy() { return filterBy; }
+
     /**
      * Returns the conceptual level of this node.
      *
@@ -216,7 +257,7 @@ public abstract class GroupingOperation extends GroupingNode {
     public void resolveLevel(int level) {
         if (groupBy != null) {
             if (level == 0) {
-                throw new IllegalArgumentException("Operation '" + this + "' can not group " +
+                throw new IllegalArgumentException("Operation '" + this + "' cannot group " +
                                                    getLevelDesc(level) + ".");
             }
             groupBy.resolveLevel(level - 1);
@@ -224,7 +265,7 @@ public abstract class GroupingOperation extends GroupingNode {
         }
         if (hasMax()) {
             if (level == 0) {
-                throw new IllegalArgumentException("Operation '" + this + "' can not apply max to " +
+                throw new IllegalArgumentException("Operation '" + this + "' cannot apply max to " +
                                                    getLevelDesc(level) + ".");
             }
         }
@@ -234,7 +275,7 @@ public abstract class GroupingOperation extends GroupingNode {
         }
         if (!orderBy.isEmpty()) {
             if (level == 0) {
-                throw new IllegalArgumentException("Operation '" + this + "' can not order " +
+                throw new IllegalArgumentException("Operation '" + this + "' cannot order " +
                                                    getLevelDesc(level) + ".");
             }
             for (GroupingExpression exp : orderBy) {
@@ -480,6 +521,9 @@ public abstract class GroupingOperation extends GroupingNode {
         }
         for (String hint : hints) {
             ret.append("hint(").append(hint).append(") ");
+        }
+        if (filterBy != null) {
+            ret.append("filter(").append(filterBy).append(") ");
         }
         if (hasMax()) {
             ret.append("max(").append(max).append(") ");

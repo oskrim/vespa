@@ -2,7 +2,7 @@
 package com.yahoo.vespa.model.application.validation;
 
 import com.yahoo.config.application.api.DeployLogger;
-import com.yahoo.config.model.deploy.DeployState;
+import com.yahoo.config.model.deploy.TestDeployState;
 import com.yahoo.schema.derived.TestableDeployLogger;
 import com.yahoo.vespa.model.VespaModel;
 import com.yahoo.vespa.model.content.utils.ApplicationPackageBuilder;
@@ -44,8 +44,10 @@ public class SchemaDataTypeValidatorTestCase {
             new VespaModelCreatorWithFilePkg("src/test/cfg/application/validation/index_struct/").create();
             fail();
         } catch (IllegalArgumentException e) {
-            assertEquals("Field type 'Map<string,string>' cannot be indexed for search clusters (field 'baz' in definition " +
-                    "'simple' for cluster 'content').", e.getMessage());
+            assertEquals("For cluster 'content', schema 'simple': The following complex fields have struct fields " +
+                                 "with 'indexing: index' which is not supported: baz (baz.key, baz.value). " +
+                                 "Remove setting or change to 'indexing: attribute' if needed for matching.",
+                         e.getMessage());
         }
     }
 
@@ -112,8 +114,8 @@ public class SchemaDataTypeValidatorTestCase {
     }
 
     private static VespaModel createModel(DeployLogger logger, String sdContent) {
-        var builder = new DeployState.Builder();
-        builder.deployLogger(logger);
+        var builder = TestDeployState.createBuilder()
+                .deployLogger(logger);
         return new ApplicationPackageBuilder()
                 .addCluster(new ContentClusterBuilder().name("content").docTypes(List.of(DocType.index("test"))))
                 .addSchemas(new SchemaBuilder().name("test").content(sdContent).build())

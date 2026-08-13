@@ -4,12 +4,14 @@ package ai.vespa.embedding;
 import ai.vespa.modelintegration.evaluator.OnnxEvaluator;
 import ai.vespa.modelintegration.evaluator.OnnxEvaluatorOptions;
 import ai.vespa.modelintegration.evaluator.OnnxRuntime;
+import ai.vespa.modelintegration.utils.OnnxExternalDataResolver;
 import com.yahoo.api.annotations.Beta;
 import com.yahoo.component.AbstractComponent;
 import com.yahoo.component.annotation.Inject;
 import com.yahoo.embedding.SpladeEmbedderConfig;
 import com.yahoo.language.huggingface.HuggingFaceTokenizer;
 import com.yahoo.language.process.Embedder;
+import ai.vespa.modelintegration.evaluator.config.OnnxEvaluatorConfig;
 import com.yahoo.tensor.DirectIndexedAddress;
 import com.yahoo.tensor.IndexedTensor;
 import com.yahoo.tensor.Tensor;
@@ -27,6 +29,7 @@ import static com.yahoo.language.huggingface.ModelInfo.TruncationStrategy.LONGES
  * are the subword strings from the wordpiece vocabulary that has a score above a threshold (default 0.0).
  *
  * @author bergum
+ * @author glebashnik
  */
 @Beta
 public class SpladeEmbedder extends AbstractComponent implements Embedder {
@@ -42,19 +45,20 @@ public class SpladeEmbedder extends AbstractComponent implements Embedder {
     private final OnnxEvaluator evaluator;
 
     @Inject
-    public SpladeEmbedder(OnnxRuntime onnx, Embedder.Runtime runtime, SpladeEmbedderConfig config) {
-        this(onnx, runtime, config, true);
+    public SpladeEmbedder(OnnxRuntime onnx, Embedder.Runtime runtime, SpladeEmbedderConfig embedderConfig, OnnxEvaluatorConfig onnxConfig) {
+        this(onnx, runtime, embedderConfig, onnxConfig, true);
     }
-    SpladeEmbedder(OnnxRuntime onnx, Embedder.Runtime runtime, SpladeEmbedderConfig config, boolean useCustomReduce) {
+    
+    SpladeEmbedder(OnnxRuntime onnx, Embedder.Runtime runtime, SpladeEmbedderConfig embedderConfig, OnnxEvaluatorConfig onnxConfig, boolean useCustomReduce) {
         this.runtime = runtime;
-        inputIdsName = config.transformerInputIds();
-        attentionMaskName = config.transformerAttentionMask();
-        outputName = config.transformerOutput();
-        tokenTypeIdsName = config.transformerTokenTypeIds();
-        termScoreThreshold = config.termScoreThreshold();
+        inputIdsName = embedderConfig.transformerInputIds();
+        attentionMaskName = embedderConfig.transformerAttentionMask();
+        outputName = embedderConfig.transformerOutput();
+        tokenTypeIdsName = embedderConfig.transformerTokenTypeIds();
+        termScoreThreshold = embedderConfig.termScoreThreshold();
         this.useCustomReduce = useCustomReduce;
 
-        var tokenizerPath = Paths.get(config.tokenizerPath().toString());
+        var tokenizerPath = Paths.get(embedderConfig.tokenizerPath().toString());
         var builder = new HuggingFaceTokenizer.Builder()
                 .addSpecialTokens(true)
                 .addDefaultModel(tokenizerPath)
@@ -63,19 +67,18 @@ public class SpladeEmbedder extends AbstractComponent implements Embedder {
         if (info.maxLength() == -1 || info.truncation() != LONGEST_FIRST) {
             // Force truncation
             // to max length accepted by model if tokenizer.json contains no valid truncation configuration
-            int maxLength = info.maxLength() > 0 && info.maxLength() <= config.transformerMaxTokens()
+            int maxLength = info.maxLength() > 0 && info.maxLength() <= embedderConfig.transformerMaxTokens()
                     ? info.maxLength()
-                    : config.transformerMaxTokens();
+                    : embedderConfig.transformerMaxTokens();
             builder.setTruncation(true).setMaxLength(maxLength);
         }
         this.tokenizer = builder.build();
-        var onnxOpts = new OnnxEvaluatorOptions();
 
-        if (config.transformerGpuDevice() >= 0)
-            onnxOpts.setGpuDevice(config.transformerGpuDevice());
-        onnxOpts.setExecutionMode(config.transformerExecutionMode().toString());
-        onnxOpts.setThreads(config.transformerInterOpThreads(), config.transformerIntraOpThreads());
-        evaluator = onnx.evaluatorOf(config.transformerModel().toString(), onnxOpts);
+        var resolver = new OnnxExternalDataResolver();
+        var onnxOpts = OnnxEvaluatorOptions.of(onnxConfig);
+        var modelPath = resolver.resolveOnnxModel(embedderConfig.transformerModelReference()).toString();
+        this.evaluator = onnx.evaluatorOf(modelPath, onnxOpts);
+        
         validateModel();
     }
 
@@ -125,9 +128,11 @@ public class SpladeEmbedder extends AbstractComponent implements Embedder {
         Tensor tokenTypeIds = createTensorRepresentation(encoding.typeIds(), "d1");
 
         Map<String, Tensor> inputs = Map.of(inputIdsName, inputSequence.expand("d0"),
-                attentionMaskName, attentionMask.expand("d0"),
-                tokenTypeIdsName, tokenTypeIds.expand("d0"));
-        IndexedTensor output = (IndexedTensor) evaluator.evaluate(inputs).get(outputName);
+                                            attentionMaskName, attentionMask.expand("d0"),
+                                            tokenTypeIdsName, tokenTypeIds.expand("d0"));
+        IndexedTensor output = (IndexedTensor) evaluator
+                .evaluate(inputs, OnnxEmbedderTimeout.remainingOrThrow(context))
+                .get(outputName);
         Tensor spladeTensor = useCustomReduce
                 ? sparsifyCustomReduce(output, tensorType)
                 : sparsifyReduce(output, tensorType);
@@ -163,8 +168,6 @@ public class SpladeEmbedder extends AbstractComponent implements Embedder {
         }
         return builder.build();
     }
-
-
 
     /**
      * Sparsify the model output tensor.This uses an unrolled custom reduce and is 15-20% faster than the using

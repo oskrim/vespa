@@ -9,10 +9,13 @@ import com.yahoo.searchlib.rankingexpression.evaluation.ExpressionOptimizer;
 import com.yahoo.searchlib.rankingexpression.evaluation.gbdtoptimization.GBDTForestNode;
 import org.junit.Test;
 
+import java.util.List;
+
 import static org.junit.Assert.assertTrue;
 
 /**
  * @author lesters
+ * @author thomasht86
  */
 public class LightGBMImportEvaluationTestCase extends LightGBMTestBase {
 
@@ -45,5 +48,42 @@ public class LightGBMImportEvaluationTestCase extends LightGBMTestBase {
         assertEvaluation(0.38730827, expression, features(context).add("numerical_2", 0.5).add("categorical_1", "b").add("categorical_2", "j"));
         assertEvaluation(0.5647872,  expression, features(context).add("numerical_1", 0.7).add("numerical_2", 0.8).add("categorical_2", "m"));
     }
+
+    @Test
+    public void testCategoricalHandling() {
+        RankingExpression expression = importModel("src/test/models/lightgbm/categorical.json");
+        ArrayContext context = new ArrayContext(expression, DoubleValue.NaN);
+        String testCasePath = "src/test/testcases/lightgbm/categorical_tests.json";
+        String targetFeature = "model_prediction";
+
+        List<TestCase> testCases = loadTestCasesFromJson(testCasePath, targetFeature);
+
+        for (TestCase testCase : testCases) {
+            assertEvaluation(
+                    testCase.expectedPrediction(),
+                    expression,
+                    features(context, testCase.features())
+            );
+        }
+        }
+
+    @Test
+    public void testCategoricalIntegers() {
+        RankingExpression expression = importModel("src/test/models/lightgbm/cat_integers.json");
+        ArrayContext context = new ArrayContext(expression, DoubleValue.NaN);
+        String testCasePath = "src/test/testcases/lightgbm/cat_integers_tests.json";
+        String targetFeature = "model_prediction";
+
+        List<TestCase> testCases = loadTestCasesFromJson(testCasePath, targetFeature);
+
+        for (TestCase testCase : testCases) {
+            assertEvaluation(
+                    testCase.expectedPrediction(),
+                    expression,
+                    features(context, testCase.features())
+            );
+        }
+    }
+
 
 }

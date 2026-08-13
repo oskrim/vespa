@@ -4,6 +4,7 @@ package com.yahoo.schema.processing;
 import com.yahoo.config.application.api.ApplicationPackage;
 import com.yahoo.config.model.application.provider.FilesApplicationPackage;
 import com.yahoo.config.model.deploy.DeployState;
+import com.yahoo.config.model.deploy.TestDeployState;
 import com.yahoo.io.IOUtils;
 import com.yahoo.path.Path;
 import com.yahoo.vespa.config.search.RankProfilesConfig;
@@ -14,7 +15,10 @@ import com.yahoo.vespa.model.search.DocumentDatabase;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
+import java.util.Map;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class RankingExpressionWithOnnxModelTestCase {
@@ -50,8 +54,8 @@ public class RankingExpressionWithOnnxModelTestCase {
     }
 
     private VespaModel loadModel(Path path) throws Exception {
-        FilesApplicationPackage applicationPackage = FilesApplicationPackage.fromFile(path.toFile());
-        DeployState state = new DeployState.Builder().applicationPackage(applicationPackage).build();
+        FilesApplicationPackage applicationPackage = FilesApplicationPackage.fromDir(path.toFile(), Map.of());
+        DeployState state = TestDeployState.create(applicationPackage);
         return new VespaModel(state);
     }
 
@@ -72,6 +76,7 @@ public class RankingExpressionWithOnnxModelTestCase {
         assertEquals(6, config.model().size());
         for (OnnxModelsConfig.Model model : config.model()) {
             assertTrue(model.dry_run_on_setup());
+            assertTrue(model.optimize_model());
         }
 
         OnnxModelsConfig.Model model = config.model(0);

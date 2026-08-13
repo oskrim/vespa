@@ -10,7 +10,10 @@ import org.junit.Test;
 
 import static com.yahoo.vespa.indexinglanguage.expressions.ExpressionAssert.assertVerify;
 import static com.yahoo.vespa.indexinglanguage.expressions.ExpressionAssert.assertVerifyThrows;
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 /**
  * @author Simon Thoresen Hult
@@ -29,8 +32,8 @@ public class HexDecodeTestCase {
     public void requireThatExpressionCanBeVerified() {
         Expression exp = new HexDecodeExpression();
         assertVerify(DataType.STRING, exp, DataType.LONG);
-        assertVerifyThrows(null, exp, "Expected string input, but no input is specified");
-        assertVerifyThrows(DataType.LONG, exp, "Expected string input, got long");
+        assertVerifyThrows("Invalid expression 'hexdecode': Expected string input, but no input is provided", null, exp);
+        assertVerifyThrows("Invalid expression 'hexdecode': Expected string input, got long", DataType.LONG, exp);
     }
 
     @Test

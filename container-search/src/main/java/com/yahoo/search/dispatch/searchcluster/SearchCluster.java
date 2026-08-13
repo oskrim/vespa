@@ -45,9 +45,9 @@ public class SearchCluster implements NodeManager<Node> {
      */
     private volatile Node localCorpusDispatchTarget;
 
-    public SearchCluster(String clusterId, double minActivedocsPercentage, Collection<Node> nodes,
+    public SearchCluster(String clusterId, AvailabilityPolicy availabilityPolicy, Collection<Node> nodes,
                          VipStatus vipStatus, PingFactory pingFactory) {
-        this(clusterId, toGroups(nodes, minActivedocsPercentage), vipStatus, pingFactory);
+        this(clusterId, toGroups(availabilityPolicy, nodes), vipStatus, pingFactory);
     }
 
     public SearchCluster(String clusterId, SearchGroupsImpl groups, VipStatus vipStatus, PingFactory pingFactory) {
@@ -62,17 +62,16 @@ public class SearchCluster implements NodeManager<Node> {
     @Override
     public String name() { return clusterId; }
 
-    /** Sets the new nodes to monitor to be the new nodes, but keep any existing node instances which equal the new ones. */
-    public void updateNodes(Collection<Node> newNodes, ClusterMonitor<Node> monitor, double minActivedocsPercentage) {
+    /** Sets the new nodes to monitor to be the new nodes, but keep any existing node instances which are equal the new ones. */
+    public void updateNodes(AvailabilityPolicy availabilityPolicy, Collection<Node> newNodes, ClusterMonitor<Node> monitor) {
         List<Node> currentNodes = new ArrayList<>(newNodes);
-        List<Node> addedNodes = new ArrayList<>();
         Map<Node, Node> retainedNodes = groups.nodes().stream().collect(toMap(node -> node, node -> node));
         for (int i = 0; i < currentNodes.size(); i++) {
             Node retained = retainedNodes.get(currentNodes.get(i));
-            if (retained != null) currentNodes.set(i, retained);
-            else addedNodes.add(currentNodes.get(i));
+            if (retained != null)
+                currentNodes.set(i, retained);
         }
-        SearchGroupsImpl groups = toGroups(currentNodes, minActivedocsPercentage);
+        SearchGroupsImpl groups = toGroups(availabilityPolicy, currentNodes);
         this.localCorpusDispatchTarget = findLocalCorpusDispatchTarget(HostName.getLocalhost(), groups);
         this.monitoredGroups = groups;
         monitor.reconfigure(groups.nodes());
@@ -103,12 +102,12 @@ public class SearchCluster implements NodeManager<Node> {
         return localSearchNode;
     }
 
-    private static SearchGroupsImpl toGroups(Collection<Node> nodes, double minActivedocsPercentage) {
+    private static SearchGroupsImpl toGroups(AvailabilityPolicy availabilityPolicy, Collection<Node> nodes) {
         Map<Integer, Group> groups = new HashMap<>();
         nodes.stream().collect(groupingBy(Node::group)).forEach((groupId, groupNodes) -> {
             groups.put(groupId, new Group(groupId, groupNodes));
         });
-        return new SearchGroupsImpl(Map.copyOf(groups), minActivedocsPercentage);
+        return new SearchGroupsImpl(availabilityPolicy, Map.copyOf(groups));
     }
 
     public SearchGroups groupList() { return groups; }
@@ -223,6 +222,9 @@ public class SearchCluster implements NodeManager<Node> {
     private void pingIterationCompletedSingleGroup(SearchGroupsImpl groups) {
         Group group = groups.groups().iterator().next();
         group.aggregateNodeValues();
+        // Mark the document count as "not reliable" since we only have one group. That is, when a node is down,
+        // it will be a node from this very group and a "reliable" document count would be outdated anyway.
+        groups.setDocumentCount(new DocumentCount(group.activeDocuments(), group.targetActiveDocuments(), false));
         // With just one group sufficient coverage may not be the same as full coverage, as the
         // group will always be marked sufficient for use.
         updateSufficientCoverage(group, true);
@@ -235,6 +237,7 @@ public class SearchCluster implements NodeManager<Node> {
         groups.groups().forEach(Group::aggregateNodeValues);
         long medianDocuments = groups.medianDocumentCount();
         long maxDocuments = groups.maxDocumentCount();
+        groups.setDocumentCount(new DocumentCount(maxDocuments, groups.maxTargetDocumentCount(), groups.hasGroupWithAllNodesWorking()));
         for (Group group : groups.groups()) {
             boolean sufficientCoverage = groups.isGroupCoverageSufficient(group.hasSufficientCoverage(),
                                                                           group.activeDocuments(), medianDocuments, maxDocuments);
@@ -273,7 +276,7 @@ public class SearchCluster implements NodeManager<Node> {
                 log.info("Cluster " + clusterId + ": " + group + " has full coverage. " +
                          "Active documents: " + group.activeDocuments() + "/" + medianDocuments + ", " +
                          "Target active documents: " + group.targetActiveDocuments() + ", " +
-                         "working nodes: " + group.workingNodes() + "/" + group.nodes().size());
+                         "working nodes: " + group.workingNodesCount() + "/" + group.nodes().size());
             } else {
                 StringBuilder unresponsive = new StringBuilder();
                 for (var node : group.nodes()) {
@@ -283,7 +286,7 @@ public class SearchCluster implements NodeManager<Node> {
                 String message = "Cluster " + clusterId + ": " + group + " has reduced coverage: " +
                                  "Active documents: " + group.activeDocuments() + "/" + maxDocuments + ", " +
                                  "Target active documents: " + group.targetActiveDocuments() + ", " +
-                                 "working nodes: " + group.workingNodes() + "/" + group.nodes().size() +
+                                 "working nodes: " + group.workingNodesCount() + "/" + group.nodes().size() +
                                  ", unresponsive nodes: " + (unresponsive.toString().isEmpty() ? " none" : unresponsive);
                 if (nonWorkingNodeCount() == 1) // That is normal
                     log.info(message);
@@ -312,7 +315,6 @@ public class SearchCluster implements NodeManager<Node> {
                 if (pong.activeDocuments().isPresent()) {
                     node.setActiveDocuments(pong.activeDocuments().get());
                     node.setTargetActiveDocuments(pong.targetActiveDocuments().get());
-                    node.setBlockingWrites(pong.isBlockingWrites());
                 }
                 clusterMonitor.responded(node);
             }

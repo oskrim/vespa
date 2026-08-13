@@ -19,8 +19,10 @@ import com.yahoo.config.provision.ClusterSpec;
 import com.yahoo.config.provision.Flavor;
 import com.yahoo.config.provision.HostSpec;
 import com.yahoo.config.provision.NodeResources;
+import com.yahoo.config.provision.ProvisionContext;
 import com.yahoo.config.provision.ProvisionLogger;
 import com.yahoo.config.provision.Zone;
+import com.yahoo.text.Text;
 import com.yahoo.vespa.model.VespaModel;
 import com.yahoo.vespa.model.test.utils.VespaModelCreatorWithMockPkg;
 
@@ -44,7 +46,7 @@ import static com.yahoo.vespa.model.test.utils.ApplicationPackageUtils.generateS
  *     VespaModel model = tester.createModel(servicesString);
  *     ... assert on model
  * </code>
- * 
+ *
  * @author bratseth
  */
 public class VespaModelTester {
@@ -86,7 +88,7 @@ public class VespaModelTester {
             // Let host names sort in the opposite order of the order the hosts are added
             // This allows us to test index vs. name order selection when subsets of hosts are selected from a cluster
             // (for e.g cluster controllers and slobrok nodes)
-            String hostname = String.format("%s-%02d",
+            String hostname = Text.format("%s-%03d",
                                             "node" + "-" + Math.round(resources.vcpu()) +
                                                      "-" + Math.round(resources.memoryGiB()) +
                                                      "-" + Math.round(resources.diskGb()),
@@ -95,8 +97,8 @@ public class VespaModelTester {
         }
         this.hostsByResources.put(resources, hosts);
 
-        if (hosts.size() > 100)
-            throw new IllegalStateException("The host naming scheme is nameNN. To test more than 100 hosts, change to nameNNN");
+        if (hosts.size() > 999)
+            throw new IllegalStateException("The host naming scheme is nameNN. To test more than 999 hosts, change to nameNNN");
         return new Hosts(hosts);
     }
 
@@ -250,12 +252,12 @@ public class VespaModelTester {
         @Override
         public HostSpec allocateHost(String alias) {
             throw new UnsupportedOperationException("Allocating hosts using <node> tags is not supported in hosted environments, " +
-                                                    "use <nodes count='N'> instead, see https://cloud.vespa.ai/en/reference/services");
+                                                    "use <nodes count='N'> instead, see https://docs.vespa.ai/en/reference/applications/services/services.html#nodes");
         }
 
         @Override
-        public List<HostSpec> prepare(ClusterSpec cluster, Capacity capacity, ProvisionLogger logger) {
-            return provisioner.prepare(cluster, capacity, logger);
+        public List<HostSpec> prepare(ClusterSpec cluster, Capacity capacity, ProvisionContext context) {
+            return provisioner.prepare(cluster, capacity, context);
         }
 
     }

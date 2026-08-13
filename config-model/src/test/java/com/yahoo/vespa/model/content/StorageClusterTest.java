@@ -3,6 +3,7 @@ package com.yahoo.vespa.model.content;
 
 import com.yahoo.config.model.api.ModelContext;
 import com.yahoo.config.model.deploy.DeployState;
+import com.yahoo.config.model.deploy.TestDeployState;
 import com.yahoo.config.model.deploy.TestProperties;
 import com.yahoo.config.model.provision.SingleNodeProvisioner;
 import com.yahoo.config.model.test.MockApplicationPackage;
@@ -24,18 +25,21 @@ import com.yahoo.yolean.Exceptions;
 import org.junit.jupiter.api.Test;
 
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 public class StorageClusterTest {
 
     StorageCluster parse(String xml, Flavor flavor) {
-        MockRoot root = new MockRoot("", new DeployState.Builder()
+        MockRoot root = new MockRoot("", TestDeployState.createBuilder()
                 .applicationPackage(new MockApplicationPackage.Builder().build())
                 .modelHostProvisioner(new SingleNodeProvisioner(flavor)).build());
         return parse(xml, root);
     }
     StorageCluster parse(String xml, Flavor flavor, ModelContext.Properties properties) {
-        MockRoot root = new MockRoot("", new DeployState.Builder()
+        MockRoot root = new MockRoot("", TestDeployState.createBuilder()
                 .applicationPackage(new MockApplicationPackage.Builder().build())
                 .modelHostProvisioner(new SingleNodeProvisioner(flavor))
                 .properties(properties).build());
@@ -193,9 +197,9 @@ public class StorageClusterTest {
     }
 
     void assertMergeAutoScaleConfigHasExpectedValues(StorServerConfig.Merge_throttling_memory_limit limit) {
-        assertEquals(128L*1024*1024,    limit.auto_lower_bound_bytes());
-        assertEquals(2L*1024*1024*1024, limit.auto_upper_bound_bytes());
-        assertEquals(0.03,              limit.auto_phys_mem_scale_factor(), 0.000001);
+        assertEquals(128L*1024*1024, limit.auto_lower_bound_bytes());
+        assertEquals(1024*1024*1024, limit.auto_upper_bound_bytes());
+        assertEquals(0.015,          limit.auto_phys_mem_scale_factor(), 0.000001);
     }
 
     @Test
@@ -336,21 +340,31 @@ public class StorageClusterTest {
         assertEquals(3.0, config.async_operation_throttler().resize_rate(), 0.0001);
     }
 
-    private void verifyMaxFeedOpBatchSize(int expected, Integer flagValue) {
+    @Test
+    void persistence_max_feed_op_batch_size() {
+        var config = filestorConfigFromProducer(simpleCluster(new TestProperties()));
+        assertEquals(64, config.max_feed_op_batch_size());
+    }
+
+    private void verifyMaintenanceThrottlingConfig(boolean expectedDynamic, int expectedMaxWinSize, Integer flagValue) {
         var props = new TestProperties();
         if (flagValue != null) {
-            props.setPersistenceThreadMaxFeedOpBatchSize(flagValue);
+            props.setMaxContentNodeMaintenanceOpConcurrency(flagValue);
         }
         var config = filestorConfigFromProducer(simpleCluster(props));
-        assertEquals(expected, config.max_feed_op_batch_size());
+        assertEquals(expectedMaxWinSize, config.maintenance_operation_throttler().max_window_size());
+        var expectedThrottleType = expectedDynamic ? StorFilestorConfig.Maintenance_operation_throttler.Type.DYNAMIC
+                                                   : StorFilestorConfig.Maintenance_operation_throttler.Type.UNLIMITED;
+        assertEquals(expectedThrottleType, config.maintenance_operation_throttler().type());
     }
 
     @Test
-    void persistence_max_feed_op_batch_size_is_controlled_by_feature_flag() {
-        // TODO update default once rolled out and tested
-        verifyMaxFeedOpBatchSize(1, null);
-        verifyMaxFeedOpBatchSize(1, 1);
-        verifyMaxFeedOpBatchSize(1234, 1234);
+    void content_node_maintenance_throttler_max_window_size_is_controlled_by_feature_flag() {
+        verifyMaintenanceThrottlingConfig(false, -1, null); // unlimited
+        verifyMaintenanceThrottlingConfig(false, -1, 0);
+        verifyMaintenanceThrottlingConfig(false, -1, -1);
+        verifyMaintenanceThrottlingConfig(false, -1, -1000);
+        verifyMaintenanceThrottlingConfig(true, 1234, 1234);
     }
 
     @Test

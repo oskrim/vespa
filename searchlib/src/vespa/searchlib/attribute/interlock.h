@@ -30,30 +30,24 @@ class InterlockGuard;
 class Interlock {
     std::mutex _mutex;
     friend class InterlockGuard;
-public:
-    Interlock() noexcept
-        : _mutex()
-    {
-    }
 
-    virtual ~Interlock() { }
+public:
+    Interlock() noexcept : _mutex() {}
+
+    virtual ~Interlock() = default;
 };
 
 /**
  * Class used to serialize getting enum change exclusive lock.  The guard
  * is passed to EnumModifier constructor to signal that interlock is held.
  */
-class InterlockGuard
-{
+class InterlockGuard {
     std::lock_guard<std::mutex> _guard;
-public:
-    InterlockGuard(Interlock &interlock)
-        : _guard(interlock._mutex)
-    {
-    }
 
-    ~InterlockGuard() { }
+public:
+    InterlockGuard(Interlock& interlock) : _guard(interlock._mutex) {}
+
+    ~InterlockGuard() {}
 };
 
-
-}
+} // namespace search::attribute

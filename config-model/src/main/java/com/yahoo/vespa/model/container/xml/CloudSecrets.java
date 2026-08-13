@@ -14,12 +14,12 @@ import java.util.List;
  */
 public class CloudSecrets extends SimpleComponent implements SecretsConfig.Producer {
 
-    private static final String CLASS = "ai.vespa.secret.aws.SecretsImpl";
-    private static final String BUNDLE = "jdisc-cloud-aws";
+    static final String CLASS = "ai.vespa.secret.aws.SecretsImpl";
+    private static final String BUNDLE = "cloud-aws";
 
     private final List<SecretConfig> secrets = new ArrayList<>();
 
-    private record SecretConfig(String key, String name, String vault) {}
+    public record SecretConfig(String key, String name, String vault) {}
 
     public CloudSecrets() {
         super(new ComponentModel(BundleInstantiationSpecification.fromStrings(CLASS, CLASS, BUNDLE)));
@@ -34,6 +34,10 @@ public class CloudSecrets extends SimpleComponent implements SecretsConfig.Produ
 
     public void addSecret(String key, String name, String vault) {
         secrets.add(new SecretConfig(key, name, vault));
+    }
+
+    public List<SecretConfig> configuredSecrets() {
+        return List.copyOf(secrets);
     }
 
 }

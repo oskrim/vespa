@@ -11,7 +11,10 @@ import static com.yahoo.vespa.clustercontroller.core.FeedBlockUtil.forNode;
 import static com.yahoo.vespa.clustercontroller.core.FeedBlockUtil.mapOf;
 import static com.yahoo.vespa.clustercontroller.core.FeedBlockUtil.setOf;
 import static com.yahoo.vespa.clustercontroller.core.FeedBlockUtil.usage;
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class ResourceExhaustionCalculatorTest {
 
@@ -38,7 +41,7 @@ public class ResourceExhaustionCalculatorTest {
         assertTrue(feedBlock.blockFeedInCluster());
         // Manually verify message decoration in this test
         assertEquals("in content cluster 'foo': disk on node 1 [storage.1.local] is 51.0% full " +
-                     "(the configured limit is 50.0%). See https://docs.vespa.ai/en/operations/feed-block.html",
+                     "(the configured limit is 50.0%). See https://docs.vespa.ai/en/writing/feed-block.html",
                      feedBlock.getDescription());
     }
 
@@ -118,7 +121,7 @@ public class ResourceExhaustionCalculatorTest {
         var feedBlock = calc.inferContentClusterFeedBlockOrNull(cf.cluster());
         assertNotNull(feedBlock);
         // TODO should we not change the limits themselves? Explicit mention of hysteresis state?
-        assertEquals(decorate(cf, "memory on node 1 [storage.1.local] is 49.0% full (the configured limit is 40.0%)"),
+        assertEquals(decorate(cf, "memory on node 1 [storage.1.local] is 49.0% full (the configured limit is 50.0%, effective limit lowered to 40.0% until feed unblocked)"),
                      feedBlock.getDescription());
     }
 
@@ -132,7 +135,7 @@ public class ResourceExhaustionCalculatorTest {
                 forNode(2, usage("disk", 0.3), usage("memory", 0.49)));
         var feedBlock = calc.inferContentClusterFeedBlockOrNull(cf.cluster());
         assertNotNull(feedBlock);
-        assertEquals(decorate(cf, "memory on node 1 [storage.1.local] is 48.0% full (the configured limit is 40.0%)"),
+        assertEquals(decorate(cf, "memory on node 1 [storage.1.local] is 48.0% full (the configured limit is 50.0%, effective limit lowered to 40.0% until feed unblocked)"),
                      feedBlock.getDescription());
     }
 

@@ -7,12 +7,17 @@ import com.yahoo.document.Field;
 import com.yahoo.document.StructDataType;
 import com.yahoo.document.datatypes.StringFieldValue;
 import com.yahoo.document.datatypes.Struct;
-import com.yahoo.document.serialization.*;
+import com.yahoo.document.serialization.DocumentDeserializer;
+import com.yahoo.document.serialization.DocumentDeserializerFactory;
+import com.yahoo.document.serialization.DocumentSerializer;
+import com.yahoo.document.serialization.DocumentSerializerFactory;
 import com.yahoo.io.GrowableByteBuffer;
 import org.junit.Before;
 import org.junit.Test;
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
 
+@SuppressWarnings({"deprecation", "removal"})
 public class Bug6425939TestCase {
     private DocumentTypeManager man;
     private StructDataType person;
@@ -37,13 +42,13 @@ public class Bug6425939TestCase {
         emptyString.setSpanTree(createSpanTree());
 
         GrowableByteBuffer buffer = new GrowableByteBuffer(1024);
-        DocumentSerializer serializer = DocumentSerializerFactory.create6(buffer);
+        DocumentSerializer serializer = DocumentSerializerFactory.createHead(buffer);
         Field strField = new Field("flarn", DataType.STRING);
         serializer.write(strField, emptyString);
         buffer.flip();
 
         // Should not throw exception if bug 6425939 is fixed:
-        DocumentDeserializer deserializer = DocumentDeserializerFactory.create6(man, buffer);
+        DocumentDeserializer deserializer = DocumentDeserializerFactory.createHead(man, buffer);
         StringFieldValue deserializedString = new StringFieldValue();
         deserializer.read(strField, deserializedString);
 

@@ -1,7 +1,9 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.config.application;
 
+import com.yahoo.config.provision.ApplicationName;
 import com.yahoo.config.provision.Cloud;
+import com.yahoo.config.provision.CloudName;
 import com.yahoo.config.provision.Environment;
 import com.yahoo.config.provision.InstanceName;
 import com.yahoo.config.provision.RegionName;
@@ -11,6 +13,9 @@ import org.w3c.dom.Document;
 
 import java.io.File;
 import java.io.StringReader;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertThrows;
 
 /**
  * @author hmusum
@@ -51,6 +56,7 @@ public class XmlPreprocessorTest {
         TestBase.assertDocument(expectedDev,
                                 new XmlPreProcessor(appDir,
                                                     services,
+                                                    ApplicationName.defaultName(),
                                                     InstanceName.defaultName(),
                                                     Environment.dev,
                                                     RegionName.defaultName(),
@@ -87,6 +93,7 @@ public class XmlPreprocessorTest {
         TestBase.assertDocument(expectedStaging,
                                 new XmlPreProcessor(appDir,
                                                     services,
+                                                    ApplicationName.defaultName(),
                                                     InstanceName.defaultName(),
                                                     Environment.staging,
                                                     RegionName.defaultName(),
@@ -121,6 +128,7 @@ public class XmlPreprocessorTest {
         TestBase.assertDocument(expectedPerfUsWest,
                                 new XmlPreProcessor(appDir,
                                                     services,
+                                                    ApplicationName.defaultName(),
                                                     InstanceName.defaultName(),
                                                     Environment.perf,
                                                     RegionName.from("us-west"),
@@ -155,6 +163,7 @@ public class XmlPreprocessorTest {
         TestBase.assertDocument(expectedPerfUsEastAndCentral,
                                 new XmlPreProcessor(appDir,
                                                     services,
+                                                    ApplicationName.defaultName(),
                                                     InstanceName.defaultName(),
                                                     Environment.perf,
                                                     RegionName.from("us-east"),
@@ -162,6 +171,7 @@ public class XmlPreprocessorTest {
         TestBase.assertDocument(expectedPerfUsEastAndCentral,
                                 new XmlPreProcessor(appDir,
                                                     services,
+                                                    ApplicationName.defaultName(),
                                                     InstanceName.defaultName(),
                                                     Environment.perf,
                                                     RegionName.from("us-central"),
@@ -204,6 +214,7 @@ public class XmlPreprocessorTest {
         TestBase.assertDocument(expectedProdUsWest,
                                 new XmlPreProcessor(appDir,
                                                     services,
+                                                    ApplicationName.defaultName(),
                                                     InstanceName.defaultName(),
                                                     Environment.prod,
                                                     RegionName.from("us-west"),
@@ -246,6 +257,7 @@ public class XmlPreprocessorTest {
         TestBase.assertDocument(expectedProdUsEastAndCentral,
                                 new XmlPreProcessor(appDir,
                                                     services,
+                                                    ApplicationName.defaultName(),
                                                     InstanceName.defaultName(),
                                                     Environment.prod,
                                                     RegionName.from("us-east"),
@@ -253,6 +265,7 @@ public class XmlPreprocessorTest {
         TestBase.assertDocument(expectedProdUsEastAndCentral,
                                 new XmlPreProcessor(appDir,
                                                     services,
+                                                    ApplicationName.defaultName(),
                                                     InstanceName.defaultName(),
                                                     Environment.prod,
                                                     RegionName.from("us-central"),
@@ -304,12 +317,66 @@ public class XmlPreprocessorTest {
                 </services>""";
         Document docDev = (new XmlPreProcessor(appDir,
                                                new StringReader(input),
+                                               ApplicationName.defaultName(),
                                                InstanceName.defaultName(),
                                                Environment.prod,
                                                RegionName.defaultName(),
                                                Cloud.defaultCloud().name(),
                                                Tags.empty()).run());
         TestBase.assertDocument(expectedProd, docDev);
+    }
+
+    @Test
+    public void testCloud() throws Exception {
+        String input =
+                """
+                <?xml version="1.0" encoding="UTF-8" standalone="no"?>
+                <services xmlns:deploy="vespa" xmlns:preprocess="properties" version="1.0">
+                  <config name='a'>
+                     <port deploy:cloud='aws'>4080</port>
+                     <port deploy:cloud='gcp'>8080</port>
+                  </config>
+                </services>""";
+
+        String expected =
+                """
+                <?xml version="1.0" encoding="UTF-8" standalone="no"?>
+                <services xmlns:deploy="vespa" xmlns:preprocess="properties" version="1.0">
+                  <config name='a'>
+                     <port>8080</port>
+                  </config>
+                </services>""";
+        Document doc = new XmlPreProcessor(appDir,
+                                               new StringReader(input),
+                                               ApplicationName.defaultName(),
+                                               InstanceName.defaultName(),
+                                               Environment.prod,
+                                               RegionName.defaultName(),
+                                               CloudName.GCP,
+                                               Tags.empty())
+                .run();
+        TestBase.assertDocument(expected, doc);
+    }
+
+    @Test
+    public void testIncludeWithDeployEnvironment() {
+        var appDir = new File("src/test/resources/multienv-with-include");
+        var services = new File(appDir, "services.xml");
+
+        var exception = assertThrows(IllegalArgumentException.class, () ->
+                new XmlPreProcessor(appDir,
+                                    services,
+                                    ApplicationName.defaultName(),
+                                    InstanceName.defaultName(),
+                                    Environment.prod,
+                                    RegionName.defaultName(),
+                                    Cloud.defaultCloud()
+                                         .name(),
+                                    Tags.empty()).run());
+        assertEquals("Using 'deploy:environment' within a 'preprocess:include' is not supported: " +
+                     "'preprocess:include file=container-dev.xml, please use " +
+                     "deploy:environment in the included file instead",
+                     exception.getMessage());
     }
 
 }

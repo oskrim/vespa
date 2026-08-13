@@ -2,16 +2,19 @@
 
 package slime
 
-import "slices"
-
-var (
-	noSelector Selector = &selectSelf{}
+import (
+	"fmt"
+	"slices"
+	"strings"
 )
+
+var noSelector Selector = &selectSelf{}
 
 type Selector interface {
 	Select(value Value) Value
 	WouldSelectEntry(idx int) bool
 	WouldSelectField(name string) bool
+	String() string
 }
 
 type selectSelf struct{}
@@ -27,6 +30,8 @@ func (s *selectSelf) WouldSelectEntry(idx int) bool {
 func (s *selectSelf) WouldSelectField(name string) bool {
 	return false
 }
+
+func (s *selectSelf) String() string { return "" }
 
 type selectEntry struct {
 	idx int
@@ -44,6 +49,8 @@ func (s *selectEntry) WouldSelectField(name string) bool {
 	return false
 }
 
+func (s *selectEntry) String() string { return fmt.Sprintf("/%d", s.idx) }
+
 type selectField struct {
 	name string
 }
@@ -60,8 +67,18 @@ func (s *selectField) WouldSelectField(name string) bool {
 	return name == s.name
 }
 
+func (s *selectField) String() string { return fmt.Sprintf("/%s", s.name) }
+
 type Path struct {
 	list []Selector
+}
+
+func (p *Path) String() string {
+	var sb strings.Builder
+	for _, selector := range p.list {
+		sb.WriteString(selector.String())
+	}
+	return sb.String()
 }
 
 func (p *Path) Len() int {
@@ -82,20 +99,23 @@ func NewPath() *Path {
 	return &Path{}
 }
 
-func (p *Path) Entry(idx int) {
+func (p *Path) Entry(idx int) *Path {
 	p.list = append(p.list, &selectEntry{idx})
+	return p
 }
 
-func (p *Path) Field(name string) {
+func (p *Path) Field(name string) *Path {
 	p.list = append(p.list, &selectField{name})
+	return p
 }
 
-func (p *Path) Trim(n int) {
+func (p *Path) Trim(n int) *Path {
 	end := len(p.list) - n
 	if end < 0 {
 		end = 0
 	}
 	p.list = p.list[:end]
+	return p
 }
 
 func (p *Path) Apply(value Value) Value {
@@ -110,9 +130,8 @@ func (p *Path) Clone() *Path {
 	return &Path{slices.Clone(p.list)}
 }
 
-func Find(value Value, pred func(path *Path, value Value) bool) []*Path {
+func Select(value Value, pred func(p *Path, v Value) bool, handle func(p *Path, v Value)) {
 	path := NewPath()
-	var result []*Path
 	var process func(value Value)
 	perEntry := func(idx int, value Value) {
 		path.Entry(idx)
@@ -126,12 +145,19 @@ func Find(value Value, pred func(path *Path, value Value) bool) []*Path {
 	}
 	process = func(value Value) {
 		if pred(path, value) {
-			result = append(result, path.Clone())
+			handle(path, value)
 			return
 		}
 		value.EachEntry(perEntry)
 		value.EachField(perField)
 	}
 	process(value)
+}
+
+func Find(value Value, pred func(path *Path, value Value) bool) []*Path {
+	var result []*Path
+	Select(value, pred, func(p *Path, v Value) {
+		result = append(result, p.Clone())
+	})
 	return result
 }

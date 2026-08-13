@@ -2,6 +2,7 @@
 package com.yahoo.docproc.proxy;
 
 import java.io.ByteArrayOutputStream;
+import java.nio.charset.StandardCharsets;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.ArrayList;
@@ -42,7 +43,7 @@ import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
-@SuppressWarnings("unchecked")
+@SuppressWarnings({"unchecked", "deprecation", "removal"})
 public class SchemaMappingAndAccessesTest {
 
     private Document getDoc() {
@@ -310,11 +311,11 @@ public class SchemaMappingAndAccessesTest {
         ByteArrayOutputStream bos2 = new ByteArrayOutputStream();
         mapped.serialize(bos);
         doc.serialize(bos2);
-        assertEquals(bos.toString(), bos2.toString());
+        assertEquals(bos.toString(StandardCharsets.UTF_8), bos2.toString(StandardCharsets.UTF_8));
         assertEquals(mapped.toXml(), doc.toXml());
         assertEquals(mapped.getFieldCount(), doc.getFieldCount());
         assertTrue(mapped.getDocument()==doc);
-        
+
         mapped.clear();
         assertNull(mapped.getFieldValue("title"));
         assertNull(doc.getFieldValue("title"));
@@ -576,7 +577,7 @@ public class SchemaMappingAndAccessesTest {
 
     public static class TestMappingStructInArrayProcessor extends DocumentProcessor {
         public Progress process(Processing processing) {
-            Document document = ((DocumentPut)processing.getDocumentOperations().get(0)).getDocument();;
+            Document document = ((DocumentPut)processing.getDocumentOperations().get(0)).getDocument();
             document.setFieldValue("name", new StringFieldValue("peter"));
             return Progress.DONE;
         }

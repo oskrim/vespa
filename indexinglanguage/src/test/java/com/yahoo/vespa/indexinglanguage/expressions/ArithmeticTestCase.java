@@ -10,7 +10,10 @@ import com.yahoo.vespa.indexinglanguage.SimpleTestAdapter;
 import org.junit.Test;
 
 import static com.yahoo.vespa.indexinglanguage.expressions.ArithmeticExpression.Operator;
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.fail;
 
 /**
  * @author Simon Thoresen Hult
@@ -62,52 +65,24 @@ public class ArithmeticTestCase {
     public void requireThatVerifyCallsAreForwarded() {
         assertVerify(SimpleExpression.newOutput(DataType.INT), Operator.ADD,
                      SimpleExpression.newOutput(DataType.INT), null);
-        assertVerifyThrows(SimpleExpression.newOutput(null), Operator.ADD,
-                           SimpleExpression.newOutput(DataType.INT), null,
-                           "Attempting to perform arithmetic on a null value");
-        assertVerifyThrows(SimpleExpression.newOutput(DataType.INT), Operator.ADD,
-                           SimpleExpression.newOutput(null), null,
-                           "Attempting to perform arithmetic on a null value");
-        assertVerifyThrows(SimpleExpression.newOutput(null), Operator.ADD,
-                           SimpleExpression.newOutput(null), null,
-                           "Attempting to perform arithmetic on a null value");
         assertVerifyThrows(SimpleExpression.newOutput(DataType.INT), Operator.ADD,
                            SimpleExpression.newOutput(DataType.STRING), null,
-                           "Attempting to perform unsupported arithmetic: [int] + [string]");
+                           "The second argument must be a number, but has type string");
         assertVerifyThrows(SimpleExpression.newOutput(DataType.STRING), Operator.ADD,
                            SimpleExpression.newOutput(DataType.STRING), null,
-                           "Attempting to perform unsupported arithmetic: [string] + [string]");
-    }
-
-    @Test
-    public void requireThatOperandInputCanBeNull() {
-        SimpleExpression reqNull = new SimpleExpression();
-        SimpleExpression reqInt = new SimpleExpression(DataType.INT);
-        assertNull(newArithmetic(reqNull, Operator.ADD, reqNull).requiredInputType());
-        assertEquals(DataType.INT, newArithmetic(reqInt, Operator.ADD, reqNull).requiredInputType());
-        assertEquals(DataType.INT, newArithmetic(reqInt, Operator.ADD, reqInt).requiredInputType());
-        assertEquals(DataType.INT, newArithmetic(reqNull, Operator.ADD, reqInt).requiredInputType());
-    }
-
-    @Test
-    public void requireThatOperandsAreInputCompatible() {
-        assertVerify(new SimpleExpression(DataType.INT), Operator.ADD,
-                     new SimpleExpression(DataType.INT), DataType.INT);
-        assertVerifyThrows(new SimpleExpression(DataType.INT), Operator.ADD,
-                           new SimpleExpression(DataType.STRING), null,
-                           "Operands require conflicting input types, int vs string");
+                           "The first argument must be a number, but has type string");
     }
 
     @Test
     public void requireThatResultIsCalculated() {
         for (int i = 0; i < 50; ++i) {
-            LongFieldValue lhs = new LongFieldValue(i);
-            LongFieldValue rhs = new LongFieldValue(100 - i);
-            assertResult(lhs, Operator.ADD, rhs, new LongFieldValue(lhs.getLong() + rhs.getLong()));
-            assertResult(lhs, Operator.SUB, rhs, new LongFieldValue(lhs.getLong() - rhs.getLong()));
-            assertResult(lhs, Operator.DIV, rhs, new LongFieldValue(lhs.getLong() / rhs.getLong()));
-            assertResult(lhs, Operator.MOD, rhs, new LongFieldValue(lhs.getLong() % rhs.getLong()));
-            assertResult(lhs, Operator.MUL, rhs, new LongFieldValue(lhs.getLong() * rhs.getLong()));
+            LongFieldValue left = new LongFieldValue(i);
+            LongFieldValue right = new LongFieldValue(100 - i);
+            assertResult(left, Operator.ADD, right, new LongFieldValue(left.getLong() + right.getLong()));
+            assertResult(left, Operator.SUB, right, new LongFieldValue(left.getLong() - right.getLong()));
+            assertResult(left, Operator.DIV, right, new LongFieldValue(left.getLong() / right.getLong()));
+            assertResult(left, Operator.MOD, right, new LongFieldValue(left.getLong() % right.getLong()));
+            assertResult(left, Operator.MUL, right, new LongFieldValue(left.getLong() * right.getLong()));
         }
     }
 
@@ -161,8 +136,8 @@ public class ArithmeticTestCase {
     }
 
     private void assertType(DataType lhs, Operator op, DataType rhs, DataType expected) {
-        assertEquals(expected, newArithmetic(SimpleExpression.newOutput(lhs), op,
-                                             SimpleExpression.newOutput(rhs)).verify());
+        newArithmetic(SimpleExpression.newOutput(lhs), op, SimpleExpression.newOutput(rhs))
+                                       .resolve(new TypeContext(new SimpleTestAdapter()));
         assertEquals(expected, newArithmetic(lhs.createFieldValue(6), op,
                                              rhs.createFieldValue(9)).execute().getDataType());
     }
@@ -182,7 +157,14 @@ public class ArithmeticTestCase {
     }
 
     private static ArithmeticExpression newArithmetic(Expression lhs, Operator op, Expression rhs) {
-        return new ArithmeticExpression(lhs, op, rhs);
+        return newArithmetic(lhs, op, rhs, null);
+    }
+
+    private static ArithmeticExpression newArithmetic(Expression lhs, Operator op, Expression rhs, TypeContext context) {
+        var expression = new ArithmeticExpression(lhs, op, rhs);
+        if (context != null)
+            expression.resolve(context);
+        return expression;
     }
 
     private static ConstantExpression newLong(long val) {
@@ -190,16 +172,21 @@ public class ArithmeticTestCase {
     }
 
     private static void assertVerify(Expression lhs, Operator op, Expression rhs, DataType val) {
-        new ArithmeticExpression(lhs, op, rhs).verify(val);
+        new ArithmeticExpression(lhs, op, rhs).resolve(new TypeContext(new SimpleTestAdapter()));
     }
 
     private static void assertVerifyThrows(Expression lhs, Operator op, Expression rhs, DataType val,
                                            String expectedException) {
+        ArithmeticExpression expression = null;
         try {
-            new ArithmeticExpression(lhs, op, rhs).verify(val);
-            fail();
+            expression = new ArithmeticExpression(lhs, op, rhs);
+            expression.setInputType(null, new TypeContext(new SimpleTestAdapter()));
+            expression.resolve(new TypeContext(new SimpleTestAdapter()));
+            fail("Expected exception");
         } catch (VerificationException e) {
-            assertEquals(expectedException, e.getMessage());
+            String expressionString = expression == null ? "of type '" + ArithmeticExpression.class.getSimpleName() + "'"
+                                                         : "'" + expression + "'";
+            assertEquals("Invalid expression " + expressionString + ": " + expectedException, e.getMessage());
         }
     }
 }

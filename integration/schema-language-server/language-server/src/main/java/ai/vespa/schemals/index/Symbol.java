@@ -1,18 +1,18 @@
 package ai.vespa.schemals.index;
 
-import ai.vespa.schemals.common.FileUtils;
-import ai.vespa.schemals.tree.SchemaNode;
-
 import java.net.URI;
 
 import org.eclipse.lsp4j.Location;
 import org.eclipse.lsp4j.Position;
 
+import ai.vespa.schemals.common.FileUtils;
+import ai.vespa.schemals.tree.Node;
+
 /**
  * Symbol represents a symbol in a document.
  */
 public class Symbol {
-    private SchemaNode identifierNode;
+    private Node identifierNode;
     private Symbol scope = null;
     private String fileURI;
     private URI fileURIimpl; // for comparing with other symbols file URIs
@@ -20,7 +20,7 @@ public class Symbol {
     private SymbolStatus status;
     private String overrideShortIdentifier = null;
 
-    public Symbol(SchemaNode identifierNode, SymbolType type, String fileURI, Symbol scope, String shortIdentifier) {
+    public Symbol(Node identifierNode, SymbolType type, String fileURI, Symbol scope, String shortIdentifier) {
         this.identifierNode = identifierNode;
         this.setFileURI(fileURI);
         this.type = type;
@@ -29,11 +29,11 @@ public class Symbol {
         this.overrideShortIdentifier = shortIdentifier;
     }
 
-    public Symbol(SchemaNode identifierNode, SymbolType type, String fileURI) {
+    public Symbol(Node identifierNode, SymbolType type, String fileURI) {
         this(identifierNode, type, fileURI, null, null);
     }
 
-    public Symbol(SchemaNode identifierNode, SymbolType type, String fileURI, Symbol scope) {
+    public Symbol(Node identifierNode, SymbolType type, String fileURI, Symbol scope) {
         this(identifierNode, type, fileURI, scope, null);
     }
 
@@ -72,7 +72,7 @@ public class Symbol {
         return this.scope.equals(scope);
     }
 
-    public SchemaNode getNode() { return identifierNode; }
+    public Node getNode() { return identifierNode; }
 
     public String getShortIdentifier() {
         if (overrideShortIdentifier != null) return overrideShortIdentifier;
@@ -139,7 +139,8 @@ public class Symbol {
         REFERENCE,
         UNRESOLVED,
         INVALID,
-        BUILTIN_REFERENCE // reference to stuff like "default" that doesn't have a definition in our CSTs
+        BUILTIN_REFERENCE, // reference to stuff like "default" that doesn't have a definition in our CSTs
+        OPAQUE // a symbol that has a type but is neither a definition nor a reference, so not really a symbol - just something with a type.
     }
 
     public enum SymbolType {
@@ -148,12 +149,14 @@ public class Symbol {
         DOCUMENT_SUMMARY,
         FIELD,
         FIELDSET,
+        FOREACH,
         FUNCTION,
         LABEL,
         LAMBDA_FUNCTION,
         MAP_KEY,
         MAP_VALUE,
         ONNX_MODEL,
+        ONNX_MODEL_OUTPUT,
         PARAMETER,
         PROPERTY,
         QUERY_INPUT,
@@ -167,6 +170,7 @@ public class Symbol {
         TENSOR,
         TENSOR_DIMENSION_INDEXED,
         TENSOR_DIMENSION_MAPPED,
+        TENSOR_CELL_VALUE_TYPE,
         TYPE_UNKNOWN,
         DIMENSION,
     }

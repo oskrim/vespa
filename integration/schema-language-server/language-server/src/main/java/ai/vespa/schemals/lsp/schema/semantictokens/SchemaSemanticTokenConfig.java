@@ -52,72 +52,89 @@ class SchemaSemanticTokenConfig {
 
     // Keyword
     static final ArrayList<TokenType> keywordTokens = new ArrayList<TokenType>() {{
+        add(TokenType.ADJUST_TARGET);
         add(TokenType.ALIAS);
         add(TokenType.ANNOTATION);
         add(TokenType.APPROXIMATE_THRESHOLD);
+        add(TokenType.ARITY);
         add(TokenType.AS);
         add(TokenType.ATTRIBUTE);
         add(TokenType.BOLDING);
         add(TokenType.CONSTANT);
         add(TokenType.CONSTANTS);
+        add(TokenType.DENSE_POSTING_LIST_THRESHOLD);
         add(TokenType.DIVERSITY);
         add(TokenType.DOCUMENT);
+        add(TokenType.DOCUMENTID);
         add(TokenType.DOCUMENT_SUMMARY);
-        add(TokenType.EXPRESSION_SL);
+        add(TokenType.ELEMENT_GAP);
+        add(TokenType.ENABLE_BM25);
+        add(TokenType.EXECUTION_MODE);
+        add(TokenType.EXPRESSION);
         add(TokenType.FIELD);
         add(TokenType.FIELDS);
         add(TokenType.FIELDSET); 
+        add(TokenType.FILE);
+        add(TokenType.FILTER_THRESHOLD);
         add(TokenType.FIRST_PHASE);
         add(TokenType.FUNCTION);
         add(TokenType.GLOBAL_PHASE);
+        add(TokenType.GPU_DEVICE);
+        add(TokenType.HNSW);
         add(TokenType.ID);
         add(TokenType.IGNORE_DEFAULT_RANK_FEATURES);
         add(TokenType.IMPORT);
         add(TokenType.INDEX);
         add(TokenType.INDEXING);
         add(TokenType.INHERITS);
+        add(TokenType.INPUT);
         add(TokenType.INPUTS);
+        add(TokenType.INTEROP_THREADS);
+        add(TokenType.INTRAOP_THREADS);
+        add(TokenType.LOWER_BOUND);
         add(TokenType.MACRO);
         add(TokenType.MATCH);
-        add(TokenType.MATCHFEATURES_SL);
+        add(TokenType.MATCH_FEATURES);
         add(TokenType.MATCH_PHASE);
+        add(TokenType.MAX_LINKS_PER_NODE);
         add(TokenType.MUTATE);
+        add(TokenType.NEIGHBORS_TO_EXPLORE_AT_INSERT);
         add(TokenType.NORMALIZING);
         add(TokenType.NUM_SEARCH_PARTITIONS);
         add(TokenType.NUM_THREADS_PER_SEARCH);
         add(TokenType.ONNX_MODEL);
+        add(TokenType.OUTPUT);
         add(TokenType.POST_FILTER_THRESHOLD);
         add(TokenType.QUERY_COMMAND);
         add(TokenType.RANK);
-        add(TokenType.RANKFEATURES_SL);
+        add(TokenType.RANK_FEATURES);
         add(TokenType.RANK_PROFILE);
         add(TokenType.RANK_PROPERTIES);
+        add(TokenType.RANK_SCORE_DROP_LIMIT);
         add(TokenType.RANK_TYPE);
         add(TokenType.RAW_AS_BASE64_IN_SUMMARY);
         add(TokenType.SCHEMA);
         add(TokenType.SEARCH);
         add(TokenType.SECOND_PHASE);
+        add(TokenType.SIGNIFICANCE);
         add(TokenType.SORTING);
         add(TokenType.STEMMING);
+        add(TokenType.STOPWORD_LIMIT);
         add(TokenType.STRICT);
         add(TokenType.STRUCT);
         add(TokenType.STRUCT_FIELD);
         add(TokenType.SUMMARY);
-        add(TokenType.SUMMARYFEATURES_SL);
+        add(TokenType.SUMMARY_FEATURES);
         add(TokenType.SUMMARY_TO);
         add(TokenType.TARGET_HITS_MAX_ADJUSTMENT_FACTOR);
         add(TokenType.TERMWISE_LIMIT);
         add(TokenType.TYPE);
+        add(TokenType.UPPER_BOUND);
+        add(TokenType.URI);
+        add(TokenType.USE_MODEL);
+        add(TokenType.WEAKAND);
         add(TokenType.WEIGHT);
         add(TokenType.WEIGHTEDSET);
-        add(TokenType.HNSW);
-        add(TokenType.MAX_LINKS_PER_NODE);
-        add(TokenType.NEIGHBORS_TO_EXPLORE_AT_INSERT);
-        add(TokenType.UPPER_BOUND);
-        add(TokenType.LOWER_BOUND);
-        add(TokenType.ARITY);
-        add(TokenType.ENABLE_BM25);
-        add(TokenType.DENSE_POSTING_LIST_THRESHOLD);
 
         // maybe some of these should be something other than keyword
         add(TokenType.DISTANCE_METRIC);
@@ -136,12 +153,15 @@ class SchemaSemanticTokenConfig {
 
     // Other
     static final Map<TokenType, String> schemaTokenTypeLSPNameMap = new HashMap<TokenType, String>() {{
-        put(TokenType.DOUBLE, "number");
-        put(TokenType.INTEGER, "number");
-        put(TokenType.LONG, "number");
-        put(TokenType.DOUBLEQUOTEDSTRING, "string");
-        put(TokenType.SINGLEQUOTEDSTRING, "string");
-        put(TokenType.QUERY, "function");
+        put(TokenType.DOUBLE, SemanticTokenTypes.Number);
+        put(TokenType.INTEGER, SemanticTokenTypes.Number);
+        put(TokenType.LONG, SemanticTokenTypes.Number);
+        put(TokenType.INFINITY, SemanticTokenTypes.Number);
+        put(TokenType.DOUBLEQUOTEDSTRING, SemanticTokenTypes.String);
+        put(TokenType.SINGLEQUOTEDSTRING, SemanticTokenTypes.String);
+        put(TokenType.QUERY, SemanticTokenTypes.Function);
+        put(TokenType.PARALLEL, SemanticTokenTypes.EnumMember);
+        put(TokenType.SEQUENTIAL, SemanticTokenTypes.EnumMember);
 
         // TODO: figure out boolean color
         put(TokenType.ON, SemanticTokenTypes.Type);
@@ -155,43 +175,43 @@ class SchemaSemanticTokenConfig {
     // ========= Ranking expressions =========
     // Keyword
     static final ArrayList<ai.vespa.schemals.parser.rankingexpression.Token.TokenType> rankingExpressionKeywordTokens = new ArrayList<>() {{
-        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.IF);
-        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.IN);
-
-        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.TRUE);
-        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.FALSE);
-
-        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.AVG);
-        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.COUNT);
-        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.MAX);
-        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.MEDIAN);
-        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.MIN);
-        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.PROD);
-        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.SUM);
-
-        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.MAP);
-        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.MAP_SUBSPACES);
-        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.UNPACK_BITS);
-        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.REDUCE);
-        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.JOIN);
-        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.MERGE);
-        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.RENAME);
-        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.CONCAT);
-        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.TENSOR);
-        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.RANGE);
-        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.DIAG);
-        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.RANDOM);
-        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.L1_NORMALIZE);
-        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.L2_NORMALIZE);
-        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.EUCLIDEAN_DISTANCE);
-        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.COSINE_SIMILARITY);
-        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.MATMUL);
-        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.SOFTMAX);
-        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.XW_PLUS_B);
         add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.ARGMAX);
         add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.ARGMIN);
+        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.AVG);
+        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.CASE);
         add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.CELL_CAST);
+        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.CONCAT);
+        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.COSINE_SIMILARITY);
+        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.COUNT);
+        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.DIAG);
+        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.EUCLIDEAN_DISTANCE);
         add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.EXPAND);
+        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.FALSE);
+        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.IF);
+        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.IN);
+        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.JOIN);
+        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.L1_NORMALIZE);
+        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.L2_NORMALIZE);
+        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.MAP);
+        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.MAP_SUBSPACES);
+        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.MATMUL);
+        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.MAX);
+        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.MEDIAN);
+        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.MERGE);
+        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.MIN);
+        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.PROD);
+        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.RANDOM);
+        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.RANGE);
+        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.REDUCE);
+        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.RENAME);
+        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.SOFTMAX);
+        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.SUM);
+        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.SWITCH);
+        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.SWITCHDEFAULT);
+        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.TENSOR);
+        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.TRUE);
+        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.UNPACK_BITS);
+        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.XW_PLUS_B);
     }};
 
     // Operations
@@ -238,6 +258,7 @@ class SchemaSemanticTokenConfig {
         add(ai.vespa.schemals.parser.indexinglanguage.Token.TokenType.ECHO);
         add(ai.vespa.schemals.parser.indexinglanguage.Token.TokenType.FLATTEN);
         add(ai.vespa.schemals.parser.indexinglanguage.Token.TokenType.GET_FIELD);
+        add(ai.vespa.schemals.parser.indexinglanguage.Token.TokenType.GET_LANGUAGE);
         add(ai.vespa.schemals.parser.indexinglanguage.Token.TokenType.GET_VAR);
         add(ai.vespa.schemals.parser.indexinglanguage.Token.TokenType.HEX_DECODE);
         add(ai.vespa.schemals.parser.indexinglanguage.Token.TokenType.HEX_ENCODE);
@@ -265,6 +286,7 @@ class SchemaSemanticTokenConfig {
         add(ai.vespa.schemals.parser.indexinglanguage.Token.TokenType.TO_FLOAT);
         add(ai.vespa.schemals.parser.indexinglanguage.Token.TokenType.TO_STRING);
         add(ai.vespa.schemals.parser.indexinglanguage.Token.TokenType.EMBED);
+        add(ai.vespa.schemals.parser.indexinglanguage.Token.TokenType.CHUNK);
         add(ai.vespa.schemals.parser.indexinglanguage.Token.TokenType.HASH);
         add(ai.vespa.schemals.parser.indexinglanguage.Token.TokenType.TO_EPOCH_SECOND);
     }};
@@ -286,22 +308,24 @@ class SchemaSemanticTokenConfig {
     }};
 
     static final HashMap<SymbolType, String> identifierTypeLSPNameMap = new HashMap<SymbolType, String>() {{
-        put(SymbolType.SCHEMA, "namespace");
-        put(SymbolType.DOCUMENT, "class");
-        put(SymbolType.FIELD, "variable");
-        put(SymbolType.FIELDSET, "variable");
-        put(SymbolType.STRUCT, "variable");
-        put(SymbolType.STRUCT_FIELD, "variable");
-        put(SymbolType.RANK_PROFILE, "variable");
-        put(SymbolType.FUNCTION, "function");
-        put(SymbolType.DOCUMENT_SUMMARY, "variable");
-        put(SymbolType.PARAMETER, "parameter");
-        put(SymbolType.LABEL, "variable");
-        put(SymbolType.QUERY_INPUT, "variable");
-        put(SymbolType.RANK_CONSTANT, "variable");
-        put(SymbolType.PROPERTY, "property");
-        put(SymbolType.LAMBDA_FUNCTION, "keyword");
-        put(SymbolType.DIMENSION, "keyword");
-        put(SymbolType.ANNOTATION, "variable");
+        put(SymbolType.ANNOTATION, SemanticTokenTypes.Variable);
+        put(SymbolType.DIMENSION, SemanticTokenTypes.Keyword);
+        put(SymbolType.DOCUMENT, SemanticTokenTypes.Class);
+        put(SymbolType.DOCUMENT_SUMMARY, SemanticTokenTypes.Variable);
+        put(SymbolType.FIELD, SemanticTokenTypes.Variable);
+        put(SymbolType.FIELDSET, SemanticTokenTypes.Variable);
+        put(SymbolType.FOREACH, SemanticTokenTypes.Macro);
+        put(SymbolType.FUNCTION, SemanticTokenTypes.Function);
+        put(SymbolType.LABEL, SemanticTokenTypes.Variable);
+        put(SymbolType.LAMBDA_FUNCTION, SemanticTokenTypes.Keyword);
+        put(SymbolType.PARAMETER, SemanticTokenTypes.Parameter);
+        put(SymbolType.PROPERTY, SemanticTokenTypes.Property);
+        put(SymbolType.QUERY_INPUT, SemanticTokenTypes.Variable);
+        put(SymbolType.RANK_CONSTANT, SemanticTokenTypes.Variable);
+        put(SymbolType.RANK_PROFILE, SemanticTokenTypes.Variable);
+        put(SymbolType.SCHEMA, SemanticTokenTypes.Namespace);
+        put(SymbolType.STRUCT, SemanticTokenTypes.Variable);
+        put(SymbolType.STRUCT_FIELD, SemanticTokenTypes.Variable);
+        put(SymbolType.TENSOR_CELL_VALUE_TYPE, SemanticTokenTypes.Type);
     }};
 }

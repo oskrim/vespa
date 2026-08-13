@@ -4,6 +4,7 @@ package com.yahoo.vespa.model.container.xml;
 import com.yahoo.config.ModelReference;
 import com.yahoo.config.UrlReference;
 import com.yahoo.config.model.deploy.DeployState;
+import com.yahoo.text.Text;
 import com.yahoo.text.XML;
 import org.w3c.dom.Element;
 
@@ -27,6 +28,7 @@ public class ModelIdResolver {
     public static final String BERT_VOCAB = "bert-vocabulary";
     public static final String SIGNIFICANCE_MODEL = "significance-model";
     public static final String GGUF_MODEL = "gguf-model";
+    public static final String OTHER = "other";
 
     private static Map<String, ProvidedModel> setupProvidedModels() {
         var m = new HashMap<String, ProvidedModel>();
@@ -50,6 +52,9 @@ public class ModelIdResolver {
         register(m, "multilingual-e5-small-cpu-friendly", "https://data.vespa-cloud.com/onnx_models/multilingual-e5-small-cpu-friendly/model.onnx", Set.of(ONNX_MODEL));
         register(m, "multilingual-e5-small-cpu-friendly-vocab", "https://data.vespa-cloud.com/onnx_models/multilingual-e5-small-cpu-friendly/tokenizer.json", Set.of(HF_TOKENIZER));
 
+        register(m, "multilingual-e5-large", "https://data.vespa-cloud.com/onnx_models/multilingual-e5-large/model.onnx", Set.of(ONNX_MODEL));
+        register(m, "multilingual-e5-large-vocab", "https://data.vespa-cloud.com/onnx_models/multilingual-e5-large/tokenizer.json", Set.of(HF_TOKENIZER));
+
         register(m, "e5-small-v2", "https://data.vespa-cloud.com/onnx_models/e5-small-v2/model.onnx", Set.of(ONNX_MODEL));
         register(m, "e5-small-v2-vocab", "https://data.vespa-cloud.com/onnx_models/e5-small-v2/tokenizer.json", Set.of(HF_TOKENIZER));
 
@@ -62,6 +67,40 @@ public class ModelIdResolver {
         register(m, "e5-large-v2", "https://data.vespa-cloud.com/onnx_models/e5-large-v2/model.onnx", Set.of(ONNX_MODEL));
         register(m, "e5-large-v2-vocab", "https://data.vespa-cloud.com/onnx_models/e5-large-v2/tokenizer.json", Set.of(HF_TOKENIZER));
 
+        register(m, "embeddinggemma-300m", "https://data.vespa-cloud.com/onnx_models/embeddinggemma-300m/model.onnx", Set.of(ONNX_MODEL));
+        register(m, "embeddinggemma-300m-vocab", "https://data.vespa-cloud.com/onnx_models/embeddinggemma-300m/tokenizer.json", Set.of(HF_TOKENIZER));
+
+        register(m, "nomic-ai-modernbert", "https://data.vespa-cloud.com/onnx_models/nomic-ai-modernbert-embed-base/model.onnx", Set.of(ONNX_MODEL));
+        register(m, "nomic-ai-modernbert-vocab", "https://data.vespa-cloud.com/onnx_models/nomic-ai-modernbert-embed-base/tokenizer.json", Set.of(HF_TOKENIZER));
+
+        register(m, "lightonai-modernbert-large", "https://data.vespa-cloud.com/onnx_models/lightonai-modernbert-large/model.onnx", Set.of(ONNX_MODEL));
+        register(m, "lightonai-modernbert-large-vocab", "https://data.vespa-cloud.com/onnx_models/lightonai-modernbert-large/tokenizer.json", Set.of(HF_TOKENIZER));
+        register(m, "lightonai-modernbert-large-int8", "https://data.vespa-cloud.com/onnx_models/lightonai-modernbert-large-int8/model.onnx", Set.of(ONNX_MODEL));
+        register(m, "lightonai-modernbert-large-int8-vocab", "https://data.vespa-cloud.com/onnx_models/lightonai-modernbert-large-int8/tokenizer.json", Set.of(HF_TOKENIZER));
+
+        register(m, "lightonai-denseon", "https://data.vespa-cloud.com/onnx_models/lightonai-denseon/model.onnx", Set.of(ONNX_MODEL));
+        register(m, "lightonai-denseon-vocab", "https://data.vespa-cloud.com/onnx_models/lightonai-denseon/tokenizer.json", Set.of(HF_TOKENIZER));
+        register(m, "lightonai-denseon-fp16", "https://data.vespa-cloud.com/onnx_models/lightonai-denseon-fp16/model.onnx", Set.of(ONNX_MODEL));
+        register(m, "lightonai-denseon-fp16-vocab", "https://data.vespa-cloud.com/onnx_models/lightonai-denseon-fp16/tokenizer.json", Set.of(HF_TOKENIZER));
+        register(m, "lightonai-denseon-int8", "https://data.vespa-cloud.com/onnx_models/lightonai-denseon-int8/model.onnx", Set.of(ONNX_MODEL));
+        register(m, "lightonai-denseon-int8-vocab", "https://data.vespa-cloud.com/onnx_models/lightonai-denseon-int8/tokenizer.json", Set.of(HF_TOKENIZER));
+
+        register(m, "alibaba-gte-modernbert", "https://data.vespa-cloud.com/onnx_models/alibaba-gte-modernbert-base/model.onnx", Set.of(ONNX_MODEL));
+        register(m, "alibaba-gte-modernbert-vocab", "https://data.vespa-cloud.com/onnx_models/alibaba-gte-modernbert-base/tokenizer.json", Set.of(HF_TOKENIZER));
+        register(m, "alibaba-gte-modernbert-int8", "https://data.vespa-cloud.com/onnx_models/alibaba-gte-modernbert-int8/model.onnx", Set.of(ONNX_MODEL));
+        register(m, "alibaba-gte-modernbert-int8-vocab", "https://data.vespa-cloud.com/onnx_models/alibaba-gte-modernbert-int8/tokenizer.json", Set.of(HF_TOKENIZER));
+
+        register(m, "snowflake-arctic-embed-m-v2.0", "https://data.vespa-cloud.com/onnx_models/snowflake-arctic-embed-m-v2.0/model.onnx", Set.of(ONNX_MODEL));
+        register(m, "snowflake-arctic-embed-m-v2.0-vocab", "https://data.vespa-cloud.com/onnx_models/snowflake-arctic-embed-m-v2.0/tokenizer.json", Set.of(HF_TOKENIZER));
+        register(m, "snowflake-arctic-embed-m-v2.0-int8", "https://data.vespa-cloud.com/onnx_models/snowflake-arctic-embed-m-v2.0-int8/model.onnx", Set.of(ONNX_MODEL));
+        register(m, "snowflake-arctic-embed-m-v2.0-int8-vocab", "https://data.vespa-cloud.com/onnx_models/snowflake-arctic-embed-m-v2.0-int8/tokenizer.json", Set.of(HF_TOKENIZER));
+
+        register(m, "voyage-4-nano", "https://data.vespa-cloud.com/onnx_models/voyage-4-nano/model.onnx", Set.of(ONNX_MODEL));
+        register(m, "voyage-4-nano-vocab", "https://data.vespa-cloud.com/onnx_models/voyage-4-nano/tokenizer.json", Set.of(HF_TOKENIZER));
+        register(m, "voyage-4-nano-int8", "https://data.vespa-cloud.com/onnx_models/voyage-4-nano-int8/model.onnx", Set.of(ONNX_MODEL));
+        register(m, "voyage-4-nano-int8-vocab", "https://data.vespa-cloud.com/onnx_models/voyage-4-nano-int8/tokenizer.json", Set.of(HF_TOKENIZER));
+
+        register(m, "llama-160m-chat-v1-q6", "https://data.vespa-cloud.com/gguf_models/Llama-160M-Chat-v1.Q6_K.gguf", Set.of(GGUF_MODEL));
         register(m, "llama-3.2-1b-q4", "https://data.vespa-cloud.com/gguf_models/llama-3.2-1b-instruct-q4_k_m.gguf", Set.of(GGUF_MODEL));
         register(m, "llama-3.2-1b",    "https://data.vespa-cloud.com/gguf_models/llama-3.2-1b-instruct-q8_0.gguf", Set.of(GGUF_MODEL));
         register(m, "llama-3.2-3b-q4", "https://data.vespa-cloud.com/gguf_models/llama-3.2-3b-instruct-q4_k_m.gguf", Set.of(GGUF_MODEL));
@@ -112,17 +151,17 @@ public class ModelIdResolver {
     }
 
     public static ModelReference resolveToModelReference(
-            String paramName, Optional<String> id, Optional<String> url, Optional<String> path, Set<String> requiredTags, DeployState state) {
-        if (id.isEmpty()) return createModelReference(Optional.empty(), url, path, state);
+            String paramName, Optional<String> id, Optional<String> url, Optional<String> secretRef, Optional<String> path, Set<String> requiredTags, DeployState state) {
+        if (id.isEmpty()) return createModelReference(Optional.empty(), url, secretRef, path, state);
         else if (state.isHosted())
-            return createModelReference(id, Optional.of(modelIdToUrl(paramName, id.get(), requiredTags)), Optional.empty(), state);
+            return createModelReference(id, Optional.of(modelIdToUrl(paramName, id.get(), requiredTags)), Optional.empty(), Optional.empty(), state);
         else if (url.isEmpty() && path.isEmpty()) throw onlyModelIdInHostedException(paramName);
-        else return createModelReference(id, url, path, state);
+        else return createModelReference(id, url, secretRef, path, state);
     }
 
-    private static ModelReference createModelReference(Optional<String> id, Optional<String> url, Optional<String> path, DeployState state) {
+    private static ModelReference createModelReference(Optional<String> id, Optional<String> url, Optional<String> secretRef, Optional<String> path, DeployState state) {
         var fileRef = path.map(p -> state.getFileRegistry().addFile(p));
-        return ModelReference.unresolved(id, url.map(UrlReference::valueOf), fileRef);
+        return ModelReference.unresolved(id, url.map(UrlReference::valueOf), secretRef, fileRef);
     }
 
     private static IllegalArgumentException onlyModelIdInHostedException(String paramName) {
@@ -137,8 +176,7 @@ public class ModelIdResolver {
         var providedModel = providedModels.get(modelId);
         if ( ! providedModel.tags().containsAll(requiredTags)) {
             throw new IllegalArgumentException(
-                    "Model '%s' on '%s' has tags %s but are missing required tags %s"
-                            .formatted(modelId, valueName, providedModel.tags(), requiredTags));
+                    Text.format("Model '%s' on '%s' has tags %s but are missing required tags %s", modelId, valueName, providedModel.tags(), requiredTags));
         }
         return providedModel.uri().toString();
     }

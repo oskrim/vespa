@@ -1,6 +1,7 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.model.container;
 
+import ai.vespa.llm.generation.LanguageModelFieldGenerator;
 import com.yahoo.container.bundle.BundleInstantiationSpecification;
 import com.yahoo.prelude.fastsearch.IndexedBackend;
 import com.yahoo.vespa.defaults.Defaults;
@@ -49,7 +50,6 @@ public class PlatformBundles {
     );
 
     public static final Set<Path> VESPA_SECURITY_BUNDLES = toBundlePaths(
-            "jdisc-security-filters",
             "vespa-athenz"
     );
 
@@ -150,8 +150,8 @@ public class PlatformBundles {
             com.yahoo.search.rendering.SectionedRenderer.class.getName(),
             com.yahoo.search.searchchain.ForkingSearcher.class.getName(),
             com.yahoo.search.searchers.CacheControlSearcher.class.getName(),
+            com.yahoo.search.searchers.ChunkLimitingSearcher.class.getName(),
             com.yahoo.search.searchers.RateLimitingSearcher.class.getName(),
-            com.yahoo.vespa.streamingvisitors.MetricsSearcher.class.getName(),
             com.yahoo.vespa.streamingvisitors.StreamingBackend.class.getName(),
             ai.vespa.search.llm.LLMSearcher.class.getName(),
             ai.vespa.search.llm.RAGSearcher.class.getName()
@@ -160,7 +160,8 @@ public class PlatformBundles {
     // This is a hack to allow users to declare components from the model-integration bundle without naming the bundle.
     private static final Set<String> modelIntegrationComponents = Set.of(
             ai.vespa.llm.clients.OpenAI.class.getName(),
-            ai.vespa.llm.clients.LocalLLM.class.getName()
+            ai.vespa.llm.clients.LocalLLM.class.getName(),
+            LanguageModelFieldGenerator.class.getName()
     );
 
 }

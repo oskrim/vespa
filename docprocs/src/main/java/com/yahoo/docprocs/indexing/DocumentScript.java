@@ -2,6 +2,7 @@
 package com.yahoo.docprocs.indexing;
 
 import com.yahoo.document.Document;
+import com.yahoo.document.DocumentType;
 import com.yahoo.document.DocumentUpdate;
 import com.yahoo.document.Field;
 import com.yahoo.document.annotation.SpanTrees;
@@ -16,9 +17,12 @@ import com.yahoo.document.fieldpathupdate.FieldPathUpdate;
 import com.yahoo.document.update.FieldUpdate;
 import com.yahoo.document.update.MapValueUpdate;
 import com.yahoo.document.update.ValueUpdate;
-import com.yahoo.vespa.indexinglanguage.AdapterFactory;
+import com.yahoo.vespa.indexinglanguage.FieldValuesFactory;
 import com.yahoo.vespa.indexinglanguage.expressions.Expression;
+import com.yahoo.vespa.indexinglanguage.expressions.InvalidInputException;
+import com.yahoo.vespa.indexinglanguage.expressions.ScriptExpression;
 
+import java.time.Instant;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -28,30 +32,31 @@ import java.util.Set;
 /**
  * @author Simon Thoresen Hult
  */
-public class DocumentScript {
+class DocumentScript {
 
-    private final String documentType;
+    private final DocumentType documentType;
     private final Set<String> inputFields;
-    private final Expression expression;
+    private final ScriptExpression expression;
 
-    public DocumentScript(String documentType, Collection<String> inputFields, Expression expression) {
+    DocumentScript(DocumentType documentType, Collection<String> inputFields, ScriptExpression expression) {
         this.documentType = documentType;
         this.inputFields = new HashSet<>(inputFields);
         this.expression = expression;
+        expression.resolve(documentType);
     }
 
-    public Expression getExpression() { return expression; }
+    ScriptExpression getExpression() { return expression; }
 
-    public Document execute(AdapterFactory adapterFactory, Document document) {
+    Document execute(FieldValuesFactory fieldValuesFactory, Document document, boolean isReindexing, Instant deadline) {
         for (var i = document.iterator(); i.hasNext(); ) {
             Map.Entry<Field, FieldValue> entry = i.next();
             requireThatFieldIsDeclaredInDocument(entry.getKey());
             removeAnyLinguisticsSpanTree(entry.getValue());
         }
-        return expression.execute(adapterFactory, document);
+        return expression.execute(fieldValuesFactory, document, isReindexing, deadline);
     }
 
-    public DocumentUpdate execute(AdapterFactory adapterFactory, DocumentUpdate update) {
+    DocumentUpdate execute(FieldValuesFactory fieldValuesFactory, DocumentUpdate update, Instant deadline) {
         for (FieldUpdate fieldUpdate : update.fieldUpdates()) {
             requireThatFieldIsDeclaredInDocument(fieldUpdate.getField());
             for (ValueUpdate<?> valueUpdate : fieldUpdate.getValueUpdates()) {
@@ -64,14 +69,12 @@ public class DocumentScript {
                 removeAnyLinguisticsSpanTree(((AssignFieldPathUpdate)fieldUpdate).getFieldValue());
             }
         }
-        return Expression.execute(expression, adapterFactory, update);
+        return Expression.execute(expression, fieldValuesFactory, update, deadline);
     }
 
     private void requireThatFieldIsDeclaredInDocument(Field field) {
-        if (field != null && !inputFields.contains(field.getName())) {
-            throw new IllegalArgumentException("Field '" + field.getName() + "' is not part of the declared document " +
-                                               "type '" + documentType + "'.");
-        }
+        if (field != null && !inputFields.contains(field.getName()))
+            throw new InvalidInputException("Field '" + field.getName() + "' is not part of the declared " + documentType);
     }
 
     private void removeAnyLinguisticsSpanTree(ValueUpdate<?> valueUpdate) {

@@ -4,7 +4,6 @@ package com.yahoo.vespa.indexinglanguage.expressions;
 import com.yahoo.document.DataType;
 import org.junit.Test;
 
-import static com.yahoo.vespa.indexinglanguage.expressions.ExpressionAssert.assertVerify;
 import static com.yahoo.vespa.indexinglanguage.expressions.ExpressionAssert.assertVerifyThrows;
 import static org.junit.Assert.assertNotNull;
 
@@ -17,7 +16,8 @@ public class ExpressionAssertTestCase {
     public void requireThatAssertVerifyMethodThrowsWhenAppropriate() {
         Throwable thrown = null;
         try {
-            assertVerify(DataType.INT, new SimpleExpression(), DataType.STRING);
+            assertVerifyThrows("unchecked expected exception message", DataType.INT, new SimpleExpression()
+                              );
         } catch (Throwable t) {
             thrown = t;
         }
@@ -25,17 +25,8 @@ public class ExpressionAssertTestCase {
 
         thrown = null;
         try {
-            assertVerifyThrows(DataType.INT, new SimpleExpression(),
-                               "unchecked expected exception message");
-        } catch (Throwable t) {
-            thrown = t;
-        }
-        assertNotNull(thrown);
-
-        thrown = null;
-        try {
-            assertVerifyThrows(DataType.INT, SimpleExpression.newRequired(DataType.STRING),
-                               "wrong expected exception message");
+            assertVerifyThrows("wrong expected exception message", DataType.INT, SimpleExpression.newRequired(DataType.STRING)
+                              );
         } catch (Throwable t) {
             thrown = t;
         }

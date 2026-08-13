@@ -3,7 +3,15 @@ package com.yahoo.language.simple;
 
 import com.yahoo.language.Language;
 import com.yahoo.language.LinguisticsCase;
-import com.yahoo.language.process.*;
+import com.yahoo.language.process.LinguisticsParameters;
+import com.yahoo.language.process.Normalizer;
+import com.yahoo.language.process.SpecialTokenRegistry;
+import com.yahoo.language.process.StemMode;
+import com.yahoo.language.process.Token;
+import com.yahoo.language.process.TokenScript;
+import com.yahoo.language.process.TokenType;
+import com.yahoo.language.process.Tokenizer;
+import com.yahoo.language.process.Transformer;
 import com.yahoo.language.simple.kstem.KStemmer;
 
 import java.util.ArrayList;
@@ -51,9 +59,8 @@ public class SimpleTokenizer implements Tokenizer {
 
     /** Tokenize the input, applying the transform of this to each token string. */
     @Override
-    public Iterable<Token> tokenize(String input, Language language, StemMode stemMode, boolean removeAccents) {
-        return tokenize(input,
-                        token -> processToken(token, language, stemMode, removeAccents));
+    public Iterable<Token> tokenize(String input, LinguisticsParameters parameters) {
+        return tokenize(input, token -> processToken(token, parameters));
     }
 
     /** Tokenize the input, and apply the given transform to each token string. */
@@ -109,14 +116,15 @@ public class SimpleTokenizer implements Tokenizer {
         return tokenScript;
     }
 
-    private String processToken(String token, Language language, StemMode stemMode, boolean removeAccents) {
+    private String processToken(String token, LinguisticsParameters parameters) {
         String original = token;
         log.log(Level.FINEST, () -> "processToken '" + original + "'");
         token = normalizer.normalize(token);
-        token = LinguisticsCase.toLowerCase(token);
-        if (removeAccents)
-            token = transformer.accentDrop(token, language);
-        if (stemMode != StemMode.NONE) {
+        if (parameters.lowercase())
+            token = LinguisticsCase.toLowerCase(token);
+        if (parameters.removeAccents())
+            token = transformer.accentDrop(token, parameters.language());
+        if (parameters.stemMode() != StemMode.NONE) {
             String oldToken = token;
             token = stemmer.stem(token);
             String newToken = token;

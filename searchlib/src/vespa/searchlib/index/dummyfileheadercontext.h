@@ -3,22 +3,27 @@
 
 #include <vespa/searchlib/common/fileheadercontext.h>
 
-namespace vespalib { class GenericHeader; }
+#include <cstdlib>
+
+namespace vespalib {
+class GenericHeader;
+}
 
 namespace search::index {
 
 class DummyFileHeaderContext : public common::FileHeaderContext {
-    bool _disableFileName;
+    bool        _disableFileName;
     std::string _hostName;
-    pid_t _pid;
+    pid_t       _pid;
 
     static std::string _creator;
+
 public:
     DummyFileHeaderContext();
     ~DummyFileHeaderContext();
     void disableFileName();
-    void addTags(vespalib::GenericHeader &header, const std::string &name) const override;
-    static void setCreator(const std::string &creator);
+    void addTags(vespalib::GenericHeader& header, const std::string& name) const override;
+    static void setCreator(const std::string& creator);
 };
 
-}
+} // namespace search::index

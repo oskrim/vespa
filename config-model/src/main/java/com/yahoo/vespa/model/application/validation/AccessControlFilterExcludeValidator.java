@@ -1,7 +1,7 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.model.application.validation;
 
-import com.yahoo.config.provision.CloudName;
+import com.yahoo.text.Text;
 import com.yahoo.vespa.model.application.validation.Validation.Context;
 import com.yahoo.vespa.model.container.http.AccessControl;
 import com.yahoo.vespa.model.container.http.Http;
@@ -22,7 +22,7 @@ public class AccessControlFilterExcludeValidator implements Validator {
 
     @Override
     public void validate(Context context) {
-        if (!context.deployState().isHosted() || context.deployState().zone().system().isPublic()) return;
+        if (!context.deployState().isHosted() || context.deployState().zone().system().isPublicCloudLike()) return;
         if (context.deployState().getProperties().allowDisableMtls()) return;
         context.model().getContainerClusters().forEach((id, cluster) -> {
             Http http = cluster.getHttp();
@@ -36,7 +36,7 @@ public class AccessControlFilterExcludeValidator implements Validator {
 
     private void verifyNoExclusions(String clusterId, AccessControl accessControl, Context context) {
         if (!accessControl.excludedBindings().isEmpty()) {
-            String message = "Application cluster %s excludes paths from access control, this is not allowed and should be removed.".formatted(clusterId);
+            String message = Text.format("Application cluster %s excludes paths from access control, this is not allowed and should be removed.", clusterId);
             if (Set.of(DEFAULT, YAHOO).contains(context.deployState().zone().cloud().name())) {
                 context.deployState().getDeployLogger().log(Level.WARNING, message);
             } else {

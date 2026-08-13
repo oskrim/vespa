@@ -61,6 +61,9 @@ public class SemanticSearcherTestCase extends RuleBaseAbstractTestCase {
     @Test
     void testLiteralReplacing() {
         assertSemantics("AND lord of rings", "lotr");
+        assertSemantics("AND foo1 lord of rings bar2", "foo1 lotr bar2");
+        assertSemantics("WEAKAND lord of rings", "lotr", 0, Query.Type.WEAKAND);
+        assertSemantics("WEAKAND foo1 lord of rings bar2", "foo1 lotr bar2", 0, Query.Type.WEAKAND);
     }
 
     @Test
@@ -128,12 +131,12 @@ public class SemanticSearcherTestCase extends RuleBaseAbstractTestCase {
 
     @Test
     void testTypeChange() {
-        assertSemantics("RANK default:typechange doors", "typechange doors");
+        assertSemantics("RANK doors default:typechange", "typechange doors");
     }
 
     @Test
     void testTypeChangeWithSingularToPluralButNonReplaceWillNotSingularify() {
-        assertSemantics("RANK default:typechange door", "typechange door");
+        assertSemantics("RANK door default:typechange", "typechange door");
     }
 
     @Test
@@ -144,6 +147,21 @@ public class SemanticSearcherTestCase extends RuleBaseAbstractTestCase {
     @Test
     void testOrProduction() {
         assertSemantics("OR something somethingelse", "something");
+
+        // I did not expect this:
+        assertSemantics("OR (AND foo1 something bar2) somethingelse", "foo1 something bar2");
+
+        // but at least works like expected:
+        assertSemantics("RANK (AND foo1 (OR foo2 something somethingelse bar1) bar2) bar3",
+                        "foo1 AND (foo2 OR something OR bar1) AND bar2 RANK bar3",
+                        0, Query.Type.ADVANCED);
+    }
+
+    @Test
+    void testDoubleOrProduction() {
+        assertSemantics("OR more evenmore", "somethingmore");
+        // Strange ordering:
+        assertSemantics("OR (AND foo1 bar2) more evenmore", "foo1 somethingmore bar2");
     }
 
     // This test is order dependent. Fix it!!
@@ -162,6 +180,36 @@ public class SemanticSearcherTestCase extends RuleBaseAbstractTestCase {
         Query query = new Query(""); // Causes a query containing a NullItem
         doSearch(searcher, query, 0, 10);
         assertEquals(NullItem.class, query.getModel().getQueryTree().getRoot().getClass()); // Still a NullItem
+    }
+
+    @Test
+    void testPhraseReplacementCornerCase() {
+        assertSemantics("brand:smashtogether", "\"smash together\"");
+        assertSemantics("brand:smashtogether", "smash-together");
+        assertSemantics("AND foo1 brand:smashtogether bar2", "foo1 \"smash together\" bar2");
+        assertSemantics("AND \"foo1 bar2\" brand:smashtogether", "\"foo1 smash together bar2\"");
+        assertSemantics("OR \"foo1 bar2\" brand:smashtogether", "\"foo1 smash together bar2\"", 0, Query.Type.ANY);
+        // the difference in ordering here is because the parsed query already has a WEAKAND root (with 1 child):
+        assertSemantics("WEAKAND \"foo1 bar2\" brand:smashtogether", "\"foo1 smash together bar2\"", 0, Query.Type.WEAKAND);
+    }
+
+    @Test
+    void testWandAddition() {
+        assertSemantics("WEAKAND confused perplex", "confused");
+        // not what I expected, but similar to OrProduction above:
+        assertSemantics("WEAKAND (AND dazed confused disoriented) perplex", "dazed confused disoriented");
+        assertSemantics("WEAKAND (OR foo1 (AND dazed confused disoriented) bar2) perplex",
+                        "foo1 OR (dazed AND confused AND disoriented) OR bar2",
+                        0, Query.Type.ADVANCED);
+    }
+
+    @Test
+    void testWandReplacement() {
+        assertSemantics("WEAKAND greatest", "goat");
+        assertSemantics("WEAKAND dazed greatest", "dazed goat");
+        assertSemantics("WEAKAND (AND dazed disoriented) greatest", "dazed goat disoriented");
+        assertSemantics("WEAKAND the greatest of all time", "thegoat");
+        assertSemantics("WEAKAND (AND dazed disoriented) the greatest of all time", "dazed thegoat disoriented");
     }
 
     private Result doSearch(Searcher searcher, Query query, int offset, int hits) {

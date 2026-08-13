@@ -1,5 +1,6 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.search.query.properties;
+import java.util.Locale;
 
 import com.yahoo.language.process.Embedder;
 import com.yahoo.processing.IllegalInputException;
@@ -7,8 +8,10 @@ import com.yahoo.processing.request.CompoundName;
 import com.yahoo.search.Query;
 
 import com.yahoo.search.query.Model;
+import com.yahoo.search.query.ParameterParser;
 import com.yahoo.search.query.Presentation;
 import com.yahoo.search.query.Properties;
+import com.yahoo.search.query.QueryType;
 import com.yahoo.search.query.Ranking;
 import com.yahoo.search.query.Select;
 import com.yahoo.search.query.Trace;
@@ -19,10 +22,14 @@ import com.yahoo.search.query.profile.types.QueryProfileType;
 import com.yahoo.search.query.profiling.Profiling;
 import com.yahoo.search.query.profiling.ProfilingParams;
 import com.yahoo.search.query.ranking.Diversity;
+import com.yahoo.search.query.ranking.GlobalPhase;
 import com.yahoo.search.query.ranking.MatchPhase;
 import com.yahoo.search.query.ranking.Matching;
+import com.yahoo.search.query.ranking.SecondPhase;
+import com.yahoo.search.query.ranking.AnnTimeout;
 import com.yahoo.search.query.ranking.SoftTimeout;
 import com.yahoo.search.query.ranking.Significance;
+import com.yahoo.search.query.ranking.WeakAnd;
 import com.yahoo.tensor.Tensor;
 
 import java.util.HashMap;
@@ -59,8 +66,8 @@ public class QueryProperties extends Properties {
     }
 
     private static void addDualCasedRM(Map<CompoundName, GetterSetter> map, String last, GetterSetter accessor) {
-        map.put(CompoundName.fromComponents(Ranking.RANKING, Ranking.MATCHING, last), accessor);
-        map.put(CompoundName.fromComponents(Ranking.RANKING, Ranking.MATCHING, last.toLowerCase()), accessor);
+        map.put(CompoundName.fromComponents(Ranking.RANKING, Matching.MATCHING, last), accessor);
+        map.put(CompoundName.fromComponents(Ranking.RANKING, Matching.MATCHING, last.toLowerCase(Locale.ROOT)), accessor);
     }
 
     private static final Map<CompoundName, GetterSetter> propertyAccessors = createPropertySetterMap();
@@ -69,12 +76,18 @@ public class QueryProperties extends Properties {
         Map<CompoundName, GetterSetter> map = new HashMap<>();
         map.put(CompoundName.fromComponents(Model.MODEL, Model.QUERY_STRING), GetterSetter.of(query -> query.getModel().getQueryString(), (query, value) -> query.getModel().setQueryString(asString(value, ""))));
         map.put(CompoundName.fromComponents(Model.MODEL, Model.TYPE), GetterSetter.of(query -> query.getModel().getType(), (query, value) -> query.getModel().setType(asString(value, "ANY"))));
+        map.put(CompoundName.fromComponents(Model.MODEL, Model.TYPE, QueryType.COMPOSITE), GetterSetter.of(query -> query.getModel().getQueryType().getComposite(), (query, value) -> query.getModel().getQueryType().setComposite(asString(value, null))));
+        map.put(CompoundName.fromComponents(Model.MODEL, Model.TYPE, QueryType.TOKENIZATION), GetterSetter.of(query -> query.getModel().getQueryType().getTokenization(), (query, value) -> query.getModel().getQueryType().setTokenization(asString(value, null))));
+        map.put(CompoundName.fromComponents(Model.MODEL, Model.TYPE, QueryType.SYNTAX), GetterSetter.of(query -> query.getModel().getQueryType().getSyntax(), (query, value) -> query.getModel().getQueryType().setSyntax(asString(value, null))));
+        map.put(CompoundName.fromComponents(Model.MODEL, Model.TYPE, QueryType.PROFILE), GetterSetter.of(query -> query.getModel().getQueryType().getProfile(), (query, value) -> query.getModel().getQueryType().setProfile(asString(value, null))));
+        map.put(CompoundName.fromComponents(Model.MODEL, Model.TYPE, QueryType.IS_YQL_DEFAULT), GetterSetter.of(query -> query.getModel().getQueryType().isYqlDefault(), (query, value) -> query.getModel().getQueryType().setYqlDefault(asBoolean(value, false))));
         map.put(CompoundName.fromComponents(Model.MODEL, Model.FILTER), GetterSetter.of(query -> query.getModel().getFilter(), (query, value) -> query.getModel().setFilter(asString(value, ""))));
         map.put(CompoundName.fromComponents(Model.MODEL, Model.DEFAULT_INDEX), GetterSetter.of(query -> query.getModel().getDefaultIndex(), (query, value) -> query.getModel().setDefaultIndex(asString(value, ""))));
         map.put(CompoundName.fromComponents(Model.MODEL, Model.LANGUAGE), GetterSetter.of(query -> query.getModel().getLanguage(), (query, value) -> query.getModel().setLanguage(asString(value, ""))));
         map.put(CompoundName.fromComponents(Model.MODEL, Model.LOCALE), GetterSetter.of(query -> query.getModel().getLocale(), (query, value) -> query.getModel().setLocale(asString(value, ""))));
         map.put(CompoundName.fromComponents(Model.MODEL, Model.ENCODING), GetterSetter.of(query -> query.getModel().getEncoding(), (query, value) -> query.getModel().setEncoding(asString(value,""))));
         map.put(CompoundName.fromComponents(Model.MODEL, Model.SOURCES), GetterSetter.of(query -> query.getModel().getSources(), (query, value) -> query.getModel().setSources(asString(value,""))));
+        map.put(CompoundName.fromComponents(Model.MODEL, Model.SEARCH_GROUP), GetterSetter.of(query -> query.getModel().getSearchGroup(), (query, value) -> query.getModel().setSearchGroup(asInteger(value,null))));
         map.put(CompoundName.fromComponents(Model.MODEL, Model.SEARCH_PATH), GetterSetter.of(query -> query.getModel().getSearchPath(), (query, value) -> query.getModel().setSearchPath(asString(value,""))));
         map.put(CompoundName.fromComponents(Model.MODEL, Model.RESTRICT), GetterSetter.of(query -> query.getModel().getRestrict(), (query, value) -> query.getModel().setRestrict(asString(value,""))));
         map.put(CompoundName.fromComponents(Ranking.RANKING, Ranking.LOCATION), GetterSetter.of(query -> query.getRanking().getLocation(), (query, value) -> query.getRanking().setLocation(asString(value,""))));
@@ -82,8 +95,9 @@ public class QueryProperties extends Properties {
         map.put(CompoundName.fromComponents(Ranking.RANKING, Ranking.SORTING), GetterSetter.of(query -> query.getRanking().getSorting(), (query, value) -> query.getRanking().setSorting(asString(value,""))));
         map.put(CompoundName.fromComponents(Ranking.RANKING, Ranking.FRESHNESS), GetterSetter.of(query -> query.getRanking().getFreshness(), (query, value) -> query.getRanking().setFreshness(asString(value, ""))));
         map.put(CompoundName.fromComponents(Ranking.RANKING, Ranking.QUERYCACHE), GetterSetter.of(query -> query.getRanking().getQueryCache(), (query, value) -> query.getRanking().setQueryCache(asBoolean(value, false))));
-        map.put(CompoundName.fromComponents(Ranking.RANKING, Ranking.RERANKCOUNT), GetterSetter.of(query -> query.getRanking().getRerankCount(), (query, value) -> query.getRanking().setRerankCount(asInteger(value, null))));
+        map.put(CompoundName.fromComponents(Ranking.RANKING, SecondPhase.RERANK_COUNT), GetterSetter.of(query -> query.getRanking().getSecondPhase().getRerankCount(), (query, value) -> query.getRanking().getSecondPhase().setRerankCount(asInteger(value, null)))); // TODO: Remove on Vespa 9
         map.put(CompoundName.fromComponents(Ranking.RANKING, Ranking.KEEPRANKCOUNT), GetterSetter.of(query -> query.getRanking().getKeepRankCount(), (query, value) -> query.getRanking().setKeepRankCount(asInteger(value, null))));
+        map.put(CompoundName.fromComponents(Ranking.RANKING, Ranking.TOTALKEEPRANKCOUNT), GetterSetter.of(query -> query.getRanking().getTotalKeepRankCount(), (query, value) -> query.getRanking().setTotalKeepRankCount(asInteger(value, null))));
         map.put(CompoundName.fromComponents(Ranking.RANKING, Ranking.RANKSCOREDROPLIMIT), GetterSetter.of(query -> query.getRanking().getRankScoreDropLimit(), (query, value) -> query.getRanking().setRankScoreDropLimit(asDouble(value, null))));
         map.put(CompoundName.fromComponents(Ranking.RANKING, Ranking.LIST_FEATURES), GetterSetter.of(query -> query.getRanking().getListFeatures(), (query, value) -> query.getRanking().setListFeatures(asBoolean(value,false))));
         addDualCasedRM(map, Matching.TERMWISELIMIT, GetterSetter.of(query -> query.getRanking().getMatching().getTermwiseLimit(), (query, value) -> query.getRanking().getMatching().setTermwiselimit(asDouble(value, 1.0))));
@@ -91,29 +105,45 @@ public class QueryProperties extends Properties {
         addDualCasedRM(map, Matching.NUMSEARCHPARTITIIONS, GetterSetter.of(query -> query.getRanking().getMatching().getNumSearchPartitions(), (query, value) -> query.getRanking().getMatching().setNumSearchPartitions(asInteger(value, 1))));
         addDualCasedRM(map, Matching.MINHITSPERTHREAD, GetterSetter.of(query -> query.getRanking().getMatching().getMinHitsPerThread(), (query, value) -> query.getRanking().getMatching().setMinHitsPerThread(asInteger(value, 0))));
         addDualCasedRM(map, Matching.POST_FILTER_THRESHOLD, GetterSetter.of(query -> query.getRanking().getMatching().getPostFilterThreshold(), (query, value) -> query.getRanking().getMatching().setPostFilterThreshold(asDouble(value, 1.0))));
-        addDualCasedRM(map, Matching.APPROXIMATE_THRESHOLD, GetterSetter.of(query -> query.getRanking().getMatching().getApproximateThreshold(), (query, value) -> query.getRanking().getMatching().setApproximateThreshold(asDouble(value, 0.05))));
+        addDualCasedRM(map, Matching.APPROXIMATE_THRESHOLD, GetterSetter.of(query -> query.getRanking().getMatching().getApproximateThreshold(), (query, value) -> query.getRanking().getMatching().setApproximateThreshold(asDouble(value, 0.02))));
+        addDualCasedRM(map, Matching.FILTER_FIRST_THRESHOLD, GetterSetter.of(query -> query.getRanking().getMatching().getFilterFirstThreshold(), (query, value) -> query.getRanking().getMatching().setFilterFirstThreshold(asDouble(value, 0.2))));
+        addDualCasedRM(map, Matching.FILTER_FIRST_EXPLORATION, GetterSetter.of(query -> query.getRanking().getMatching().getFilterFirstExploration(), (query, value) -> query.getRanking().getMatching().setFilterFirstExploration(asDouble(value, 0.01))));
+        addDualCasedRM(map, Matching.EXPLORATION_SLACK, GetterSetter.of(query -> query.getRanking().getMatching().getExplorationSlack(), (query, value) -> query.getRanking().getMatching().setExplorationSlack(asDouble(value, 0.0))));
         addDualCasedRM(map, Matching.TARGET_HITS_MAX_ADJUSTMENT_FACTOR, GetterSetter.of(query -> query.getRanking().getMatching().getTargetHitsMaxAdjustmentFactor(), (query, value) -> query.getRanking().getMatching().setTargetHitsMaxAdjustmentFactor(asDouble(value, 20.0))));
-
-        map.put(CompoundName.fromComponents(Ranking.RANKING, Ranking.MATCH_PHASE, MatchPhase.ATTRIBUTE), GetterSetter.of(query -> query.getRanking().getMatchPhase().getAttribute(), (query, value) -> query.getRanking().getMatchPhase().setAttribute(asString(value, null))));
-        map.put(CompoundName.fromComponents(Ranking.RANKING, Ranking.MATCH_PHASE, MatchPhase.ASCENDING), GetterSetter.of(query -> query.getRanking().getMatchPhase().getAscending(), (query, value) -> query.getRanking().getMatchPhase().setAscending(asBoolean(value, false))));
-        map.put(CompoundName.fromComponents(Ranking.RANKING, Ranking.MATCH_PHASE, MatchPhase.MAX_HITS), GetterSetter.of(query -> query.getRanking().getMatchPhase().getMaxHits(), (query, value) -> query.getRanking().getMatchPhase().setMaxHits(asLong(value, null))));
-        map.put(CompoundName.fromComponents(Ranking.RANKING, Ranking.MATCH_PHASE, MatchPhase.MAX_FILTER_COVERAGE), GetterSetter.of(query -> query.getRanking().getMatchPhase().getMaxFilterCoverage(), (query, value) -> query.getRanking().getMatchPhase().setMaxFilterCoverage(asDouble(value, 0.2))));
-        map.put(CompoundName.fromComponents(Ranking.RANKING, Ranking.MATCH_PHASE, Ranking.DIVERSITY, Diversity.ATTRIBUTE),GetterSetter.of(query -> query.getRanking().getMatchPhase().getDiversity().getAttribute(),  (query, value) -> query.getRanking().getMatchPhase().getDiversity().setAttribute(asString(value, null))));
-        map.put(CompoundName.fromComponents(Ranking.RANKING, Ranking.MATCH_PHASE, Ranking.DIVERSITY, Diversity.MINGROUPS), GetterSetter.of(query -> query.getRanking().getMatchPhase().getDiversity().getMinGroups(), (query, value) -> query.getRanking().getMatchPhase().getDiversity().setMinGroups(asLong(value, null))));
-        map.put(CompoundName.fromComponents(Ranking.RANKING, Ranking.MATCH_PHASE, Ranking.DIVERSITY, Diversity.CUTOFF, Diversity.FACTOR), GetterSetter.of(query -> query.getRanking().getMatchPhase().getDiversity().getCutoffFactor(), (query, value) -> query.getRanking().getMatchPhase().getDiversity().setCutoffFactor(asDouble(value, 10.0))));
-        map.put(CompoundName.fromComponents(Ranking.RANKING, Ranking.MATCH_PHASE, Ranking.DIVERSITY, Diversity.CUTOFF, Diversity.STRATEGY), GetterSetter.of(query -> query.getRanking().getMatchPhase().getDiversity().getCutoffStrategy(), (query, value) -> query.getRanking().getMatchPhase().getDiversity().setCutoffStrategy(asString(value, "loose"))));
-        map.put(CompoundName.fromComponents(Ranking.RANKING, Ranking.SECOND_PHASE, Ranking.RANKSCOREDROPLIMIT), GetterSetter.of(query -> query.getRanking().getSecondPhase().getRankScoreDropLimit(), (query, value) -> query.getRanking().getSecondPhase().setRankScoreDropLimit(asDouble(value, null))));
-        map.put(CompoundName.fromComponents(Ranking.RANKING, Ranking.GLOBAL_PHASE, Ranking.RERANKCOUNT),
-                GetterSetter.of(query -> query.getRanking().getGlobalPhase().getRerankCount(),
-                                (query, value) -> query.getRanking().getGlobalPhase().setRerankCount(asInteger(value, null))));
-        map.put(CompoundName.fromComponents(Ranking.RANKING, Ranking.SOFTTIMEOUT, SoftTimeout.ENABLE), GetterSetter.of(query -> query.getRanking().getSoftTimeout().getEnable(), (query, value) -> query.getRanking().getSoftTimeout().setEnable(asBoolean(value, true))));
-        map.put(CompoundName.fromComponents(Ranking.RANKING, Ranking.SOFTTIMEOUT, SoftTimeout.FACTOR), GetterSetter.of(query -> query.getRanking().getSoftTimeout().getFactor(), (query, value) -> query.getRanking().getSoftTimeout().setFactor(asDouble(value, null))));
-        map.put(CompoundName.fromComponents(Ranking.RANKING, Ranking.SOFTTIMEOUT, SoftTimeout.TAILCOST), GetterSetter.of(query -> query.getRanking().getSoftTimeout().getTailcost(), (query, value) -> query.getRanking().getSoftTimeout().setTailcost(asDouble(value, null))));
-        map.put(CompoundName.fromComponents(Ranking.RANKING, Ranking.SIGNIFICANCE, Significance.USE_MODEL), GetterSetter.of(query -> query.getRanking().getSignificance().getUseModel().orElse(false), (query, value) -> query.getRanking().getSignificance().setUseModel(asBoolean(value, false))));
+        addDualCasedRM(map, Matching.LAZY_FILTER, GetterSetter.of(query -> query.getRanking().getMatching().getLazyFilter(), (query, value) -> query.getRanking().getMatching().setLazyFilter(asBoolean(value, false))));
+        addDualCasedRM(map, Matching.FILTER_THRESHOLD, GetterSetter.of(query -> query.getRanking().getMatching().getFilterThreshold(), (query, value) -> query.getRanking().getMatching().setFilterThreshold(asDouble(value, 1.0))));
+        addDualCasedRM(map, Matching.ANNTIMEBUDGET, GetterSetter.of(query -> query.getRanking().getMatching().getAnnTimeBudget(), (query, value) -> query.getRanking().getMatching().setAnnTimeBudget(ParameterParser.asMilliSeconds(value, Long.MAX_VALUE))));
+        map.put(CompoundName.fromComponents(Ranking.RANKING, Matching.MATCHING, Matching.ANNTIMEOUT, AnnTimeout.ENABLE), GetterSetter.of(query -> query.getRanking().getMatching().getAnnTimeout().getEnable(), (query, value) -> query.getRanking().getMatching().getAnnTimeout().setEnable(asBoolean(value, true))));
+        map.put(CompoundName.fromComponents(Ranking.RANKING, Matching.MATCHING, Matching.ANNTIMEOUT, AnnTimeout.FACTOR), GetterSetter.of(query -> query.getRanking().getMatching().getAnnTimeout().getFactor(), (query, value) -> query.getRanking().getMatching().getAnnTimeout().setFactor(asDouble(value, 0.9))));
+        map.put(CompoundName.fromComponents(Ranking.RANKING, Matching.MATCHING, Matching.WEAKAND, WeakAnd.STOPWORD_LIMIT), GetterSetter.of(query -> query.getRanking().getMatching().getWeakAnd().getStopwordLimit(), (query, value) -> query.getRanking().getMatching().getWeakAnd().setStopwordLimit(asDouble(value, 1.0))));
+        map.put(CompoundName.fromComponents(Ranking.RANKING, Matching.MATCHING, Matching.WEAKAND, WeakAnd.ADJUST_TARGET), GetterSetter.of(query -> query.getRanking().getMatching().getWeakAnd().getAdjustTarget(), (query, value) -> query.getRanking().getMatching().getWeakAnd().setAdjustTarget(asDouble(value, 1.0))));
+        map.put(CompoundName.fromComponents(Ranking.RANKING, Matching.MATCHING, Matching.WEAKAND, WeakAnd.ALLOW_DROP_ALL), GetterSetter.of(query -> query.getRanking().getMatching().getWeakAnd().getAllowDropAll(), (query, value) -> query.getRanking().getMatching().getWeakAnd().setAllowDropAll(asBoolean(value, false))));
+        map.put(CompoundName.fromComponents(Ranking.RANKING, MatchPhase.MATCH_PHASE, MatchPhase.ATTRIBUTE), GetterSetter.of(query -> query.getRanking().getMatchPhase().getAttribute(), (query, value) -> query.getRanking().getMatchPhase().setAttribute(asString(value, null))));
+        map.put(CompoundName.fromComponents(Ranking.RANKING, MatchPhase.MATCH_PHASE, MatchPhase.ASCENDING), GetterSetter.of(query -> query.getRanking().getMatchPhase().getAscending(), (query, value) -> query.getRanking().getMatchPhase().setAscending(asBoolean(value, false))));
+        map.put(CompoundName.fromComponents(Ranking.RANKING, MatchPhase.MATCH_PHASE, MatchPhase.MAX_HITS), GetterSetter.of(query -> query.getRanking().getMatchPhase().getMaxHits(), (query, value) -> query.getRanking().getMatchPhase().setMaxHits(asLong(value, null))));
+        map.put(CompoundName.fromComponents(Ranking.RANKING, MatchPhase.MATCH_PHASE, MatchPhase.TOTAL_MAX_HITS), GetterSetter.of(query -> query.getRanking().getMatchPhase().getTotalMaxHits(), (query, value) -> query.getRanking().getMatchPhase().setTotalMaxHits(asLong(value, null))));
+        map.put(CompoundName.fromComponents(Ranking.RANKING, MatchPhase.MATCH_PHASE, MatchPhase.MAX_FILTER_COVERAGE), GetterSetter.of(query -> query.getRanking().getMatchPhase().getMaxFilterCoverage(), (query, value) -> query.getRanking().getMatchPhase().setMaxFilterCoverage(asDouble(value, 0.2))));
+        map.put(CompoundName.fromComponents(Ranking.RANKING, MatchPhase.MATCH_PHASE, Diversity.DIVERSITY, Diversity.ATTRIBUTE),GetterSetter.of(query -> query.getRanking().getMatchPhase().getDiversity().getAttribute(),  (query, value) -> query.getRanking().getMatchPhase().getDiversity().setAttribute(asString(value, null))));
+        map.put(CompoundName.fromComponents(Ranking.RANKING, MatchPhase.MATCH_PHASE, Diversity.DIVERSITY, Diversity.MINGROUPS), GetterSetter.of(query -> query.getRanking().getMatchPhase().getDiversity().getMinGroups(), (query, value) -> query.getRanking().getMatchPhase().getDiversity().setMinGroups(asLong(value, null))));
+        map.put(CompoundName.fromComponents(Ranking.RANKING, MatchPhase.MATCH_PHASE, Diversity.DIVERSITY, Diversity.CUTOFF_FACTOR), GetterSetter.of(query -> query.getRanking().getMatchPhase().getDiversity().getCutoffFactor(), (query, value) -> query.getRanking().getMatchPhase().getDiversity().setCutoffFactor(asDouble(value, 10.0))));
+        map.put(CompoundName.fromComponents(Ranking.RANKING, MatchPhase.MATCH_PHASE, Diversity.DIVERSITY, "cutoff", "factor"), GetterSetter.of(query -> query.getRanking().getMatchPhase().getDiversity().getCutoffFactor(), (query, value) -> query.getRanking().getMatchPhase().getDiversity().setCutoffFactor(asDouble(value, 10.0)))); // TODO: Remove on Vespa 9 (never documented)
+        map.put(CompoundName.fromComponents(Ranking.RANKING, MatchPhase.MATCH_PHASE, Diversity.DIVERSITY, Diversity.CUTOFF_STRATEGY), GetterSetter.of(query -> query.getRanking().getMatchPhase().getDiversity().getCutoffStrategy(), (query, value) -> query.getRanking().getMatchPhase().getDiversity().setCutoffStrategy(asString(value, "loose"))));
+        map.put(CompoundName.fromComponents(Ranking.RANKING, MatchPhase.MATCH_PHASE, Diversity.DIVERSITY, "cutoff", "strategy"), GetterSetter.of(query -> query.getRanking().getMatchPhase().getDiversity().getCutoffStrategy(), (query, value) -> query.getRanking().getMatchPhase().getDiversity().setCutoffStrategy(asString(value, "loose")))); // TODO: Remove on Vespa 9 (never documented)
+        map.put(CompoundName.fromComponents(Ranking.RANKING, SecondPhase.SECOND_PHASE, SecondPhase.RERANK_COUNT), GetterSetter.of(query -> query.getRanking().getSecondPhase().getRerankCount(), (query, value) -> query.getRanking().getSecondPhase().setRerankCount(asInteger(value, null))));
+        map.put(CompoundName.fromComponents(Ranking.RANKING, SecondPhase.SECOND_PHASE, SecondPhase.TOTAL_RERANK_COUNT), GetterSetter.of(query -> query.getRanking().getSecondPhase().getTotalRerankCount(), (query, value) -> query.getRanking().getSecondPhase().setTotalRerankCount(asInteger(value, null))));
+        map.put(CompoundName.fromComponents(Ranking.RANKING, SecondPhase.SECOND_PHASE, SecondPhase.RANK_SCORE_DROP_LIMIT), GetterSetter.of(query -> query.getRanking().getSecondPhase().getRankScoreDropLimit(), (query, value) -> query.getRanking().getSecondPhase().setRankScoreDropLimit(asDouble(value, null))));
+        map.put(CompoundName.fromComponents(Ranking.RANKING, GlobalPhase.GLOBAL_PHASE, GlobalPhase.RERANK_COUNT), GetterSetter.of(query -> query.getRanking().getGlobalPhase().getRerankCount(), (query, value) -> query.getRanking().getGlobalPhase().setRerankCount(asInteger(value, null))));
+        map.put(CompoundName.fromComponents(Ranking.RANKING, GlobalPhase.GLOBAL_PHASE, GlobalPhase.RANK_SCORE_DROP_LIMIT), GetterSetter.of(query -> query.getRanking().getGlobalPhase().getRankScoreDropLimit(), (query, value) -> query.getRanking().getGlobalPhase().setRankScoreDropLimit(asDouble(value, null))));
+        map.put(CompoundName.fromComponents(Ranking.RANKING, SoftTimeout.SOFTTIMEOUT, SoftTimeout.ENABLE), GetterSetter.of(query -> query.getRanking().getSoftTimeout().getEnable(), (query, value) -> query.getRanking().getSoftTimeout().setEnable(asBoolean(value, true))));
+        map.put(CompoundName.fromComponents(Ranking.RANKING, SoftTimeout.SOFTTIMEOUT, SoftTimeout.FACTOR), GetterSetter.of(query -> query.getRanking().getSoftTimeout().getFactor(), (query, value) -> query.getRanking().getSoftTimeout().setFactor(asDouble(value, null))));
+        map.put(CompoundName.fromComponents(Ranking.RANKING, SoftTimeout.SOFTTIMEOUT, SoftTimeout.TAILCOST), GetterSetter.of(query -> query.getRanking().getSoftTimeout().getTailcost(), (query, value) -> query.getRanking().getSoftTimeout().setTailcost(asDouble(value, null))));
+        map.put(CompoundName.fromComponents(Ranking.RANKING, Significance.SIGNIFICANCE, Significance.USE_MODEL), GetterSetter.of(query -> query.getRanking().getSignificance().getUseModel().orElse(false), (query, value) -> query.getRanking().getSignificance().setUseModel(asBoolean(value, false))));
         map.put(CompoundName.fromComponents(Select.SELECT), GetterSetter.of(query -> query.getSelect().getGroupingExpressionString(), (query, value) -> query.getSelect().setGroupingExpressionString(asString(value, ""))));
         map.put(CompoundName.fromComponents(Select.SELECT, Select.WHERE), GetterSetter.of(query -> query.getSelect().getWhereString(), (query, value) -> query.getSelect().setWhereString(asString(value, ""))));
         map.put(CompoundName.fromComponents(Select.SELECT, Select.GROUPING), GetterSetter.of(query -> query.getSelect().getGroupingString(), (query, value) -> query.getSelect().setGroupingString(asString(value, ""))));
+        map.put(CompoundName.fromComponents(Select.SELECT, Select.FIELDS), GetterSetter.of(query -> query.getSelect().getFieldsString(), (query, value) -> query.getSelect().setFieldsString(asString(value, ""))));
         map.put(CompoundName.fromComponents(Trace.TRACE, Trace.LEVEL), GetterSetter.of(query -> query.getTrace().getLevel(), (query, value) -> query.getTrace().setLevel(asInteger(value, 0))));
+        map.put(CompoundName.fromComponents(Trace.TRACE, Trace.PROFILE), GetterSetter.of(query -> query.getTrace().getProfile(), (query, value) -> query.getTrace().setProfile(asBoolean(value, false))));
         map.put(CompoundName.fromComponents(Trace.TRACE, Trace.EXPLAIN_LEVEL), GetterSetter.of(query -> query.getTrace().getExplainLevel(), (query, value) -> query.getTrace().setExplainLevel(asInteger(value, 0))));
         map.put(CompoundName.fromComponents(Trace.TRACE, Trace.PROFILE_DEPTH), GetterSetter.of(null, (query, value) -> query.getTrace().setProfileDepth(asInteger(value, 0))));
         map.put(CompoundName.fromComponents(Trace.TRACE, Trace.TIMESTAMPS), GetterSetter.of(query -> query.getTrace().getTimestamps(), (query, value) -> query.getTrace().setTimestamps(asBoolean(value, false))));
@@ -126,7 +156,7 @@ public class QueryProperties extends Properties {
         map.put(CompoundName.fromComponents(Presentation.PRESENTATION, Presentation.FORMAT), GetterSetter.of(query -> query.getPresentation().getFormat(), (query, value) -> query.getPresentation().setFormat(asString(value, ""))));
         map.put(CompoundName.fromComponents(Presentation.PRESENTATION, Presentation.TIMING), GetterSetter.of(query -> query.getPresentation().getTiming(), (query, value) -> query.getPresentation().setTiming(asBoolean(value, true))));
         map.put(CompoundName.fromComponents(Presentation.PRESENTATION, Presentation.SUMMARY_FIELDS), GetterSetter.of(query -> query.getPresentation().getSummaryFields(), (query, value) -> query.getPresentation().setSummaryFields(asString(value, ""))));
-        map.put(CompoundName.fromComponents(Presentation.PRESENTATION, Presentation.FORMAT, Presentation.TENSORS), GetterSetter.of(query -> query.getPresentation().getTensorShortForm(), (query, value) -> query.getPresentation().setTensorFormat(asString(value, "short")))); // TODO: Switch default to short-value on Vespa 9);
+        map.put(CompoundName.fromComponents(Presentation.PRESENTATION, Presentation.FORMAT, Presentation.TENSORS), GetterSetter.of(query -> query.getPresentation().getTensorFormat(), (query, value) -> query.getPresentation().setTensorFormat(asString(value, "short")))); // TODO: Switch default to short-value on Vespa 9);
         map.put(Query.HITS, GetterSetter.of(Query::getHits, (query, value) -> query.setHits(asInteger(value,10))));
         map.put(Query.OFFSET, GetterSetter.of(Query::getOffset, (query, value) -> query.setOffset(asInteger(value,0))));
         map.put(Query.TIMEOUT, GetterSetter.of(Query::getTimeout, (query, value) -> query.setTimeout(value.toString())));
@@ -163,10 +193,24 @@ public class QueryProperties extends Properties {
                 // pass the portion after "ranking.features/properties" down
                 if (key.get(1).equals(Ranking.FEATURES)) return ranking.getFeatures().getObject(key.rest().rest().toString());
                 if (key.get(1).equals(Ranking.PROPERTIES)) return ranking.getProperties().get(key.rest().rest().toString());
+                if (key.get(1).equals(Ranking.ELEMENT_GAP)) return ranking.getElementGapForField(key.rest().rest().toString());
             }
         }
 
         return super.get(key, context, substitution);
+    }
+
+    @Override
+    public void set(CompoundName key, Object value, Map<String,String> context) {
+        try {
+            setInternal(key, value, context);
+        }
+        catch (IllegalAssignmentException e) {
+            throw e;
+        }
+        catch (Exception e) {
+            throw new IllegalInputException("Could not set '" + key + "'", e);
+        }
     }
 
     private void setInternal(CompoundName key, Object value, Map<String,String> context) {
@@ -182,14 +226,18 @@ public class QueryProperties extends Properties {
                 chained().requireSettable(key, value, context);
                 if (key.get(1).equals(Ranking.FEATURES)) {
                     setRankFeature(query, restKey, toSpecifiedType(restKey, value,
-                            profileRegistry.getTypeRegistry().getComponent("features"),
-                            context));
+                                                                   profileRegistry.getTypeRegistry().getComponent("features"),
+                                                                   context));
                     return;
                 } else if (key.get(1).equals(Ranking.PROPERTIES)) {
                     Ranking ranking = query.getRanking();
                     ranking.getProperties().put(restKey, toSpecifiedType(restKey, value,
-                            profileRegistry.getTypeRegistry().getComponent("properties"),
-                            context));
+                                                                         profileRegistry.getTypeRegistry().getComponent("properties"),
+                                                                         context));
+                    return;
+                } else if (key.get(1).equals(Ranking.ELEMENT_GAP)) {
+                    Ranking ranking = query.getRanking();
+                    ranking.setElementGapForField(restKey, value);
                     return;
                 }
             }
@@ -199,20 +247,6 @@ public class QueryProperties extends Properties {
             throwIllegalParameter(key.rest().toString(), key.first());
         } else {
             super.set(key, value, context);
-        }
-    }
-
-    @Override
-    public void set(CompoundName key, Object value, Map<String,String> context) {
-        // Note: The defaults here are never used
-        try {
-            setInternal(key, value, context);
-        }
-        catch (Exception e) { // Make sure error messages are informative. This should be moved out of this properties implementation
-            if (e.getMessage() != null && e.getMessage().startsWith("Could not set"))
-                throw e;
-            else
-                throw new IllegalInputException("Could not set '" + key + "' to '" + value + "'", e);
         }
     }
 

@@ -1,18 +1,17 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "appender.h"
+
 #include "juniperdebug.h"
 #define _NEED_SUMMARY_CONFIG_IMPL
 #include "SummaryConfig.h"
+
 #include <cctype>
 
 namespace juniper {
 
-void
-Appender::append(std::vector<char> & s, char c)
-{
-    JD_INVAR(JD_INPUT, c != 0, return,\
-             LOG(warning, "Document source contained 0-bytes"));
+void Appender::append(std::vector<char>& s, char c) {
+    JD_INVAR(JD_INPUT, c != 0, return, LOG(warning, "Document source contained 0-bytes"));
     // eliminate separators:
     if (_sumconf->separator(c)) {
         return;
@@ -86,19 +85,14 @@ Appender::append(std::vector<char> & s, char c)
         /** If at start of an UTF8 character (both highest bits or none of them set)
          *  another char is accumulated..
          */
-        if (!(c & 0x80) || (c & 0x40) ) {
+        if (!(c & 0x80) || (c & 0x40)) {
             _char_len++;
         }
     }
 }
 
-Appender::Appender(const SummaryConfig *sumconf)
-    : _sumconf(sumconf),
-      _escape_markup(false),
-      _preserve_white_space(false),
-      _last_was_space(false),
-      _char_len(0)
-{
+Appender::Appender(const SummaryConfig* sumconf)
+    : _sumconf(sumconf), _escape_markup(false), _preserve_white_space(false), _last_was_space(false), _char_len(0) {
     ConfigFlag esc_conf = _sumconf->escape_markup();
 
     switch (esc_conf) {
@@ -109,9 +103,8 @@ Appender::Appender(const SummaryConfig *sumconf)
         _escape_markup = true;
         break;
     case CF_AUTO:
-        _escape_markup = (_sumconf->highlight_on()[0] == '<' ||
-                          _sumconf->highlight_off()[0] == '<' ||
-                          _sumconf->dots()[0] == '<');
+        _escape_markup =
+            (_sumconf->highlight_on()[0] == '<' || _sumconf->highlight_off()[0] == '<' || _sumconf->dots()[0] == '<');
         break;
     }
 
@@ -120,11 +113,10 @@ Appender::Appender(const SummaryConfig *sumconf)
     }
 }
 
-void
-Appender::append(std::vector<char>& s, const char* ds, int length) {
+void Appender::append(std::vector<char>& s, const char* ds, int length) {
     for (int i = 0; i < length; i++) {
         append(s, ds[i]);
     }
 }
 
-}
+} // namespace juniper

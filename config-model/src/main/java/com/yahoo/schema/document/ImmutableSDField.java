@@ -27,6 +27,8 @@ public interface ImmutableSDField {
 
     boolean doesIndexing();
 
+    boolean doesBitPacking();
+
     boolean doesLowerCasing();
 
     boolean isExtraField();
@@ -76,6 +78,10 @@ public interface ImmutableSDField {
 
     NormalizeLevel getNormalizing();
 
+    String getIndexLinguisticsProfile();
+
+    String getSearchLinguisticsProfile();
+
     ImmutableSDField getStructField(String name);
 
     Collection<? extends ImmutableSDField> getStructFields();
@@ -93,7 +99,9 @@ public interface ImmutableSDField {
     /** Returns a {@link Field} representation (which is sadly not immutable) */
     Field asField();
 
+    /** Returns true if this is a document field (not a synthetic field), or a mutable attribute. */
     boolean hasFullIndexingDocprocRights();
+
     int getWeight();
     int getLiteralBoost();
     RankType getRankType();

@@ -19,15 +19,24 @@ public final class RandomExpression extends Expression {
     }
 
     public RandomExpression(Integer max) {
-        super(null);
         this.max = max;
     }
+
+    @Override
+    public boolean requiresInput() { return false; }
 
     public Integer getMaxValue() { return max; }
 
     @Override
-    protected void doVerify(VerificationContext context) {
-        context.setCurrentType(createdOutputType());
+    public DataType setInputType(DataType inputType, TypeContext context) {
+        super.setInputType(inputType, context);
+        return DataType.INT;
+    }
+
+    @Override
+    public DataType setOutputType(DataType outputType, TypeContext context) {
+        super.setOutputType(DataType.INT, outputType, null, context);
+        return AnyDataType.instance;
     }
 
     @Override
@@ -38,9 +47,6 @@ public final class RandomExpression extends Expression {
     }
 
     @Override
-    public DataType createdOutputType() { return DataType.INT; }
-
-    @Override
     public String toString() {
         return "random" + (max != null ? " " + max : "");
     }
@@ -48,7 +54,7 @@ public final class RandomExpression extends Expression {
     @Override
     public boolean equals(Object obj) {
         if (!(obj instanceof RandomExpression rhs)) return false;
-        if (!equals(max, rhs.max)) return false;
+        if (!Objects.equals(max, rhs.max)) return false;
         return true;
     }
 

@@ -13,9 +13,11 @@ vespa_add_library(searchcore_pcommon STATIC
     eventlogger.cpp
     feeddebugger.cpp
     feedtoken.cpp
+    field_path_target.cpp
     hw_info_sampler.cpp
     indexschema_inspector.cpp
     ipendinglidtracker.cpp
+    memory_usage_logger.cpp
     operation_rate_tracker.cpp
     pendinglidtracker.cpp
     replay_feed_token_factory.cpp

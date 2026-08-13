@@ -44,7 +44,7 @@ public abstract class CompositeItem extends Item {
     public void ensureNotInSubtree(CompositeItem item) {
         for (Item i = this; i != null; i = i.getParent()) {
             if (i == item) {
-                throw new IllegalArgumentException("Cannot add " + item + " to " + this + " as it would create a cycle");
+                throw new IllegalArgumentException("Cannot add '" + item + "' to '" + this + "' as it would create a cycle");
             }
         }
     }
@@ -57,6 +57,8 @@ public abstract class CompositeItem extends Item {
     protected void adding(Item item) {
         Validator.ensureNotNull("A composite item child", item);
         Validator.ensure("Attempted to add a composite to itself", item != this);
+        Validator.ensure("Cannot add a RootItem as a child", !(item instanceof RootItem));
+        Validator.ensure("Cannot add a PureWeightedItem as a child", !(item instanceof PureWeightedItem));
         if (item instanceof CompositeItem) {
             ensureNotInSubtree((CompositeItem) item);
         }
@@ -167,21 +169,21 @@ public abstract class CompositeItem extends Item {
     /** Returns a read only list of the immediate children of this */
     public List<Item> items() { return Collections.unmodifiableList(subitems); }
 
-    public int encode(ByteBuffer buffer) {
-        encodeThis(buffer);
+    public int encode(ByteBuffer buffer, SerializationContext context) {
+        encodeThis(buffer, context);
         int itemCount = 1;
 
         for (Iterator<Item> i = getItemIterator(); i.hasNext();) {
             Item subitem = i.next();
 
-            itemCount += subitem.encode(buffer);
+            itemCount += subitem.encode(buffer, context);
         }
         return itemCount;
     }
 
     /** Encodes just this item, not its regular subitems, to the given buffer. */
-    protected void encodeThis(ByteBuffer buffer) {
-        super.encodeThis(buffer);
+    protected void encodeThis(ByteBuffer buffer, SerializationContext context) {
+        super.encodeThis(buffer, context);
         IntegerCompressor.putCompressedPositiveNumber(encodingArity(), buffer);
     }
 
@@ -202,7 +204,7 @@ public abstract class CompositeItem extends Item {
 
     /** Composite items should be parenthized when not on the top level */
     protected boolean shouldParenthesize() {
-        return getParent()!= null && ! (getParent() instanceof QueryTree);
+        return getParent() != null && ! (getParent() instanceof QueryTree);
     }
 
     /** Returns a deep copy of this item */

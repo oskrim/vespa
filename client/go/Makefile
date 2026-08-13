@@ -8,6 +8,8 @@ ifeq ($(VERSION),)
 	VERSION = $(DEVEL_VERSION)
 endif
 
+export PATH := /usr/local/bin:$(PATH)
+
 PREFIX ?= $(CURDIR)
 BIN ?= $(PREFIX)/bin
 SHARE ?= $(PREFIX)/share
@@ -20,6 +22,8 @@ DIST_TARGETS := dist-mac dist-mac-arm64 dist-linux dist-linux-arm64 dist-win32 d
 GOTOOLCHAIN := $(shell go env GOTOOLCHAIN)
 
 all: test checkfmt install
+
+all: GO_FLAGS = -ldflags "-linkmode=external -X github.com/vespa-engine/vespa/client/go/internal/build.Version=$(VERSION)"
 
 #
 # Dist targets
@@ -89,7 +93,7 @@ dist-win64: GOOS=windows
 dist-win64: GOARCH=amd64
 
 $(DIST_TARGETS): DIST_NAME=vespa-cli_$(VERSION)_$(GOOS)_$(GOARCH)
-$(DIST_TARGETS): dist-version setenv manpages
+$(DIST_TARGETS): checkfmt dist-version setenv manpages
 $(DIST_TARGETS):
 	mkdir -p $(DIST)/$(DIST_NAME)/bin
 	env CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) go build -o $(DIST)/$(DIST_NAME)/bin $(GO_FLAGS) \
@@ -129,6 +133,7 @@ install-brew:
 	brew install vespa-cli
 
 install: setenv
+	env GOBIN=$(BIN) go version
 	env GOBIN=$(BIN) go install $(GO_FLAGS) ./...
 
 manpages: install

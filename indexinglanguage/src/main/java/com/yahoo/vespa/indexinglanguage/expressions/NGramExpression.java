@@ -3,6 +3,7 @@ package com.yahoo.vespa.indexinglanguage.expressions;
 
 import com.yahoo.document.DataType;
 import com.yahoo.document.annotation.AnnotationTypes;
+import com.yahoo.document.annotation.internal.SimpleIndexingAnnotations;
 import com.yahoo.document.annotation.Span;
 import com.yahoo.document.annotation.SpanList;
 import com.yahoo.document.annotation.SpanTree;
@@ -22,6 +23,7 @@ import static com.yahoo.language.LinguisticsCase.toLowerCase;
  *
  * @author bratseth
  */
+@SuppressWarnings({"deprecation", "removal"})
 public final class NGramExpression extends Expression {
 
     private final Linguistics linguistics;
@@ -34,30 +36,41 @@ public final class NGramExpression extends Expression {
      * @param gramSize the gram size
      */
     public NGramExpression(Linguistics linguistics, int gramSize) {
-        super(DataType.STRING);
         this.linguistics = linguistics;
         this.gramSize = gramSize;
     }
+
+    @Override
+    public boolean isMutating() { return false; }
 
     public Linguistics getLinguistics() { return linguistics; }
 
     public int getGramSize() { return gramSize; }
 
     @Override
-    protected void doVerify(VerificationContext context) {
-        // empty
+    public DataType setInputType(DataType inputType, TypeContext context) {
+        return super.setInputType(inputType, DataType.STRING, context);
+    }
+
+    @Override
+    public DataType setOutputType(DataType outputType, TypeContext context) {
+        return super.setOutputType(DataType.STRING, outputType, null, context);
     }
 
     @Override
     protected void doExecute(ExecutionContext context) {
-        StringFieldValue input = (StringFieldValue) context.getCurrentValue();
-        if (input.getSpanTree(SpanTrees.LINGUISTICS) != null) {
-            // This expression is already executed for this input instance
-            return;
-        }
-        StringFieldValue output = input.clone();
+        StringFieldValue output = (StringFieldValue) context.getCurrentValue().clone();
         context.setCurrentValue(output);
 
+        // Try simple path first
+        if (output.wantSimpleAnnotations()) {
+            SimpleIndexingAnnotations simple = new SimpleIndexingAnnotations();
+            annotateNGramsSimple(simple, output.getString());
+            output.setSimpleAnnotations(simple);
+            return;
+        }
+
+        // Fallback to full mode
         SpanList spanList = output.setSpanTree(new SpanTree(SpanTrees.LINGUISTICS)).spanList();
         int lastPosition = 0;
         for (Iterator<GramSplitter.Gram> it = linguistics.getGramSplitter().split(output.getString(), gramSize); it.hasNext();) {
@@ -83,13 +96,19 @@ public final class NGramExpression extends Expression {
         }
     }
 
-    private Span typedSpan(int from, int length, TokenType tokenType, SpanList spanList) {
-        return (Span)spanList.span(from, length).annotate(AnnotationTypes.TOKEN_TYPE, tokenType.getValue());
+    private void annotateNGramsSimple(SimpleIndexingAnnotations simple, String text) {
+        for (Iterator<GramSplitter.Gram> it = linguistics.getGramSplitter().split(text, gramSize); it.hasNext();) {
+            GramSplitter.Gram gram = it.next();
+            String gramString = gram.extractFrom(text);
+            String term = toLowerCase(gramString);
+            String termOverride = term.equals(gramString) ? null : term;
+            simple.add(gram.getStart(), gram.getCodePointCount(), termOverride);
+            // Note: Gaps/punctuation spans not created - C++ doesn't use TOKEN_TYPE annotations anyway
+        }
     }
 
-    @Override
-    public DataType createdOutputType() {
-        return null;
+    private Span typedSpan(int from, int length, TokenType tokenType, SpanList spanList) {
+        return (Span)spanList.span(from, length).annotate(AnnotationTypes.TOKEN_TYPE, tokenType.getValue());
     }
 
     @Override

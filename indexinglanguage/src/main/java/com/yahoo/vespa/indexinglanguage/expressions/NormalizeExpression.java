@@ -5,9 +5,10 @@ import com.yahoo.document.DataType;
 import com.yahoo.document.datatypes.StringFieldValue;
 import com.yahoo.language.Linguistics;
 import com.yahoo.language.process.Transformer;
+import com.yahoo.text.Text;
 
-import java.util.logging.Logger;
 import java.util.logging.Level;
+import java.util.logging.Logger;
 
 /**
  * @author Simon Thoresen Hult
@@ -18,15 +19,19 @@ public final class NormalizeExpression extends Expression {
     private static final Logger logger = Logger.getLogger(NormalizeExpression.class.getName());
 
     public NormalizeExpression(Linguistics linguistics) {
-        super(DataType.STRING);
         this.linguistics = linguistics;
     }
 
     public Linguistics getLinguistics() { return linguistics; }
-    
+
     @Override
-    protected void doVerify(VerificationContext context) {
-        context.setCurrentType(createdOutputType());
+    public DataType setInputType(DataType inputType, TypeContext context) {
+        return super.setInputType(inputType, DataType.STRING, context);
+    }
+
+    @Override
+    public DataType setOutputType(DataType outputType, TypeContext context) {
+        return super.setOutputType(DataType.STRING, outputType, null, context);
     }
 
     @Override
@@ -58,15 +63,10 @@ public final class NormalizeExpression extends Expression {
             if (c >= ' ') {
                 buf.append(c);
             } else {
-                buf.append(String.format("U+%04X", (int)c));
+                buf.append(Text.format("U+%04X", (int)c));
             }
         }
         return buf.toString();
-    }
-
-    @Override
-    public DataType createdOutputType() {
-        return DataType.STRING;
     }
 
     @Override

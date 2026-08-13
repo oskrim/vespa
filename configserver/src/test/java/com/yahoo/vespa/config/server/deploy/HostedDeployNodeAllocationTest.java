@@ -5,11 +5,13 @@ import com.yahoo.component.Version;
 import com.yahoo.config.model.api.HostProvisioner;
 import com.yahoo.config.model.api.ModelFactory;
 import com.yahoo.config.model.api.Quota;
+import com.yahoo.config.provision.AzName;
 import com.yahoo.config.provision.Capacity;
 import com.yahoo.config.provision.ClusterMembership;
 import com.yahoo.config.provision.ClusterSpec;
 import com.yahoo.config.provision.HostSpec;
 import com.yahoo.config.provision.NodeResources;
+import com.yahoo.config.provision.ProvisionContext;
 import com.yahoo.config.provision.ProvisionLogger;
 import com.yahoo.config.provision.QuotaExceededException;
 import com.yahoo.config.provision.Zone;
@@ -83,7 +85,7 @@ public class HostedDeployNodeAllocationTest {
                     .quota(new Quota(Optional.of(4), Optional.of(valueOf(0)))));
             fail("Expected to get a QuotaExceededException");
         } catch (QuotaExceededException e) {
-            assertEquals("main: The resources used cost $1.02 but your remaining quota is $0.00: Contact support to upgrade your plan.", e.getMessage());
+            assertEquals("default: The resources used cost $1.02 but your remaining quota is $0.00: Contact support to upgrade your plan.", e.getMessage());
         }
     }
 
@@ -92,7 +94,7 @@ public class HostedDeployNodeAllocationTest {
     }
 
     private Set<HostSpec> containers(Set<HostSpec> hosts) {
-        return hosts.stream().filter(host -> host.membership().get().cluster().type() == ClusterSpec.Type.container).collect(Collectors.toSet());
+        return hosts.stream().filter(host -> host.membership().get().type() == ClusterSpec.Type.container).collect(Collectors.toSet());
     }
 
     private static NodeResources resources(double vcpu) {
@@ -104,7 +106,7 @@ public class HostedDeployNodeAllocationTest {
         int invocation = 0;
 
         @Override
-        public List<HostSpec> prepare(ClusterSpec cluster, Capacity capacity, ProvisionLogger logger) {
+        public List<HostSpec> prepare(ClusterSpec cluster, Capacity capacity, ProvisionContext context) {
             if (cluster.id().value().equals("container")) { // the container cluster from the app package: Use this to test
                 if (invocation == 0) { // Building the latest model version, 7.3: Always first
                     invocation++;
@@ -143,7 +145,8 @@ public class HostedDeployNodeAllocationTest {
                                 membership,
                                 Optional.of(Version.fromString(version)),
                                 Optional.empty(),
-                                Optional.empty());
+                                Optional.empty(),
+                                AzName.defaultName());
         }
 
     }

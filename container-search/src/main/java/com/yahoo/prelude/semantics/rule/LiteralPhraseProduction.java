@@ -7,6 +7,7 @@ import java.util.Iterator;
 import java.util.List;
 
 import com.yahoo.prelude.query.PhraseItem;
+import com.yahoo.prelude.query.TermType;
 import com.yahoo.prelude.query.WordItem;
 import com.yahoo.prelude.semantics.engine.Match;
 import com.yahoo.prelude.semantics.engine.RuleEvaluation;
@@ -48,10 +49,18 @@ public class LiteralPhraseProduction extends TermProduction {
         PhraseItem newPhrase = new PhraseItem();
         newPhrase.setIndexName(getLabel());
         for (String term : terms)
-            newPhrase.addItem(new WordItem(term));
+            newPhrase.addItem(new WordItem(term, true));
 
-        Match matched = e.getNonreferencedMatch(0);
-        insertMatch(e, matched, List.of(newPhrase), offset);
+        // if replacing we should not wrap matched term in equiv
+        if (!replacing && getTermType() == TermType.EQUIV
+                && e.getNonreferencedMatchCount() > 0
+                && e.getNonreferencedMatch(0).getParent() != null) {
+            collapseMultiWordMatches(e);
+            addEquivItem(e, newPhrase);
+        } else {
+            Match matched = e.getNonreferencedMatch(0);
+            insertMatch(e, matched, List.of(newPhrase), offset);
+        }
     }
 
     public String toInnerTermString() {

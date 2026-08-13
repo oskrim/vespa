@@ -6,14 +6,10 @@ import com.yahoo.config.application.api.ApplicationPackage;
 import com.yahoo.config.model.api.ApplicationClusterEndpoint;
 import com.yahoo.config.model.api.ConfigChangeAction;
 import com.yahoo.config.model.api.ContainerEndpoint;
-import com.yahoo.config.model.api.Provisioned;
 import com.yahoo.config.model.deploy.DeployState;
 import com.yahoo.config.model.deploy.TestProperties;
 import com.yahoo.config.model.provision.InMemoryProvisioner;
 import com.yahoo.config.model.test.MockApplicationPackage;
-import com.yahoo.config.provision.Environment;
-import com.yahoo.config.provision.RegionName;
-import com.yahoo.config.provision.SystemName;
 import com.yahoo.config.provision.Zone;
 import com.yahoo.vespa.model.VespaModel;
 import com.yahoo.vespa.model.application.validation.Validation.Execution;
@@ -41,6 +37,7 @@ public class ValidationTester {
 
     private final TestProperties properties;
     private final InMemoryProvisioner hostProvisioner;
+    private String schema = null;
 
     /** Creates a validation tester with 1 node available (in addition to cluster controllers) */
     public ValidationTester() {
@@ -48,25 +45,30 @@ public class ValidationTester {
     }
 
     /** Creates a validation tester with number of nodes available and the given test properties */
-    public ValidationTester(int nodeCount, boolean sharedHosts, TestProperties properties) {
-        this(new InMemoryProvisioner(nodeCount, sharedHosts), properties);
+    public ValidationTester(int nodeCount, boolean sharedHosts, TestProperties properties, Zone zone) {
+        this(new InMemoryProvisioner(nodeCount, sharedHosts), properties, zone);
     }
 
     /** Creates a validation tester with a given host provisioner */
     public ValidationTester(InMemoryProvisioner hostProvisioner) {
-        this(hostProvisioner, new TestProperties().setHostedVespa(true));
+        this(hostProvisioner, new TestProperties().setHostedVespa(true), Zone.defaultZone());
     }
 
     /** Creates a validation tester with a number of nodes available */
     public ValidationTester(int nodeCount) {
-        this(new InMemoryProvisioner(nodeCount, false), new TestProperties().setHostedVespa(true));
+        this(new InMemoryProvisioner(nodeCount, false), new TestProperties().setHostedVespa(true), Zone.defaultZone());
     }
 
     /** Creates a validation tester with a given host provisioner */
-    public ValidationTester(InMemoryProvisioner hostProvisioner, TestProperties testProperties) {
+    public ValidationTester(InMemoryProvisioner hostProvisioner, TestProperties testProperties, Zone zone) {
         this.hostProvisioner = hostProvisioner;
         this.properties = testProperties;
-        hostProvisioner.setEnvironment(testProperties.zone().environment());
+        hostProvisioner.setEnvironment(zone.environment());
+    }
+
+    /** Sets the schema to use in deploy invocations. This oveerides the default music and book schemas. */
+    public void setSchema(String schema) {
+        this.schema = schema;
     }
 
     /**
@@ -74,21 +76,20 @@ public class ValidationTester {
      *
      * @param previousModel the previous model, or null if no previous
      * @param services the services file content
-     * @param environment the environment this deploys to
+     * @param zone the zone this deploys to
      * @param validationOverrides the validation overrides file content, or null if none
      * @param containerCluster container cluster(s) which are declared in services
      * @return the new model and any change actions
      */
     public Pair<VespaModel, List<ConfigChangeAction>> deploy(VespaModel previousModel,
                                                              String services,
-                                                             Environment environment,
+                                                             Zone zone,
                                                              String validationOverrides,
                                                              String... containerCluster) {
         Instant now = LocalDate.parse("2000-01-01", DateTimeFormatter.ISO_DATE).atStartOfDay().atZone(ZoneOffset.UTC).toInstant();
-        Provisioned provisioned = hostProvisioner.startProvisionedRecording();
         ApplicationPackage newApp = new MockApplicationPackage.Builder()
                 .withServices(services)
-                .withSchemas(List.of(MUSIC_SCHEMA, BOOK_SCHEMA))
+                .withSchemas(schema != null ? List.of(schema) : List.of(MUSIC_SCHEMA, BOOK_SCHEMA))
                 .withValidationOverrides(validationOverrides)
                 .build();
         VespaModelCreatorWithMockPkg newModelCreator = new VespaModelCreatorWithMockPkg(newApp);
@@ -98,14 +99,11 @@ public class ValidationTester {
                                                                                                List.of(name + ".example.com")))
                                                             .collect(Collectors.toSet());
         DeployState.Builder deployStateBuilder = new DeployState.Builder()
-                                                             .zone(new Zone(SystemName.defaultSystem(),
-                                                                            environment,
-                                                                            RegionName.defaultName()))
+                                                             .zone(zone)
                                                              .endpoints(containerEndpoints)
                                                              .applicationPackage(newApp)
                                                              .properties(properties)
                                                              .modelHostProvisioner(hostProvisioner)
-                                                             .provisioned(provisioned)
                                                              .now(now);
         if (previousModel != null)
             deployStateBuilder.previousModel(previousModel);

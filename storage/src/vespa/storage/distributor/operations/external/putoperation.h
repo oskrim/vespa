@@ -3,38 +3,39 @@
 #pragma once
 
 #include "check_condition.h"
+
 #include <vespa/storage/distributor/operations/sequenced_operation.h>
 #include <vespa/storage/distributor/persistencemessagetracker.h>
 
-namespace document { class Document; }
+namespace document {
+class Document;
+}
 
-namespace storage::lib { class Distribution; }
+namespace storage::lib {
+class Distribution;
+}
 
 namespace storage::api {
 class CreateBucketReply;
 class PutCommand;
-}
+} // namespace storage::api
 
 namespace storage::distributor {
 
 class DistributorBucketSpace;
 class OperationTargetList;
 
-class PutOperation : public SequencedOperation
-{
+class PutOperation : public SequencedOperation {
 public:
-    PutOperation(const DistributorNodeContext& node_ctx,
-                 DistributorStripeOperationContext& op_ctx,
-                 DistributorBucketSpace& bucketSpace,
-                 std::shared_ptr<api::PutCommand> msg,
-                 PersistenceOperationMetricSet& metric,
-                 PersistenceOperationMetricSet& condition_probe_metrics,
+    PutOperation(const DistributorNodeContext& node_ctx, DistributorStripeOperationContext& op_ctx,
+                 DistributorBucketSpace& bucketSpace, std::shared_ptr<api::PutCommand> msg,
+                 PersistenceOperationMetricSet& metric, PersistenceOperationMetricSet& condition_probe_metrics,
                  SequencingHandle sequencingHandle = SequencingHandle());
     ~PutOperation() override;
 
     void onStart(DistributorStripeMessageSender& sender) override;
-    const char* getName() const noexcept override { return "put"; };
-    std::string getStatus() const override { return ""; };
+    const char* getName() const noexcept override { return "put"; }
+    std::string getStatus() const override { return ""; }
     void onReceive(DistributorStripeMessageSender& sender, const std::shared_ptr<api::StorageReply>&) override;
     void onClose(DistributorStripeMessageSender& sender) override;
 
@@ -50,17 +51,17 @@ private:
     PersistenceOperationMetricSet&     _condition_probe_metrics;
     DistributorBucketSpace&            _bucket_space;
     std::shared_ptr<CheckCondition>    _check_condition;
+    MemoryUsageToken                   _memory_usage_token;
 
     void start_direct_put_dispatch(DistributorStripeMessageSender& sender);
     void start_conditional_put(DistributorStripeMessageSender& sender);
-    void on_completed_check_condition(CheckCondition::Outcome& outcome,
-                                      DistributorStripeMessageSender& sender);
+    void on_completed_check_condition(CheckCondition::Outcome& outcome, DistributorStripeMessageSender& sender);
     void insertDatabaseEntryAndScheduleCreateBucket(const OperationTargetList& copies, bool setOneActive,
-                                                    const api::StorageCommand& originalCommand,
+                                                    const api::StorageCommand&           originalCommand,
                                                     std::vector<MessageTracker::ToSend>& messagesToSend);
 
-    void sendPutToBucketOnNode(document::BucketSpace bucketSpace, const document::BucketId& bucketId,
-                               uint16_t node, std::vector<PersistenceMessageTracker::ToSend>& putBatch);
+    void sendPutToBucketOnNode(document::BucketSpace bucketSpace, const document::BucketId& bucketId, uint16_t node,
+                               std::vector<PersistenceMessageTracker::ToSend>& putBatch);
 
     void on_cancel(DistributorStripeMessageSender& sender, const CancelScope& cancel_scope) override;
 
@@ -71,4 +72,4 @@ private:
     [[nodiscard]] bool has_condition() const noexcept;
 };
 
-}
+} // namespace storage::distributor

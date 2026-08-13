@@ -1,15 +1,18 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
-#include <vespa/vespalib/testkit/test_kit.h>
 #include <vespa/vespalib/process/process.h>
+
 #include <sys/wait.h>
 
 using namespace vespalib;
 
-TEST_MAIN() {
+int main(int argc, char** argv) {
 
-    ASSERT_EQUAL(argc, 3);
+    if (argc != 3) {
+        fprintf(stderr, "[ERROR] expected argc to be %d (it was %d)\n", 3, argc);
+        return 1;
+    }
 
-    int retval = strtol(argv[1], NULL, 0);
+    int retval = strtol(argv[1], nullptr, 0);
 
     fprintf(stderr, "argc=%d : Running '%s' expecting signal %d\n", argc, argv[2], retval);
 
@@ -32,5 +35,9 @@ TEST_MAIN() {
         fprintf(stderr, "[WARNING] strange exit code: %u\n", exitCode);
     }
 
-    EXPECT_EQUAL(exitCode & 0x7f, retval);
+    if ((exitCode & 0x7f) != retval) {
+        fprintf(stderr, "[ERROR] expected exit code lower 7 bits to be %d (it was %d)\n", retval, (exitCode & 0x7f));
+        return 1;
+    }
+    return 0;
 }

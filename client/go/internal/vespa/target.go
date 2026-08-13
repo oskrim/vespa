@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fatih/color"
 	"github.com/vespa-engine/vespa/client/go/internal/curl"
 	"github.com/vespa-engine/vespa/client/go/internal/httputil"
 	"github.com/vespa-engine/vespa/client/go/internal/version"
@@ -32,6 +33,12 @@ const (
 	// A hosted Vespa target
 	TargetHosted = "hosted"
 
+	// A Vespa Cloud CD target (internal test system, don't put in doc/output)
+	TargetPublicCD = "publiccd"
+
+	// A hosted Vespa CD target (internal test system, don't put in doc/output)
+	TargetCD = "cd"
+
 	// LatestDeployment waits for a deployment to converge to latest generation
 	LatestDeployment int64 = -1
 
@@ -39,7 +46,13 @@ const (
 	AnyDeployment int64 = -2
 )
 
-var errAuth = errors.New("auth failed")
+type AuthError string
+
+func (e AuthError) Error() string {
+	return string(e)
+}
+
+var errAuth = AuthError("auth failed")
 
 var (
 	// ErrWaitTimeout is the error returned when waiting for something times out.
@@ -84,12 +97,29 @@ func (c *CurlWriter) print(request *http.Request, tlsOptions TLSOptions, timeout
 	return err
 }
 
+// AllowedUrn represents an allowed URN for private service access.
+type AllowedUrn struct {
+	Type string `json:"type"`
+	Urn  string `json:"urn"`
+}
+
+// PrivateServiceInfo contains information about private service configuration.
+type PrivateServiceInfo struct {
+	ServiceID   string       `json:"serviceId,omitempty"`
+	Type        string       `json:"type,omitempty"`
+	AllowedUrns []AllowedUrn `json:"allowedUrns,omitempty"`
+	AuthMethods []string     `json:"authMethods,omitempty"`
+	Endpoints   []string     `json:"endpoints,omitempty"`
+}
+
 // Service represents a Vespa service.
 type Service struct {
-	BaseURL    string
-	Name       string
-	TLSOptions TLSOptions
-	CurlWriter CurlWriter
+	BaseURL        string
+	Name           string
+	AuthMethod     string
+	TLSOptions     TLSOptions
+	CurlWriter     CurlWriter
+	PrivateService *PrivateServiceInfo
 
 	deployAPI     bool
 	auth          Authenticator
@@ -112,12 +142,18 @@ type Target interface {
 	// DeployService returns the service providing the deploy API on this target.
 	DeployService() (*Service, error)
 
-	// ContainerServices returns all container services of the current deployment. If timeout is positive, wait for
-	// services to be discovered.
+	// ContainerServices returns all container services of the current deployment, retrying until timeout elapses.
+	//
+	// If timeout is zero, a single request is sent to discover services without retrying on failure. No request is sent
+	// to indvidual services in this case.
+	//
+	// If timeout is positive, wait for services to be discovered and then wait for each individual service.
 	ContainerServices(timeout time.Duration) ([]*Service, error)
 
-	// AwaitDeployment waits for a deployment identified by id to succeed. It returns the id that succeeded, or an
-	// error. The exact meaning of id depends on the implementation.
+	// AwaitDeployment waits for a deployment identified by id to succeed, retrying until timeout elapses. It returns
+	// the id that succeeded, or an error. The exact meaning of id depends on the implementation.
+	//
+	// If timeout is zero, a single request is sent, without retrying on failure.
 	AwaitDeployment(id int64, timeout time.Duration) (int64, error)
 
 	// PrintLog writes the logs of this deployment using given options to control output.
@@ -125,6 +161,9 @@ type Target interface {
 
 	// CompatibleWith returns nil if target is compatible with the given version.
 	CompatibleWith(version version.Version) error
+
+	ListApplications(tenant string, timeout time.Duration) (*CloudTenantResponse, error)
+	ShowApplicationInstance(id ApplicationID, timeout time.Duration) (*CloudInstanceResponse, error)
 }
 
 // TLSOptions holds the client certificate to use for cloud API or service requests.
@@ -204,27 +243,57 @@ func (s *Service) Wait(timeout time.Duration) error {
 	return nil
 }
 
-func (s *Service) Description() string {
+// Type returns the type of this service (either "container" or "deploy API").
+func (s *Service) Type() string {
 	if s.deployAPI {
 		return "deploy API"
 	}
-	if s.Name == "" {
-		return "container"
-	}
-	return "container " + s.Name
+	return "container"
 }
 
-// FindService returns the service of given name, found among services, if any.
-func FindService(name string, services []*Service) (*Service, error) {
-	if name == "" && len(services) == 1 {
-		return services[0], nil
+// ServiceName returns the name of this service, which may be empty.
+func (s *Service) ServiceName() string {
+	return s.Name
+}
+
+// Description returns a human-readable description of this service.
+func (s *Service) Description() string {
+	if s.Name == "" {
+		return s.Type()
 	}
-	names := make([]string, len(services))
-	for i, s := range services {
+	return s.Type() + " " + s.Name
+}
+
+// FindService returns the service matching name and authMethod from services,
+// with fallbacks if no exact match was found.
+func FindService(name string, authMethod string, services []*Service) (*Service, error) {
+	// First pass: exact match on both name and authMethod
+	applicableServices := make([]*Service, 0, len(services))
+	for _, s := range services {
+		if name == s.Name && s.AuthMethod == authMethod {
+			return s, nil
+		}
+		if s.AuthMethod == authMethod || s.AuthMethod == "" {
+			applicableServices = append(applicableServices, s)
+		}
+	}
+	// Second pass: match by name among services with compatible authMethod
+	for _, s := range applicableServices {
+		if name == "" || name == s.Name {
+			return s, nil
+		}
+	}
+	names := make([]string, 0, len(services))
+	// Third pass: match by name among all services, or generate error message
+	for _, s := range services {
 		if name == s.Name {
 			return s, nil
 		}
-		names[i] = s.Name
+		prettyName := color.CyanString("%s", s.Name)
+		if s.AuthMethod != "" {
+			prettyName = fmt.Sprintf("%s (%s)", prettyName, s.AuthMethod)
+		}
+		names = append(names, prettyName)
 	}
 	found := "no services found"
 	if len(names) > 0 {
@@ -255,7 +324,7 @@ func isOK(status int) (bool, error) {
 	}
 }
 
-func deployServiceWait(target Target, fn responseFunc, reqFn requestFunc, timeout, retryInterval time.Duration) (int, error) {
+func deployRequest(target Target, fn responseFunc, reqFn requestFunc, timeout, retryInterval time.Duration) (int, error) {
 	deployService, err := target.DeployService()
 	if err != nil {
 		return 0, err
@@ -307,7 +376,7 @@ func pollLogs(target Target, logsURL string, options LogOptions, retryInterval t
 		timeout = math.MaxInt64 // No timeout
 	}
 	// Ignore wait error because logFunc has no concept of completion, we just want to print log entries until timeout is reached
-	if _, err := deployServiceWait(target, logFunc, requestFunc, timeout, retryInterval); err != nil && !errors.Is(err, ErrWaitTimeout) {
+	if _, err := deployRequest(target, logFunc, requestFunc, timeout, retryInterval); err != nil && !errors.Is(err, ErrWaitTimeout) {
 		return fmt.Errorf("failed to read logs: %s", err)
 	}
 	return nil
@@ -337,7 +406,7 @@ func wait(service *Service, okFn responseFunc, reqFn requestFunc, timeout, retry
 	for time.Now().Before(deadline) || loopOnce {
 		response, err = service.Do(reqFn(), 20*time.Second)
 		if errors.Is(err, errAuth) {
-			return status, fmt.Errorf("aborting wait: %w", err)
+			return status, err
 		} else if err == nil {
 			status = response.StatusCode
 			body, err := io.ReadAll(response.Body)
@@ -347,7 +416,7 @@ func wait(service *Service, okFn responseFunc, reqFn requestFunc, timeout, retry
 			response.Body.Close()
 			ok, err := okFn(status, body)
 			if err != nil {
-				return status, fmt.Errorf("aborting wait: %w", err)
+				return status, err
 			}
 			if ok {
 				return status, nil

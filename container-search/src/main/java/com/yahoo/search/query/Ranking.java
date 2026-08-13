@@ -8,7 +8,7 @@ import com.yahoo.search.Query;
 import com.yahoo.search.query.profile.types.FieldDescription;
 import com.yahoo.search.query.profile.types.QueryProfileFieldType;
 import com.yahoo.search.query.profile.types.QueryProfileType;
-import com.yahoo.search.query.ranking.Diversity;
+import com.yahoo.search.query.ranking.ElementGap;
 import com.yahoo.search.query.ranking.GlobalPhase;
 import com.yahoo.search.query.ranking.MatchPhase;
 import com.yahoo.search.query.ranking.Matching;
@@ -19,6 +19,8 @@ import com.yahoo.search.query.ranking.SoftTimeout;
 import com.yahoo.search.query.ranking.Significance;
 import com.yahoo.search.result.ErrorMessage;
 
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Objects;
 
 /**
@@ -28,6 +30,12 @@ import java.util.Objects;
  * @author bratseth
  */
 public class Ranking implements Cloneable {
+
+    /** For internal use only. */
+    public static final String keepRankCountProperty = "vespa.hitcollector.arraysize";
+
+    /** For internal use only. */
+    public static final String totalKeepRankCountProperty = "vespa.hitcollector.totalArraysize";
 
     /** An alias for listing features */
     public static final CompoundName RANKFEATURES = CompoundName.from("rankfeatures");
@@ -43,18 +51,32 @@ public class Ranking implements Cloneable {
     public static final String LIST_FEATURES = "listFeatures";
     public static final String FRESHNESS = "freshness";
     public static final String QUERYCACHE = "queryCache";
-    public static final String RERANKCOUNT = "rerankCount";
+
     public static final String KEEPRANKCOUNT = "keepRankCount";
+    public static final String TOTALKEEPRANKCOUNT = "totalKeepRankCount";
+
+    @Deprecated // TODO: Remove on Vespa 9
+    public static final String RERANKCOUNT = "rerankCount";
     public static final String RANKSCOREDROPLIMIT = "rankScoreDropLimit";
-    public static final String MATCH_PHASE = "matchPhase";
-    public static final String SECOND_PHASE = "secondPhase";
-    public static final String GLOBAL_PHASE = "globalPhase";
-    public static final String DIVERSITY = "diversity";
-    public static final String SIGNIFICANCE = "significance";
-    public static final String SOFTTIMEOUT = "softtimeout";
-    public static final String MATCHING = "matching";
+
+    public static final String ELEMENT_GAP = "elementGap";
     public static final String FEATURES = "features";
     public static final String PROPERTIES = "properties";
+
+    @Deprecated // TODO: Remove on Vespa 9
+    public static final String MATCH_PHASE = "matchPhase";
+    @Deprecated // TODO: Remove on Vespa 9
+    public static final String SECOND_PHASE = "secondPhase";
+    @Deprecated // TODO: Remove on Vespa 9
+    public static final String GLOBAL_PHASE = "globalPhase";
+    @Deprecated // TODO: Remove on Vespa 9
+    public static final String DIVERSITY = "diversity";
+    @Deprecated // TODO: Remove on Vespa 9
+    public static final String SIGNIFICANCE = "significance";
+    @Deprecated // TODO: Remove on Vespa 9
+    public static final String SOFTTIMEOUT = "softtimeout";
+    @Deprecated // TODO: Remove on Vespa 9
+    public static final String MATCHING = "matching";
 
     static {
         argumentType = new QueryProfileType(RANKING);
@@ -68,18 +90,19 @@ public class Ranking implements Cloneable {
         argumentType.addField(new FieldDescription(LIST_FEATURES, "string", RANKFEATURES.toString()));
         argumentType.addField(new FieldDescription(FRESHNESS, "string", "datetime"));
         argumentType.addField(new FieldDescription(QUERYCACHE, "boolean"));
-        argumentType.addField(new FieldDescription(RERANKCOUNT, "integer"));
+        argumentType.addField(new FieldDescription(SecondPhase.RERANK_COUNT, "integer")); // TODO: Remove on Vespa 9
         argumentType.addField(new FieldDescription(KEEPRANKCOUNT, "integer"));
+        argumentType.addField(new FieldDescription(TOTALKEEPRANKCOUNT, "integer"));
         argumentType.addField(new FieldDescription(RANKSCOREDROPLIMIT, "double"));
-        argumentType.addField(new FieldDescription(GLOBAL_PHASE, new QueryProfileFieldType(GlobalPhase.getArgumentType())));
-        argumentType.addField(new FieldDescription(MATCH_PHASE,  new QueryProfileFieldType(MatchPhase.getArgumentType()), "matchPhase"));
-        argumentType.addField(new FieldDescription(SECOND_PHASE, new QueryProfileFieldType(SecondPhase.getArgumentType())));
-        argumentType.addField(new FieldDescription(DIVERSITY, new QueryProfileFieldType(Diversity.getArgumentType())));
-        argumentType.addField(new FieldDescription(SOFTTIMEOUT, new QueryProfileFieldType(SoftTimeout.getArgumentType())));
-        argumentType.addField(new FieldDescription(MATCHING, new QueryProfileFieldType(Matching.getArgumentType())));
-        argumentType.addField(new FieldDescription(SIGNIFICANCE, new QueryProfileFieldType(Significance.getArgumentType())));
+        argumentType.addField(new FieldDescription(GlobalPhase.GLOBAL_PHASE, new QueryProfileFieldType(GlobalPhase.getArgumentType())));
+        argumentType.addField(new FieldDescription(MatchPhase.MATCH_PHASE,  new QueryProfileFieldType(MatchPhase.getArgumentType()), "matchPhase"));
+        argumentType.addField(new FieldDescription(SecondPhase.SECOND_PHASE, new QueryProfileFieldType(SecondPhase.getArgumentType())));
+        argumentType.addField(new FieldDescription(SoftTimeout.SOFTTIMEOUT, new QueryProfileFieldType(SoftTimeout.getArgumentType())));
+        argumentType.addField(new FieldDescription(Matching.MATCHING, new QueryProfileFieldType(Matching.getArgumentType())));
+        argumentType.addField(new FieldDescription(Significance.SIGNIFICANCE, new QueryProfileFieldType(Significance.getArgumentType())));
         argumentType.addField(new FieldDescription(FEATURES, "query-profile", "rankfeature input")); // Repeated at the end of RankFeatures
         argumentType.addField(new FieldDescription(PROPERTIES, "query-profile", "rankproperty"));
+        argumentType.addField(new FieldDescription(ELEMENT_GAP, "query-profile"));
         argumentType.freeze();
         argumentTypeName = CompoundName.from(argumentType.getId().getName());
     }
@@ -103,8 +126,8 @@ public class Ranking implements Cloneable {
 
     private boolean queryCache = false;
 
-    private Integer rerankCount = null;
     private Integer keepRankCount = null;
+    private Integer totalKeepRankCount = null;
     private Double rankScoreDropLimit = null;
 
     private RankProperties rankProperties = new RankProperties();
@@ -122,6 +145,8 @@ public class Ranking implements Cloneable {
     private SoftTimeout softTimeout = new SoftTimeout();
 
     private Significance significance = new Significance();
+
+    private Map<String, ElementGap> elementGap = new HashMap<>();
 
     public Ranking(Query parent) {
         this.parent = parent;
@@ -172,16 +197,29 @@ public class Ranking implements Cloneable {
     /**
      * Sets the number of hits for which the second-phase function will be evaluated.
      * When set, this overrides the setting in the rank profile.
+     *
+     * @deprecated use getSecondPhase().setRerankCount()
      */
-    public void setRerankCount(int rerankCount) { this.rerankCount = rerankCount; }
+    @Deprecated // TODO: Remove on Vespa 9
+    public void setRerankCount(int rerankCount) { secondPhase.setRerankCount(rerankCount); }
 
-    /** Returns the rerank-count that will be used, or null if not set */
-    public Integer getRerankCount() { return rerankCount; }
+    /**
+     * Returns the second-phase rerank-count that will be used, or null if not set.
+     *
+     * @deprecated use getSecondPhase().getRerankCount()
+     */
+    @Deprecated // TODO: Remove on Vespa 9
+    public Integer getRerankCount() { return secondPhase.getRerankCount(); }
 
-    /** Sets the keep-rank-count that will be used, or null if not set */
+    /** Sets the number of hits per node for which rank info will be kept in first phase, or null if not set */
     public void setKeepRankCount(int keepRankCount) { this.keepRankCount = keepRankCount; }
-    /** Returns the keep-rank-count that will be used, or null if not set */
+    /** Returns the number of hits per node for which rank info will be kept in first phase, or null if not set */
     public Integer getKeepRankCount() { return keepRankCount; }
+
+    /** Sets the number of hits across all nodes for which rank info will be kept in first phase, or null if not set */
+    public void setTotalKeepRankCount(int totalKeepRankCount) { this.totalKeepRankCount = totalKeepRankCount; }
+    /** Returns the number of hits across all nodes for which rank info will be kept in first phase, or null if not set */
+    public Integer getTotalKeepRankCount() { return totalKeepRankCount; }
 
     /** Sets the rank-score-drop-limit that will be used, or null if not set */
     public void setRankScoreDropLimit(double rankScoreDropLimit) { this.rankScoreDropLimit = rankScoreDropLimit; }
@@ -201,8 +239,7 @@ public class Ranking implements Cloneable {
 
     /** Sets the name of the rank profile to use. This cannot be set to null. */
     public void setProfile(String profile) {
-        if (profile==null) throw new NullPointerException("The ranking profile cannot be set to null");
-        this.profile = profile;
+        this.profile = Objects.requireNonNull(profile);
     }
 
     /**
@@ -246,6 +283,27 @@ public class Ranking implements Cloneable {
     @com.yahoo.api.annotations.Beta
     public Significance getSignificance() { return significance; }
 
+    /** Returns the element gap value for the given field, or null if not set */
+    public ElementGap getElementGapForField(String fieldName) {
+        return elementGap.get(fieldName);
+    }
+
+    /** Sets the element gap value for the given field */
+    public void setElementGapForField(String fieldName, Object value) {
+        if (value == null) {
+            elementGap.remove(fieldName);
+        } else if (value instanceof Integer iVal) {
+            elementGap.put(fieldName, ElementGap.of(iVal));
+        } else {
+            try {
+                elementGap.put(fieldName, ElementGap.from(String.valueOf(value)));
+            } catch (NumberFormatException e) {
+                throw new IllegalArgumentException("Element gap value for field '" + fieldName +
+                                                   "' could not be converted from '" + value + "' to integer");
+            }
+        }
+    }
+
     /** Returns the sorting spec of this query, or null if none is set */
     public Sorting getSorting() { return sorting; }
 
@@ -277,12 +335,11 @@ public class Ranking implements Cloneable {
         matching.prepare(rankProperties);
         softTimeout.prepare(rankProperties);
         prepareNow(freshness);
-        if (rerankCount != null)
-            rankProperties.put("vespa.hitcollector.heapsize", rerankCount);
-        if (keepRankCount != null)
-            rankProperties.put("vespa.hitcollector.arraysize", keepRankCount);
         if (rankScoreDropLimit != null)
             rankProperties.put("vespa.hitcollector.rankscoredroplimit", rankScoreDropLimit);
+        for (Map.Entry<String, ElementGap> entry : elementGap.entrySet()) {
+            rankProperties.put("vespa.matching.element_gap." + entry.getKey(), entry.getValue().toString());
+        }
     }
 
     private void prepareNow(Freshness freshness) {
@@ -305,15 +362,17 @@ public class Ranking implements Cloneable {
     public Ranking clone() {
         try {
             Ranking clone = (Ranking) super.clone();
-
-            if (sorting != null) clone.sorting = this.sorting.clone();
-
-            clone.rankProperties = this.rankProperties.clone();
-            clone.rankFeatures = this.rankFeatures.cloneFor(clone);
-            clone.matchPhase = this.matchPhase.clone();
-            clone.globalPhase = this.globalPhase.clone();
-            clone.matching = this.matching.clone();
-            clone.softTimeout = this.softTimeout.clone();
+            if (this.location != null) clone.location = this.location.clone();
+            if (this.sorting != null) clone.sorting = this.sorting.clone();
+            if (this.rankProperties != null) clone.rankProperties = this.rankProperties.clone();
+            if (this.rankFeatures != null) clone.rankFeatures = this.rankFeatures.cloneFor(clone);
+            if (this.matchPhase != null) clone.matchPhase = this.matchPhase.clone();
+            if (this.secondPhase != null) clone.secondPhase = this.secondPhase.clone();
+            if (this.globalPhase != null) clone.globalPhase = this.globalPhase.clone();
+            if (this.matching != null) clone.matching = this.matching.clone();
+            if (this.softTimeout != null) clone.softTimeout = this.softTimeout.clone();
+            if (this.significance != null) clone.significance = this.significance.clone();
+            if (this.elementGap != null) clone.elementGap = new HashMap<>(this.elementGap);
             return clone;
         }
         catch (CloneNotSupportedException e) {
@@ -332,19 +391,31 @@ public class Ranking implements Cloneable {
         if (o == this) return true;
         if( ! (o instanceof Ranking other)) return false;
 
-        if ( ! QueryHelper.equals(rankProperties, other.rankProperties)) return false;
-        if ( ! QueryHelper.equals(rankFeatures, other.rankFeatures)) return false;
-        if ( ! QueryHelper.equals(freshness, other.freshness)) return false;
-        if ( ! QueryHelper.equals(this.sorting, other.sorting)) return false;
-        if ( ! QueryHelper.equals(this.location, other.location)) return false;
-        if ( ! QueryHelper.equals(this.profile, other.profile)) return false;
-        if ( ! QueryHelper.equals(this.globalPhase, other.globalPhase)) return false;
+        if ( ! Objects.equals(location, other.location)) return false;
+        if ( ! Objects.equals(profile, other.profile)) return false;
+        if ( ! Objects.equals(sorting, other.sorting)) return false;
+        if ( ! Objects.equals(freshness, other.freshness)) return false;
+        if ( ! Objects.equals(queryCache, other.queryCache)) return false;
+        if ( ! Objects.equals(keepRankCount, other.keepRankCount)) return false;
+        if ( ! Objects.equals(totalKeepRankCount, other.totalKeepRankCount)) return false;
+        if ( ! Objects.equals(rankScoreDropLimit, other.rankScoreDropLimit)) return false;
+        if ( ! Objects.equals(rankProperties, other.rankProperties)) return false;
+        if ( ! Objects.equals(rankFeatures, other.rankFeatures)) return false;
+        if ( ! Objects.equals(matchPhase, other.matchPhase)) return false;
+        if ( ! Objects.equals(secondPhase, other.secondPhase)) return false;
+        if ( ! Objects.equals(globalPhase, other.globalPhase)) return false;
+        if ( ! Objects.equals(matching, other.matching)) return false;
+        if ( ! Objects.equals(softTimeout, other.softTimeout)) return false;
+        if ( ! Objects.equals(significance, other.significance)) return false;
+        if ( ! Objects.equals(elementGap, other.elementGap)) return false;
         return true;
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(rankFeatures, rankProperties, matchPhase, globalPhase, softTimeout, matching, sorting, location, profile);
+        return Objects.hash(location, profile, sorting, listFeatures, freshness, queryCache,
+                            keepRankCount, totalKeepRankCount, rankScoreDropLimit, rankProperties,
+                            rankFeatures, matchPhase, secondPhase, globalPhase, matching, softTimeout, significance, elementGap);
     }
 
 }

@@ -8,6 +8,7 @@
     <version>8-SNAPSHOT</version>
     <relativePath>../parent/pom.xml</relativePath>
   </parent>
+  <name>${project.artifactId}</name>
   <artifactId>metrics-proxy</artifactId>
   <packaging>container-plugin</packaging>
   <version>8-SNAPSHOT</version>
@@ -56,7 +57,7 @@
     </dependency>
     <dependency>
       <groupId>com.yahoo.vespa</groupId>
-      <artifactId>container-core</artifactId>
+      <artifactId>container-disc</artifactId>
       <version>${project.version}</version>
       <scope>provided</scope>
     </dependency>

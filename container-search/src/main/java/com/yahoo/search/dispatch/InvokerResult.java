@@ -41,17 +41,18 @@ public class InvokerResult {
         Query query = result.getQuery();
         Sorting sorting = query.getRanking().getSorting();
         for (LeanHit hit : leanHits) {
-            FastHit fh = new FastHit(hit.getGid(), hit.getRelevance(), hit.getPartId(), hit.getDistributionKey());
+            FastHit fastHit = new FastHit(hit.getGid(), hit.getRelevance(), hit.getSearchGroup(), hit.getPartId(), hit.getDistributionKey());
             if (hit.hasSortData()) {
-                fh.setSortData(hit.getSortData(), sorting);
+                fastHit.setSortData(hit.getSortData(), sorting);
             }
+            fastHit.setQuery(query);
+            fastHit.setFillable();
             if (hit.hasMatchFeatures()) {
-                fh.setField("matchfeatures", hit.getMatchFeatures());
+                fastHit.setField("matchfeatures", hit.getMatchFeatures());
+                fastHit.setFilled("[f:matchfeatures]");
             }
-            fh.setQuery(query);
-            fh.setFillable();
-            fh.setCached(false);
-            result.hits().add(fh);
+            fastHit.setCached(false);
+            result.hits().add(fastHit);
         }
         if (!leanHits.isEmpty())
             leanHits.clear();

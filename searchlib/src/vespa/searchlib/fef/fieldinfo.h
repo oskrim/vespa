@@ -2,8 +2,12 @@
 
 #pragma once
 
+#include "element_gap.h"
 #include "fieldtype.h"
+#include "filter_threshold.h"
+
 #include <vespa/searchcommon/common/datatype.h>
+
 #include <cstdint>
 #include <string>
 
@@ -15,20 +19,21 @@ const uint32_t IllegalFieldId = 0xffffffff;
  * Information about a single field. This class is used by the @ref
  * IIndexEnvironment to expose information.
  **/
-class FieldInfo
-{
+class FieldInfo {
 public:
     using CollectionType = search::index::schema::CollectionType;
     using DataType = search::index::schema::DataType;
     using string = std::string;
+
 private:
-    FieldType      _type;
-    DataType       _data_type;
-    CollectionType _collection;
-    string         _name;
-    uint32_t       _id;
-    bool           _isFilter;
-    bool           _hasAttribute;
+    FieldType       _type;
+    DataType        _data_type;
+    CollectionType  _collection;
+    string          _name;
+    uint32_t        _id;
+    FilterThreshold _threshold;
+    ElementGap      _element_gap;
+    bool            _hasAttribute;
 
 public:
     /**
@@ -37,8 +42,7 @@ public:
      * environment and as an enumeration of fields. Multiple fields
      * owned by the same index environment may not have the same name.
      **/
-    FieldInfo(FieldType type_in, CollectionType collection_in,
-              const string &name_in, uint32_t id_in);
+    FieldInfo(FieldType type_in, CollectionType collection_in, const string& name_in, uint32_t id_in);
 
     /**
      * Check if an attribute vector is available for this
@@ -81,7 +85,7 @@ public:
      *
      * @return the name of this field
      **/
-    const string & name() const { return _name; }
+    const string& name() const { return _name; }
 
     /**
      * Obtain the id of this field
@@ -96,7 +100,7 @@ public:
      *
      * @param flag true if this field should be treated as a filter
      **/
-    void setFilter(bool flag) { _isFilter = flag; }
+    void setFilter(bool flag) { _threshold = FilterThreshold(flag); }
 
     /**
      * Obtain the flag indicating whether this field should be treated
@@ -104,7 +108,12 @@ public:
      *
      * @return true if this field should be treated as a filter
      **/
-    bool isFilter() const { return _isFilter; }
+    bool isFilter() const { return _threshold.is_filter(); }
+
+    void set_filter_threshold(FilterThreshold threshold) noexcept { _threshold = threshold; }
+    FilterThreshold get_filter_threshold() const noexcept { return _threshold; }
+    void set_element_gap(ElementGap element_gap) noexcept { _element_gap = element_gap; }
+    ElementGap get_element_gap() const noexcept { return _element_gap; }
 };
 
-}
+} // namespace search::fef

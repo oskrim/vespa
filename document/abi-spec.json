@@ -182,7 +182,8 @@
       "public com.yahoo.document.datatypes.FieldValue createFieldValue(java.lang.Object)",
       "public abstract java.lang.Class getValueClass()",
       "public abstract boolean isValueCompatible(com.yahoo.document.datatypes.FieldValue)",
-      "public final boolean isAssignableFrom(com.yahoo.document.DataType)",
+      "public boolean isAssignableFrom(com.yahoo.document.DataType)",
+      "public boolean isAssignableTo(com.yahoo.document.DataType)",
       "public static com.yahoo.document.ArrayDataType getArray(com.yahoo.document.DataType)",
       "public static com.yahoo.document.MapDataType getMap(com.yahoo.document.DataType, com.yahoo.document.DataType)",
       "public static com.yahoo.document.WeightedSetDataType getWeightedSet(com.yahoo.document.DataType)",
@@ -450,6 +451,7 @@
       "public java.util.Iterator fieldIteratorThisTypeOnly()",
       "public boolean equals(java.lang.Object)",
       "public int hashCode()",
+      "public java.lang.String toString()",
       "public void onSerialize(com.yahoo.vespa.objects.Serializer)",
       "public void visitMembers(com.yahoo.vespa.objects.ObjectVisitor)",
       "public bridge synthetic com.yahoo.document.datatypes.StructuredFieldValue createFieldValue()",
@@ -988,6 +990,7 @@
       "public boolean inherits(com.yahoo.document.StructDataType)",
       "public boolean equals(java.lang.Object)",
       "public int hashCode()",
+      "public java.lang.String toString()",
       "public bridge synthetic com.yahoo.document.BaseStructDataType clone()",
       "public bridge synthetic com.yahoo.document.datatypes.StructuredFieldValue createFieldValue()",
       "public bridge synthetic com.yahoo.document.datatypes.FieldValue createFieldValue()",
@@ -2155,7 +2158,9 @@
   },
   "com.yahoo.document.datatypes.StringFieldValue" : {
     "superClass" : "com.yahoo.document.datatypes.FieldValue",
-    "interfaces" : [ ],
+    "interfaces" : [
+      "com.yahoo.data.disclosure.DataSource"
+    ],
     "attributes" : [
       "public"
     ],
@@ -2170,8 +2175,12 @@
       "public java.util.Collection getSpanTrees()",
       "public final java.util.Map getSpanTreeMap()",
       "public com.yahoo.document.annotation.SpanTree getSpanTree(java.lang.String)",
+      "public boolean hasAnnotations(java.lang.String)",
       "public com.yahoo.document.annotation.SpanTree setSpanTree(com.yahoo.document.annotation.SpanTree)",
       "public com.yahoo.document.annotation.SpanTree removeSpanTree(java.lang.String)",
+      "public boolean wantSimpleAnnotations()",
+      "public com.yahoo.document.annotation.internal.SimpleIndexingAnnotations getSimpleAnnotations()",
+      "public void setSimpleAnnotations(com.yahoo.document.annotation.internal.SimpleIndexingAnnotations)",
       "public java.lang.String getString()",
       "public java.lang.Object getWrappedValue()",
       "public void printXml(com.yahoo.document.serialization.XmlStream)",
@@ -2182,6 +2191,7 @@
       "public void deserialize(com.yahoo.document.Field, com.yahoo.document.serialization.FieldReader)",
       "public int compareTo(com.yahoo.document.datatypes.FieldValue)",
       "public void setUnChecked(java.lang.String)",
+      "public void emit(com.yahoo.data.disclosure.DataSink)",
       "public bridge synthetic com.yahoo.document.datatypes.FieldValue clone()",
       "public bridge synthetic int compareTo(java.lang.Object)",
       "public bridge synthetic com.yahoo.vespa.objects.Identifiable clone()",
@@ -2385,7 +2395,7 @@
       "public void setNewValues(com.yahoo.document.datatypes.Array)",
       "public com.yahoo.document.datatypes.Array getNewValues()",
       "public com.yahoo.document.datatypes.FieldPathIteratorHandler getIteratorHandler(com.yahoo.document.Document)",
-      "public void serialize(com.yahoo.document.serialization.VespaDocumentSerializer6)",
+      "public void serialize(com.yahoo.document.serialization.DocumentSerializer)",
       "public boolean equals(java.lang.Object)",
       "public int hashCode()",
       "public java.lang.String toString()"
@@ -2411,7 +2421,7 @@
       "public void setRemoveIfZero(boolean)",
       "public void setCreateMissingPath(boolean)",
       "public boolean isArithmetic()",
-      "public void serialize(com.yahoo.document.serialization.VespaDocumentSerializer6)",
+      "public void serialize(com.yahoo.document.serialization.DocumentSerializer)",
       "public boolean equals(java.lang.Object)",
       "public int hashCode()",
       "public java.lang.String toString()",
@@ -2465,7 +2475,7 @@
       "public com.yahoo.document.select.DocumentSelector getWhereClause()",
       "public java.lang.String getOriginalWhereClause()",
       "public void applyTo(com.yahoo.document.Document)",
-      "public void serialize(com.yahoo.document.serialization.VespaDocumentSerializer6)",
+      "public void serialize(com.yahoo.document.serialization.DocumentSerializer)",
       "public static com.yahoo.document.fieldpathupdate.FieldPathUpdate create(com.yahoo.document.fieldpathupdate.FieldPathUpdate$Type, com.yahoo.document.DocumentType, com.yahoo.document.serialization.DocumentUpdateReader)",
       "public boolean equals(java.lang.Object)",
       "public int hashCode()",
@@ -2850,7 +2860,10 @@
       "public abstract void write(com.yahoo.document.update.ClearValueUpdate, com.yahoo.document.DataType)",
       "public abstract void write(com.yahoo.document.update.TensorModifyUpdate)",
       "public abstract void write(com.yahoo.document.update.TensorAddUpdate)",
-      "public abstract void write(com.yahoo.document.update.TensorRemoveUpdate)"
+      "public abstract void write(com.yahoo.document.update.TensorRemoveUpdate)",
+      "public abstract void write(com.yahoo.document.fieldpathupdate.FieldPathUpdate)",
+      "public abstract void write(com.yahoo.document.fieldpathupdate.AddFieldPathUpdate)",
+      "public abstract void write(com.yahoo.document.fieldpathupdate.AssignFieldPathUpdate)"
     ],
     "fields" : [ ]
   },
@@ -3022,7 +3035,6 @@
       "public"
     ],
     "methods" : [
-      "public final com.yahoo.document.DocumentTypeManager getDocumentTypeManager()",
       "public com.yahoo.document.DocumentTypeManager getTypeRepo()",
       "public void read(com.yahoo.document.Document)",
       "public void read(com.yahoo.vespa.objects.FieldBase, com.yahoo.document.Document)",
@@ -3050,7 +3062,6 @@
       "public void read(com.yahoo.document.fieldpathupdate.AssignFieldPathUpdate)",
       "public void read(com.yahoo.document.fieldpathupdate.RemoveFieldPathUpdate)",
       "public void read(com.yahoo.document.fieldpathupdate.AddFieldPathUpdate)",
-      "public com.yahoo.document.update.ValueUpdate getValueUpdate(com.yahoo.document.DataType, com.yahoo.document.DataType)",
       "public void read(com.yahoo.document.update.FieldUpdate)",
       "public com.yahoo.document.DocumentId readDocumentId()",
       "public com.yahoo.document.DocumentType readDocumentType()",
@@ -3131,8 +3142,7 @@
       "public void write(com.yahoo.document.update.ClearValueUpdate, com.yahoo.document.DataType)",
       "public void write(com.yahoo.document.update.TensorModifyUpdate)",
       "public void write(com.yahoo.document.update.TensorAddUpdate)",
-      "public void write(com.yahoo.document.update.TensorRemoveUpdate)",
-      "public static long getSerializedSize(com.yahoo.document.Document)"
+      "public void write(com.yahoo.document.update.TensorRemoveUpdate)"
     ],
     "fields" : [ ]
   },

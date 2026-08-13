@@ -17,14 +17,13 @@ namespace juniper {
  *  If this information is already aggregated by the caller
  *  it allows us to save som extra computation in Juniper.
  */
-enum Tokentype
-{
-    TOKEN_UNKNOWN,  // token type info not present.
-    TOKEN_WORD,     // This is a word token
-    TOKEN_SEP,      // This is a separator token
-    TOKEN_MARKUP,   // This token contains general unspecified markup
-    TOKEN_OTHER,    // This token is something else than any of the above
-    TOKEN_MAX       // Max token types currently supported.
+enum Tokentype {
+    TOKEN_UNKNOWN, // token type info not present.
+    TOKEN_WORD,    // This is a word token
+    TOKEN_SEP,     // This is a separator token
+    TOKEN_MARKUP,  // This token contains general unspecified markup
+    TOKEN_OTHER,   // This token is something else than any of the above
+    TOKEN_MAX      // Max token types currently supported.
 };
 
 /** Opaque reference to the Juniper internal representation of a document summary
@@ -39,10 +38,9 @@ class Docsum;
  *  that operate on doc summaries (at proper places in the document processing pipelines)
  *  to enhance and annotate the source for Juniper result processing (see rpinterface.h)
  */
-class DocsumProcessor
-{
+class DocsumProcessor {
 public:
-    virtual ~DocsumProcessor() {}
+    virtual ~DocsumProcessor() = default;
 
     /** Process a docsum with this processor. Processing can in the cases where
      *  token based processing is necessary just be implemented as setting
@@ -93,4 +91,3 @@ public:
 void ReleaseDocsum(Docsum* docsum);
 
 } // end namespace juniper
-

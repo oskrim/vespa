@@ -6,7 +6,7 @@
 
 namespace vespalib::metrics {
 
-using TimeStamp = std::chrono::duration<double, std::ratio<1,1>>;
+using TimeStamp = std::chrono::duration<double, std::ratio<1, 1>>;
 
 /**
  * Simple interface abstracting both timing and time measurement for
@@ -24,7 +24,7 @@ struct Tick {
     virtual TimeStamp first() = 0;
     virtual void kill() = 0;
     virtual bool alive() const = 0;
-    virtual ~Tick() {}
+    virtual ~Tick() = default;
 };
 
 } // namespace vespalib::metrics

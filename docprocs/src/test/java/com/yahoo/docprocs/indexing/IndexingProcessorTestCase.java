@@ -1,31 +1,45 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.docprocs.indexing;
 
-import com.yahoo.component.provider.ComponentRegistry;
-import com.yahoo.config.subscription.ConfigGetter;
+import com.yahoo.component.AbstractComponent;
 import com.yahoo.docproc.Processing;
+import com.yahoo.document.DataType;
 import com.yahoo.document.Document;
-import com.yahoo.document.DocumentPut;
 import com.yahoo.document.DocumentOperation;
+import com.yahoo.document.DocumentPut;
 import com.yahoo.document.DocumentType;
 import com.yahoo.document.DocumentTypeManager;
 import com.yahoo.document.DocumentUpdate;
-import com.yahoo.document.config.DocumentmanagerConfig;
+import com.yahoo.document.PositionDataType;
+import com.yahoo.document.TensorDataType;
 import com.yahoo.document.datatypes.StringFieldValue;
 import com.yahoo.document.update.AssignValueUpdate;
 import com.yahoo.document.update.FieldUpdate;
-import com.yahoo.document.update.ValueUpdate;
-import com.yahoo.language.simple.SimpleLinguistics;
+import com.yahoo.language.process.Chunker;
+import com.yahoo.language.process.Embedder;
+import com.yahoo.language.process.FieldGenerator;
+import com.yahoo.language.process.InvocationContext;
+import com.yahoo.language.process.TimeoutException;
+import com.yahoo.metrics.simple.MetricReceiver;
+import com.yahoo.tensor.Tensor;
+import com.yahoo.tensor.TensorType;
+import com.yahoo.tensor.Tensors;
 import com.yahoo.vespa.configdefinition.IlscriptsConfig;
+import com.yahoo.yolean.Exceptions;
+import org.junit.Ignore;
 import org.junit.Test;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 /**
  * @author Simon Thoresen Hult
@@ -33,30 +47,28 @@ import static org.junit.Assert.assertTrue;
  */
 public class IndexingProcessorTestCase {
 
-    private static final String CONFIG_ID = "dir:src/test/cfg";
-
-    private final IndexingProcessor indexer = newProcessor(CONFIG_ID);
-
     @Test
     public void requireThatIndexerForwardsDocumentsOfUnknownType() {
+        var tester = new IndexingProcessorTester();
         Document input = new Document(new DocumentType("unknown"), "id:ns:unknown::");
-        DocumentOperation output = process(new DocumentPut(input));
+        DocumentOperation output = tester.process(new DocumentPut(input));
         assertTrue(output instanceof DocumentPut);
         assertSame(input, ((DocumentPut)output).getDocument());
     }
 
     @Test
     public void testPut() {
+        IndexingProcessorTester tester = new IndexingProcessorTester("src/test/cfg");
         // 'combined' gets the value of both
         // 'combinedWithFallback' falls back to an empty string if an input is missing
 
         {   // Both artist and title are set
-            DocumentType inputType = indexer.getDocumentTypeManager().getDocumentType("music");
+            DocumentType inputType = tester.getDocumentType("music");
             DocumentPut input = new DocumentPut(inputType, "id:ns:music::");
             input.getDocument().setFieldValue(inputType.getField("artist"), new StringFieldValue("artist1"));
             input.getDocument().setFieldValue(inputType.getField("title"), new StringFieldValue("title1"));
 
-            Document output = ((DocumentPut)process(input)).getDocument();
+            Document output = ((DocumentPut)tester.process(input)).getDocument();
             assertEquals("artist1", output.getFieldValue("artist").getWrappedValue());
             assertEquals("title1", output.getFieldValue("title").getWrappedValue());
             assertNull(output.getFieldValue("song"));
@@ -65,11 +77,11 @@ public class IndexingProcessorTestCase {
         }
 
         {   // Just artist is set
-            DocumentType inputType = indexer.getDocumentTypeManager().getDocumentType("music");
+            DocumentType inputType = tester.getDocumentType("music");
             DocumentPut input = new DocumentPut(inputType, "id:ns:music::");
             input.getDocument().setFieldValue(inputType.getField("artist"), new StringFieldValue("artist1"));
 
-            Document output = ((DocumentPut)process(input)).getDocument();
+            Document output = ((DocumentPut)tester.process(input)).getDocument();
             assertEquals("artist1", output.getFieldValue("artist").getWrappedValue());
             assertNull(output.getFieldValue("title"));
             assertNull(output.getFieldValue("song"));
@@ -78,11 +90,11 @@ public class IndexingProcessorTestCase {
         }
 
         {   // Just title is set
-            DocumentType inputType = indexer.getDocumentTypeManager().getDocumentType("music");
+            DocumentType inputType = tester.getDocumentType("music");
             DocumentPut input = new DocumentPut(inputType, "id:ns:music::");
             input.getDocument().setFieldValue(inputType.getField("title"), new StringFieldValue("title1"));
 
-            Document output = ((DocumentPut)process(input)).getDocument();
+            Document output = ((DocumentPut)tester.process(input)).getDocument();
             assertEquals("title1", output.getFieldValue("title").getWrappedValue());
             assertNull(output.getFieldValue("artist"));
             assertNull(output.getFieldValue("song"));
@@ -91,11 +103,11 @@ public class IndexingProcessorTestCase {
         }
 
         {   // Neither title nor artist is set
-            DocumentType inputType = indexer.getDocumentTypeManager().getDocumentType("music");
+            DocumentType inputType = tester.getDocumentType("music");
             DocumentPut input = new DocumentPut(inputType, "id:ns:music::");
             input.getDocument().setFieldValue(inputType.getField("song"), new StringFieldValue("song1"));
 
-            Document output = ((DocumentPut)process(input)).getDocument();
+            Document output = ((DocumentPut)tester.process(input)).getDocument();
             assertNull(output.getFieldValue("artist"));
             assertNull(output.getFieldValue("title"));
             assertEquals("song1", output.getFieldValue("song").getWrappedValue());
@@ -104,10 +116,10 @@ public class IndexingProcessorTestCase {
         }
 
         {   // None is set
-            DocumentType inputType = indexer.getDocumentTypeManager().getDocumentType("music");
+            DocumentType inputType = tester.getDocumentType("music");
             DocumentPut input = new DocumentPut(inputType, "id:ns:music::");
 
-            Document output = ((DocumentPut)process(input)).getDocument();
+            Document output = ((DocumentPut)tester.process(input)).getDocument();
             assertNull(output.getFieldValue("artist"));
             assertNull(output.getFieldValue("title"));
             assertNull(output.getFieldValue("song"));
@@ -117,98 +129,454 @@ public class IndexingProcessorTestCase {
     }
 
     @Test
+    public void testPutPosition() {
+        // Config of the following schema, derived Nov 2024, by SchemaTestCase.testDerivingPosition in the config-model
+        //
+        //                schema place {
+        //
+        //                    document place {
+        //
+        //                        field location type position {
+        //                            indexing: attribute
+        //                        }
+        //                    }
+        //                }
+        IndexingProcessorTester tester = new IndexingProcessorTester("src/test/cfg3");
+
+        DocumentType inputType = tester.getDocumentType("place");
+        DocumentPut input = new DocumentPut(inputType, "id:ns:place::");
+        input.getDocument().setFieldValue(inputType.getField("location"), PositionDataType.fromString("13;17"));
+
+        Document output = ((DocumentPut)tester.process(input)).getDocument();
+        assertEquals(595L, output.getFieldValue("location_zcurve").getWrappedValue());
+    }
+
+    @Test
+    public void testPutLongHash() {
+        // Config of the following schema, derived Nov 2024, by SchemaTestCase.testDeriving in the config-model
+        //
+        //                schema page {
+        //
+        //                    field domain_hash type long {
+        //                        indexing: input domain | hash | attribute
+        //                    }
+        //
+        //                    document page {
+        //
+        //                        field domain type string {
+        //                            indexing: index | summary
+        //                            match: word
+        //                            rank: filter
+        //                        }
+        //                    }
+        //                }
+        IndexingProcessorTester tester = new IndexingProcessorTester("src/test/cfg2");
+
+        DocumentType inputType = tester.getDocumentType("page");
+        DocumentPut input = new DocumentPut(inputType, "id:ns:page::");
+        input.getDocument().setFieldValue(inputType.getField("domain"), new StringFieldValue("domain1"));
+
+        Document output = ((DocumentPut)tester.process(input)).getDocument();
+        assertEquals("domain1", output.getFieldValue("domain").getWrappedValue());
+        assertEquals(1386505442371493468L, output.getFieldValue("domain_hash").getWrappedValue());
+    }
+
+    @Test
     public void testUpdate() {
+        IndexingProcessorTester tester = new IndexingProcessorTester("src/test/cfg");
         // 'combined' gets the value of artist and title
         // 'combinedWithFallback' falls back to an empty string if an input is missing
 
         {   // Both artist and title are set
-            DocumentType inputType = indexer.getDocumentTypeManager().getDocumentType("music");
+            DocumentType inputType = tester.getDocumentType("music");
             DocumentUpdate input = new DocumentUpdate(inputType, "id:ns:music::");
             input.addFieldUpdate(FieldUpdate.createAssign(inputType.getField("artist"), new StringFieldValue("artist1")));
             input.addFieldUpdate(FieldUpdate.createAssign(inputType.getField("title"), new StringFieldValue("title1")));
 
-            DocumentUpdate output = (DocumentUpdate)process(input);
+            DocumentUpdate output = (DocumentUpdate)tester.process(input);
             assertEquals(4, output.fieldUpdates().size());
-            assertAssignment("artist", "artist1", output);
-            assertAssignment("title", "title1", output);
-            assertAssignment("combined", "artist1 title1", output);
-            assertAssignment("combinedWithFallback", "artist1 title1", output);
+            tester.assertAssignment("artist", "artist1", output);
+            tester.assertAssignment("title", "title1", output);
+            tester.assertAssignment("combined", "artist1 title1", output);
+            tester.assertAssignment("combinedWithFallback", "artist1 title1", output);
         }
 
         {   // Just artist is set
-            DocumentType inputType = indexer.getDocumentTypeManager().getDocumentType("music");
+            DocumentType inputType = tester.getDocumentType("music");
             DocumentUpdate input = new DocumentUpdate(inputType, "id:ns:music::");
             input.addFieldUpdate(FieldUpdate.createAssign(inputType.getField("artist"), new StringFieldValue("artist1")));
 
-            DocumentUpdate output = (DocumentUpdate)process(input);
+            DocumentUpdate output = (DocumentUpdate)tester.process(input);
             assertEquals(2, output.fieldUpdates().size());
-            assertAssignment("artist", "artist1", output);
-            assertAssignment("combinedWithFallback", "artist1 ", output);
+            tester.assertAssignment("artist", "artist1", output);
+            tester.assertAssignment("combinedWithFallback", "artist1 ", output);
         }
 
         {   // Just title is set
-            DocumentType inputType = indexer.getDocumentTypeManager().getDocumentType("music");
+            DocumentType inputType = tester.getDocumentType("music");
             DocumentUpdate input = new DocumentUpdate(inputType, "id:ns:music::");
             input.addFieldUpdate(FieldUpdate.createAssign(inputType.getField("title"), new StringFieldValue("title1")));
 
-            DocumentUpdate output = (DocumentUpdate)process(input);
+            DocumentUpdate output = (DocumentUpdate)tester.process(input);
             assertEquals(2, output.fieldUpdates().size());
-            assertAssignment("title", "title1", output);
-            assertAssignment("combinedWithFallback", " title1", output);
+            tester.assertAssignment("title", "title1", output);
+            tester.assertAssignment("combinedWithFallback", " title1", output);
         }
 
         {   // Neither title nor artist is set: Should not update embeddings even though it has fallbacks for all
-            DocumentType inputType = indexer.getDocumentTypeManager().getDocumentType("music");
+            DocumentType inputType = tester.getDocumentType("music");
             DocumentUpdate input = new DocumentUpdate(inputType, "id:ns:music::");
             input.addFieldUpdate(FieldUpdate.createAssign(inputType.getField("song"), new StringFieldValue("song1")));
 
-            DocumentUpdate output = (DocumentUpdate)process(input);
+            DocumentUpdate output = (DocumentUpdate)tester.process(input);
             assertEquals(1, output.fieldUpdates().size());
-            assertAssignment("song", "song1", output);
+            tester.assertAssignment("song", "song1", output);
         }
 
         {   // None is set: Should not update anything
-            DocumentType inputType = indexer.getDocumentTypeManager().getDocumentType("music");
+            DocumentType inputType = tester.getDocumentType("music");
             DocumentUpdate input = new DocumentUpdate(inputType, "id:ns:music::");
 
-            DocumentUpdate output = (DocumentUpdate)process(input);
+            DocumentUpdate output = (DocumentUpdate)tester.process(input);
             assertNull(output);
         }
+
+        {   // Clear title by assigning null: Embedding is kept (not very clear what's the best action).
+            DocumentType inputType = tester.getDocumentType("music");
+            DocumentUpdate input = new DocumentUpdate(inputType, "id:ns:music::");
+            input.addFieldUpdate(FieldUpdate.createClear(inputType.getField("title")));
+
+            DocumentUpdate output = (DocumentUpdate)tester.process(input);
+            assertEquals(1, output.fieldUpdates().size());
+            tester.assertAssignment("title", null, output);
+        }
+    }
+
+    /** Test sending clear of 1 field only, when needing 2 */
+    @Test
+    public void testPartialUpdateWithMultipleFieldsClear() {
+        try {
+            var tester = new PartialUpdateTester();
+
+            DocumentUpdate input = new DocumentUpdate(tester.inputType, "id:ns:test::");
+            input.addFieldUpdate(FieldUpdate.createClear(tester.inputType.getField("stringField")));
+
+            DocumentUpdate output = tester.process(input);
+            assertEquals(1, output.fieldUpdates().size());
+            var fieldUpdate = output.fieldUpdates().iterator().next();
+            assertEquals(1, fieldUpdate.getValueUpdates().size());
+            var valueUpdate = fieldUpdate.getValueUpdates().iterator().next();
+            assertTrue(valueUpdate instanceof AssignValueUpdate);
+            assertEquals("", valueUpdate.getValue().getWrappedValue());
+            fail("Expected exception");
+        }
+        catch (IllegalArgumentException e) {
+            assertEquals("Could not execute update 'clear' to field 'stringField' of type string: " +
+                         "No indexing statement taking only 'stringField' as input",
+                         Exceptions.toMessageString(e));
+        }
+    }
+
+    /** Test sending clear plus setting the other */
+    @Test
+    @Ignore // TODO: This should be supported
+    public void testPartialUpdateWithMultipleFieldsClearAndAssign() {
+        var tester = new PartialUpdateTester();
+
+        DocumentUpdate input = new DocumentUpdate(tester.inputType, "id:ns:test::");
+        input.addFieldUpdate(FieldUpdate.createClear(tester.inputType.getField("stringField")));
+        input.addFieldUpdate(FieldUpdate.createAssign(tester.inputType.getField("language"), new StringFieldValue("en")));
+
+        DocumentUpdate output = tester.process(input);
+        assertEquals(1, output.fieldUpdates().size());
+        var fieldUpdate = output.fieldUpdates().iterator().next();
+        assertEquals(1, fieldUpdate.getValueUpdates().size());
+        var valueUpdate = fieldUpdate.getValueUpdates().iterator().next();
+        assertTrue(valueUpdate instanceof AssignValueUpdate);
+        assertEquals("", valueUpdate.getValue().getWrappedValue());
+    }
+
+    /**
+     * Test sending assign of 1 field only, when needing 2.
+     * TODO Vespa 9: This is allowed, but shouldn't be.
+     */
+    @Test
+    public void testPartialUpdateWithMultipleFieldsAssign() {
+        var tester = new PartialUpdateTester();
+
+        DocumentUpdate input = new DocumentUpdate(tester.inputType, "id:ns:test::");
+        input.addFieldUpdate(FieldUpdate.createAssign(tester.inputType.getField("stringField"), new StringFieldValue("newValue")));
+
+        DocumentUpdate output = tester.process(input);
+        assertEquals(1, output.fieldUpdates().size());
+        var fieldUpdate = output.fieldUpdates().iterator().next();
+        assertEquals(1, fieldUpdate.getValueUpdates().size());
+        var valueUpdate = fieldUpdate.getValueUpdates().iterator().next();
+        assertTrue(valueUpdate instanceof AssignValueUpdate);
+        assertEquals("newValue", valueUpdate.getValue().getWrappedValue());
     }
 
     @Test
     public void requireThatIndexerForwardsUpdatesOfUnknownType() {
+        var tester = new IndexingProcessorTester();
         DocumentUpdate input = new DocumentUpdate(new DocumentType("unknown"), "id:ns:music::");
-        DocumentOperation output = process(input);
+        DocumentOperation output = tester.process(input);
         assertSame(input, output);
     }
 
-    private void assertAssignment(String fieldName, String value, DocumentUpdate output) {
-        FieldUpdate update = output.getFieldUpdate(fieldName);
-        assertNotNull("Update of '" + fieldName + "' exists", update);
-        assertEquals(fieldName, update.getField().getName());
-        assertEquals(1, update.getValueUpdates().size());
-        ValueUpdate<?> combinedAssignment = update.getValueUpdate(0);
-        assertTrue(combinedAssignment instanceof AssignValueUpdate);
-        assertEquals(new StringFieldValue(value), combinedAssignment.getValue());
+    @Test
+    public void testEmbedBinarizeAndPack() {
+        var documentTypes = new DocumentTypeManager();
+        var test = new DocumentType("test");
+        test.addField("myText", DataType.STRING);
+        test.addField("embedding", new TensorDataType(TensorType.fromSpec("tensor<int8>(x[16])")));
+        documentTypes.register(test);
+
+        IlscriptsConfig.Builder config = new IlscriptsConfig.Builder();
+        config.ilscript(new IlscriptsConfig.Ilscript.Builder().doctype("test")
+                                                              .content("input myText | embed | binarize | pack_bits | attribute embedding")
+                                                              .docfield("myText"));
+        var scripts = new ScriptManager(documentTypes, new IlscriptsConfig(config), null,
+                                        Chunker.throwsOnUse.asMap(),
+                                        Map.of("test", new TestEmbedder()),
+                                        FieldGenerator.throwsOnUse.asMap(),
+                                        MetricReceiver.nullImplementation);
+
+        assertNotNull(scripts.getScript(documentTypes.getDocumentType("test")));
+
+        var tester = new IndexingProcessorTester(documentTypes, scripts);
+        DocumentUpdate input = new DocumentUpdate(test, "id:ns:test::");
+        input.addFieldUpdate(FieldUpdate.createAssign(test.getField("myText"), new StringFieldValue("my text")));
+        DocumentUpdate output = (DocumentUpdate)tester.process(input);
+        FieldUpdate embeddingUpdate = output.getFieldUpdate("embedding");
+        AssignValueUpdate valueUpdate = (AssignValueUpdate)embeddingUpdate.getValueUpdate(0);
+        assertEquals(Tensor.from("tensor<int8>(x[16]):[-110, 73, 36, -110, 73, 36, -110, 73, 36, -110, 73, 36, -110, 73, 36, -110]"),
+                                 valueUpdate.getValue().getWrappedValue());
     }
 
-    private DocumentOperation process(DocumentOperation input) {
-        Processing proc = new Processing();
+    @Test
+    public void testDeadlinePropagationToEmbedder() {
+        class DeadlineCapturingEmbedder extends AbstractComponent implements Embedder {
+            Instant deadline;
+            @Override public List<Integer> embed(String text, Context context) { return List.of(); }
+
+            @Override
+            public Tensor embed(String text, Context context, TensorType tensorType) {
+                deadline = context.getDeadline().map(InvocationContext.Deadline::asInstant).orElse(null);
+                return Tensor.Builder.of(tensorType).build();
+            }
+        }
+
+        var documentTypes = new DocumentTypeManager();
+        var testType = new DocumentType("test");
+        testType.addField("text", DataType.STRING);
+        testType.addField("embedding", new TensorDataType(TensorType.fromSpec("tensor<float>(x[4])")));
+        documentTypes.register(testType);
+
+        var embedder = new DeadlineCapturingEmbedder();
+
+        var config = new IlscriptsConfig.Builder();
+        config.ilscript(new IlscriptsConfig.Ilscript.Builder()
+            .doctype("test")
+            .content("input text | embed | attribute embedding")
+            .docfield("text"));
+
+        var scripts = new ScriptManager(documentTypes, new IlscriptsConfig(config), null,
+                                        Chunker.throwsOnUse.asMap(),
+                                        Map.of("test", embedder),
+                                        FieldGenerator.throwsOnUse.asMap(),
+                                        MetricReceiver.nullImplementation);
+
+        var processor = new IndexingProcessor(documentTypes, scripts);
+        var input = new DocumentPut(testType, "id:ns:test::");
+        input.getDocument().setFieldValue("text", new StringFieldValue("hello world"));
+
+        var proc = new Processing();
         proc.getDocumentOperations().add(input);
-        indexer.process(proc);
+        proc.setExpiresAt(Instant.now().plus(Duration.ofSeconds(5)));
+        processor.process(proc);
 
-        List<DocumentOperation> operations = proc.getDocumentOperations();
-        if (operations.isEmpty()) return null;
-        assertEquals(1, operations.size());
-        return operations.get(0);
+        assertNotNull("Deadline should be set", embedder.deadline);
+        assertTrue(embedder.deadline.isAfter(Instant.EPOCH));
+        assertTrue(embedder.deadline.isBefore(Instant.MAX));
     }
 
-    @SuppressWarnings("deprecation")
-    private static IndexingProcessor newProcessor(String configId) {
-        return new IndexingProcessor(new DocumentTypeManager(ConfigGetter.getConfig(DocumentmanagerConfig.class, configId)),
-                                     ConfigGetter.getConfig(IlscriptsConfig.class, configId),
-                                     new SimpleLinguistics(),
-                                     new ComponentRegistry<>());
+    @Test
+    public void testOverloadExceptionPropagation() {
+        class OverloadThrowingEmbedder implements Embedder {
+            @Override public List<Integer> embed(String text, Context context) { return List.of(); }
+
+            @Override
+            public Tensor embed(String text, Context context, TensorType tensorType) {
+                throw new com.yahoo.language.process.OverloadException("Embedder overloaded: rate limit exceeded");
+            }
+        }
+        // Set up document type with embedding field
+        var documentTypes = new DocumentTypeManager();
+        var testType = new DocumentType("test");
+        testType.addField("text", DataType.STRING);
+        testType.addField("embedding", new TensorDataType(
+            TensorType.fromSpec("tensor<float>(x[4])")
+        ));
+        documentTypes.register(testType);
+
+        var embedder = new OverloadThrowingEmbedder();
+
+        // Configure indexing script
+        var config = new IlscriptsConfig.Builder();
+        config.ilscript(new IlscriptsConfig.Ilscript.Builder()
+            .doctype("test")
+            .content("input text | embed | attribute embedding")
+            .docfield("text"));
+
+        var scripts = new ScriptManager(
+            documentTypes,
+            new IlscriptsConfig(config),
+            null,
+            Chunker.throwsOnUse.asMap(),
+            Map.of("test", embedder),
+            FieldGenerator.throwsOnUse.asMap(),
+            MetricReceiver.nullImplementation
+        );
+
+        var processor = new IndexingProcessor(documentTypes, scripts);
+
+        // Create document operation
+        var input = new DocumentPut(testType, "id:ns:test::");
+        input.getDocument().setFieldValue("text", new StringFieldValue("hello world"));
+
+        var proc = new Processing();
+        proc.getDocumentOperations().add(input);
+
+        // Process and verify Progress.OVERLOAD is returned
+        var progress = processor.process(proc);
+
+        assertEquals(com.yahoo.docproc.DocumentProcessor.Progress.OVERLOAD, progress);
+        assertTrue(progress.getReason().isPresent());
+        var reason = progress.getReason().get();
+        assertEquals("Operation on 'id:ns:test::' rejected due to overload: Embedder overloaded: rate limit exceeded", reason);
     }
+
+    @Test
+    public void testTimeoutExceptionPropagation() {
+        class TimeoutThrowingEmbedder implements Embedder {
+            @Override public List<Integer> embed(String text, Context context) { return List.of(); }
+
+            @Override
+            public Tensor embed(String text, Context context, TensorType tensorType) {
+                throw new TimeoutException("Embedder call timed out after 5000ms");
+            }
+        }
+        // Set up document type with embedding field
+        var documentTypes = new DocumentTypeManager();
+        var testType = new DocumentType("test");
+        testType.addField("text", DataType.STRING);
+        testType.addField("embedding", new TensorDataType(
+                TensorType.fromSpec("tensor<float>(x[4])")
+        ));
+        documentTypes.register(testType);
+
+        var embedder = new TimeoutThrowingEmbedder();
+
+        // Configure indexing script
+        var config = new IlscriptsConfig.Builder();
+        config.ilscript(new IlscriptsConfig.Ilscript.Builder()
+                .doctype("test")
+                .content("input text | embed | attribute embedding")
+                .docfield("text"));
+
+        var scripts = new ScriptManager(
+                documentTypes,
+                new IlscriptsConfig(config),
+                null,
+                Chunker.throwsOnUse.asMap(),
+                Map.of("test", embedder),
+                FieldGenerator.throwsOnUse.asMap(),
+                MetricReceiver.nullImplementation
+        );
+
+        var processor = new IndexingProcessor(documentTypes, scripts);
+
+        // Create document operation
+        var input = new DocumentPut(testType, "id:ns:test::");
+        input.getDocument().setFieldValue("text", new StringFieldValue("hello world"));
+
+        var proc = new Processing();
+        proc.getDocumentOperations().add(input);
+
+        // Process and verify Progress.TIMEOUT is returned
+        var progress = processor.process(proc);
+
+        assertEquals(com.yahoo.docproc.DocumentProcessor.Progress.TIMEOUT, progress);
+        assertTrue(progress.getReason().isPresent());
+        String reason = progress.getReason().get();
+        assertTrue("Expected reason to contain 'timed out', got: " + reason, reason.contains("timed out"));
+        assertTrue("Expected reason to contain '5000ms', got: " + reason, reason.contains("5000ms"));
+    }
+
+    static class PartialUpdateTester {
+
+        IndexingProcessorTester nestedTester;
+        DocumentType inputType;
+
+        PartialUpdateTester() {
+            var documentTypes = new DocumentTypeManager();
+            var test = new DocumentType("test");
+            test.addField("stringField", DataType.STRING);
+            test.addField("language", DataType.STRING);
+            documentTypes.register(test);
+
+            IlscriptsConfig.Builder config = new IlscriptsConfig.Builder();
+            config.ilscript(new IlscriptsConfig.Ilscript.Builder().doctype("test")
+                                                                  .content("clear_state | guard { \"unknown\" | set_language; input stringField | index stringField; input language | set_language; }")
+                                                                  .docfield("stringField")
+                                                                  .docfield("language"));
+            var scripts = new ScriptManager(documentTypes, new IlscriptsConfig(config), null,
+                                            Chunker.throwsOnUse.asMap(),
+                                            Map.of("test", new TestEmbedder()),
+                                            FieldGenerator.throwsOnUse.asMap(),
+                                            MetricReceiver.nullImplementation);
+
+            nestedTester = new IndexingProcessorTester(documentTypes, scripts);
+            inputType = nestedTester.getDocumentType("test");
+        }
+
+        DocumentUpdate process(DocumentOperation input) {
+            return (DocumentUpdate)nestedTester.process(input);
+        }
+
+    }
+
+    /** An embedder which also does its own quantization, similar to HuggingFaceEmbedder. */
+    static class TestEmbedder extends AbstractComponent implements Embedder {
+
+        @Override
+        public List<Integer> embed(String s, Context context) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Tensor embed(String text, Context context, TensorType tensorType) {
+            if (tensorType.dimensions().size() != 1)
+                throw new IllegalArgumentException("Error in embedding to type '" + tensorType + "': should only have one dimension.");
+            if (!tensorType.dimensions().get(0).isIndexed())
+                throw new IllegalArgumentException("Error in embedding to type '" + tensorType + "': dimension should be indexed.");
+            boolean binarize = tensorType.valueType() == TensorType.Value.INT8;
+            long size = tensorType.dimensions().get(0).size().get();
+            if (binarize)
+                size = size * 8;
+            var embeddedType = new TensorType.Builder().indexed(tensorType.dimensions().get(0).name(), size).build();
+            var resultBuilder = Tensor.Builder.of(embeddedType);
+            for (int i = 0; i < size; i++) {
+                int v = ((i % 3) == 0) ? 1 : 0;
+                resultBuilder.cell(v, i);
+            }
+            var result = resultBuilder.build();
+            if (binarize)
+                result = Tensors.packBits(result);
+             return result;
+        }
+
+    }
+
 }

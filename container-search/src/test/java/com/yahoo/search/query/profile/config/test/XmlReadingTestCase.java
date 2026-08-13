@@ -5,6 +5,7 @@ import com.yahoo.jdisc.http.HttpRequest.Method;
 import com.yahoo.container.jdisc.HttpRequest;
 import com.yahoo.language.process.Embedder;
 import com.yahoo.processing.request.CompoundName;
+import com.yahoo.search.query.QueryType;
 import com.yahoo.tensor.Tensor;
 import com.yahoo.tensor.TensorType;
 import com.yahoo.yolean.Exceptions;
@@ -146,6 +147,18 @@ public class XmlReadingTestCase {
         assertEquals("test", q.getModel().getQueryString());
     }
 
+    /** Test reading a (built-in) query profile that has a value at a non-root: query.type */
+    @Test
+    void testQueryType() {
+        QueryProfileRegistry registry =
+                new QueryProfileXMLReader().read("src/test/java/com/yahoo/search/query/profile/config/test/querytype");
+        var cRegistry = registry.compile();
+        var query = new Query("?test", cRegistry.findQueryProfile("default"));
+        QueryType queryType = query.getModel().getQueryType();
+        assertEquals(Query.Type.ALL, queryType.getType());
+        assertEquals(QueryType.Syntax.web, queryType.getSyntax());
+    }
+
     /** Tests a subset of the configuration in the system test of this */
     @Test
     void testSystemtest() {
@@ -195,6 +208,7 @@ public class XmlReadingTestCase {
             fail("Should have failed");
         }
         catch (IllegalArgumentException e) {
+            e.printStackTrace();
             assertEquals("Could not parse 'unparseable.xml', error at line 2, column 21: Element type \"query-profile\" must be followed by either attribute specifications, \">\" or \"/>\".", Exceptions.toMessageString(e));
         }
     }
@@ -527,13 +541,13 @@ public class XmlReadingTestCase {
         }
 
         @Override
-        public List<Integer> embed(String text, Embedder.Context context) {
+        public List<Integer> embed(String text, Context context) {
             fail("Unexpected call");
             return null;
         }
 
         @Override
-        public Tensor embed(String text, Embedder.Context context, TensorType tensorType) {
+        public Tensor embed(String text, Context context, TensorType tensorType) {
             assertEquals(expectedText, text);
             assertEquals(tensorToReturn.type(), tensorType);
             return tensorToReturn;

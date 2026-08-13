@@ -1,7 +1,12 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.indexinglanguage;
 
-import com.yahoo.document.*;
+import com.yahoo.document.DataType;
+import com.yahoo.document.Document;
+import com.yahoo.document.DocumentType;
+import com.yahoo.document.DocumentUpdate;
+import com.yahoo.document.Field;
+import com.yahoo.document.StructDataType;
 import com.yahoo.document.datatypes.FieldValue;
 import com.yahoo.document.datatypes.IntegerFieldValue;
 import com.yahoo.document.datatypes.StringFieldValue;
@@ -10,7 +15,9 @@ import com.yahoo.document.fieldpathupdate.AssignFieldPathUpdate;
 import com.yahoo.document.fieldpathupdate.FieldPathUpdate;
 import org.junit.Test;
 
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertTrue;
 
 /**
  * @author Simon Thoresen Hult
@@ -27,7 +34,7 @@ public class DocumentToPathUpdateTestCase {
         assertNotNull(doc);
         doc.setFieldValue("my_int", new IntegerFieldValue(96));
 
-        DocumentUpdate docUpd = new FieldPathUpdateAdapter(new SimpleDocumentAdapter(null, doc), upd).getOutput();
+        DocumentUpdate docUpd = new FieldPathUpdateFieldValues(new SimpleDocumentFieldValues(null, doc), upd).getOutput();
         assertNotNull(docUpd);
         assertEquals(1, docUpd.fieldPathUpdates().size());
         assertNotNull(upd = docUpd.fieldPathUpdates().iterator().next());
@@ -47,7 +54,7 @@ public class DocumentToPathUpdateTestCase {
         assertNotNull(doc);
         doc.setFieldValue("my_str", new StringFieldValue("96"));
 
-        DocumentUpdate docUpd = new FieldPathUpdateAdapter(new SimpleDocumentAdapter(null, doc), upd).getOutput();
+        DocumentUpdate docUpd = new FieldPathUpdateFieldValues(new SimpleDocumentFieldValues(null, doc), upd).getOutput();
         assertNotNull(docUpd);
         assertEquals(1, docUpd.fieldPathUpdates().size());
         assertNotNull(upd = docUpd.fieldPathUpdates().iterator().next());
@@ -75,7 +82,7 @@ public class DocumentToPathUpdateTestCase {
         struct = (Struct)obj;
         struct.setFieldValue("b", new IntegerFieldValue(96));
 
-        DocumentUpdate docUpd = new FieldPathUpdateAdapter(new SimpleDocumentAdapter(null, doc), upd).getOutput();
+        DocumentUpdate docUpd = new FieldPathUpdateFieldValues(new SimpleDocumentFieldValues(null, doc), upd).getOutput();
         assertNotNull(docUpd);
         assertEquals(1, docUpd.fieldPathUpdates().size());
         assertNotNull(upd = docUpd.fieldPathUpdates().iterator().next());
@@ -101,7 +108,7 @@ public class DocumentToPathUpdateTestCase {
         Struct struct = (Struct)obj;
         struct.setFieldValue("b", new IntegerFieldValue(96));
 
-        DocumentUpdate docUpd = new FieldPathUpdateAdapter(new SimpleDocumentAdapter(null, doc), upd).getOutput();
+        DocumentUpdate docUpd = new FieldPathUpdateFieldValues(new SimpleDocumentFieldValues(null, doc), upd).getOutput();
         assertNotNull(docUpd);
         assertEquals(1, docUpd.fieldPathUpdates().size());
         assertNotNull(upd = docUpd.fieldPathUpdates().iterator().next());

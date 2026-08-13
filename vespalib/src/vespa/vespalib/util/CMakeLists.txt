@@ -22,7 +22,9 @@ vespa_add_library(vespalib_vespalib_util OBJECT
     count_down_latch.cpp
     cpu_usage.cpp
     crc.cpp
+    deadline.cpp
     destructor_callbacks.cpp
+    detect_malloc_impl.cpp
     doom.cpp
     dual_merge_director.cpp
     error.cpp
@@ -30,12 +32,16 @@ vespa_add_library(vespalib_vespalib_util OBJECT
     exceptions.cpp
     execution_profiler.cpp
     executor_idle_tracking.cpp
+    fake_deadline.cpp
     fake_doom.cpp
     featureset.cpp
     file_area_freelist.cpp
     foregroundtaskexecutor.cpp
     gate.cpp
     gencnt.cpp
+    generation.cpp
+    generation_guard.cpp
+    generation_hold.cpp
     generationhandler.cpp
     generationholder.cpp
     growablebytebuffer.cpp
@@ -47,6 +53,7 @@ vespa_add_library(vespalib_vespalib_util OBJECT
     jsonexception.cpp
     jsonstream.cpp
     jsonwriter.cpp
+    kll_sketch.cpp
     latch.cpp
     left_right_heap.cpp
     limited_thread_bundle_wrapper.cpp
@@ -55,6 +62,7 @@ vespa_add_library(vespalib_vespalib_util OBJECT
     md5.c
     memory_trap.cpp
     memoryusage.cpp
+    mimalloc_intercept.cpp
     mmap_file_allocator.cpp
     mmap_file_allocator_factory.cpp
     monitored_refcount.cpp
@@ -68,6 +76,7 @@ vespa_add_library(vespalib_vespalib_util OBJECT
     rcuvector.cpp
     ref_counted.cpp
     regexp.cpp
+    relative_frequency_sketch.cpp
     require.cpp
     resource_limits.cpp
     round_up_to_page_size.cpp
@@ -87,6 +96,7 @@ vespa_add_library(vespalib_vespalib_util OBJECT
     singleexecutor.cpp
     small_vector.cpp
     stash.cpp
+    state_explorer_utils.cpp
     string_escape.cpp
     string_hash.cpp
     stringfmt.cpp
@@ -96,6 +106,10 @@ vespa_add_library(vespalib_vespalib_util OBJECT
     threadstackexecutor.cpp
     threadstackexecutorbase.cpp
     time.cpp
+    transient_memory_tracker.cpp
+    transient_vector_snapshot.cpp
+    unordered_u32_set.cpp
+    typed_data_layout.cpp
     unwind_message.cpp
     valgrind.cpp
     xmlserializable.cpp

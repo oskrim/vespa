@@ -3,7 +3,7 @@ package com.yahoo.vespa.model.container.xml;
 
 import com.yahoo.config.docproc.SchemamappingConfig;
 import com.yahoo.config.model.builder.xml.test.DomBuilderTest;
-import com.yahoo.config.model.deploy.DeployState;
+import com.yahoo.config.model.deploy.TestDeployState;
 import com.yahoo.container.ComponentsConfig;
 import com.yahoo.container.core.ChainsConfig;
 import com.yahoo.container.jdisc.ContainerMbusConfig;
@@ -23,7 +23,10 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * @author Einar M R Rosenvinge
@@ -40,7 +43,7 @@ public class DocprocBuilderTest extends DomBuilderTest {
 
     @BeforeEach
     public void setupCluster() {
-        ContainerModel model = new ContainerModelBuilder(false, Networking.disable).build(DeployState.createTestState(), null, null, root, servicesXml());
+        ContainerModel model = new ContainerModelBuilder(false, Networking.disable).build(TestDeployState.create(), null, null, root, servicesXml());
         cluster = (ApplicationContainerCluster) model.getCluster();
         cluster.getDocproc().getChains().addServersAndClientsForChains();
         root.freezeModelTopology();
@@ -65,6 +68,10 @@ public class DocprocBuilderTest extends DomBuilderTest {
                 "    <chain id='chein'>",
                 "      <documentprocessor id='docproc2'/>",
                 "    </chain>",
+                "    <threadpool>",
+                "      <threads>0.5</threads>",
+                "      <queue>1</queue>",
+                "    </threadpool>",
                 "  </document-processing>",
                 "</container>");
     }
@@ -136,6 +143,11 @@ public class DocprocBuilderTest extends DomBuilderTest {
         assertNotNull(intermediateClient);
         assertEquals("com.yahoo.container.jdisc.messagebus.MbusClientProvider", intermediateClient.classId());
         assertEquals("com.yahoo.container.jdisc.messagebus.MbusClientProvider", intermediateClient.bundle());
+
+        ComponentsConfig.Components threadpool = components.get("threadpool@docproc-handler");
+        assertNotNull(threadpool);
+        assertEquals("com.yahoo.container.handler.threadpool.ContainerThreadpoolImpl", threadpool.classId());
+        assertEquals("com.yahoo.container.handler.threadpool.ContainerThreadpoolImpl", threadpool.bundle());
     }
 
     @Test
@@ -182,7 +194,7 @@ public class DocprocBuilderTest extends DomBuilderTest {
     void testQrStartConfig() {
         QrStartConfig.Jvm jvm = qrStartConfig.jvm();
         assertTrue(jvm.server());
-        assertTrue(jvm.verbosegc());
+        assertFalse(jvm.verbosegc());
         assertEquals("-XX:+UseG1GC -XX:MaxTenuringThreshold=15", jvm.gcopts());
         assertEquals(1536, jvm.minHeapsize());
         assertEquals(1536, jvm.heapsize());

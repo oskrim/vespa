@@ -3,6 +3,7 @@ package com.yahoo.prelude.semantics.engine;
 
 import com.yahoo.language.Language;
 import com.yahoo.language.Linguistics;
+import com.yahoo.language.process.LinguisticsParameters;
 import com.yahoo.language.process.StemList;
 import com.yahoo.language.process.StemMode;
 
@@ -25,7 +26,6 @@ public class RuleBaseLinguistics {
         this(StemMode.BEST, Language.ENGLISH, linguistics);
     }
 
-
     public RuleBaseLinguistics(StemMode stemMode, Language language, Linguistics linguistics) {
         this.stemMode = Objects.requireNonNull(stemMode);
         this.language = Objects.requireNonNull(language);
@@ -43,9 +43,10 @@ public class RuleBaseLinguistics {
     public Linguistics linguistics() { return linguistics; }
 
     /** Processes this term according to the linguistics of this rule base */
-    public String process(String term) {
+    public String process(String label, String term) {
         if (stemMode == StemMode.NONE) return term;
-        List<StemList> stems = linguistics.getStemmer().stem(term, language, StemMode.SHORTEST, true);
+        var parameters = new LinguisticsParameters(null, language, StemMode.SHORTEST, true, true);
+        List<StemList> stems = linguistics.getStemmer().stem(term, parameters);
         if (stems.isEmpty()) return term;
         if (stems.get(0).isEmpty()) return term;
         return stems.get(0).get(0);

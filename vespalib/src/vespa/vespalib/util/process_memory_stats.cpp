@@ -1,207 +1,139 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "process_memory_stats.h"
+
+#include "exceptions.h"
+#include "size_literals.h"
+#include "transient_memory_tracker.h"
+
 #include <vespa/vespalib/stllike/asciistream.h>
+
+#include <unistd.h>
+
 #include <algorithm>
-#include <vector>
 #include <cinttypes>
-#include <vespa/vespalib/util/size_literals.h>
+#include <vector>
+#if defined(__APPLE__)
+#include <mach/mach.h>
+#endif
 
 #include <vespa/log/log.h>
-
 LOG_SETUP(".vespalib.util.process_memory_stats");
 
 namespace vespalib {
 
-namespace {
-
-#ifdef __linux__
-/*
- * Check if line specifies an address range.
- *
- * address           perms offset  dev   inode   pathname
- *
- * 00400000-00420000 r-xp 00000000 fd:04 16545041                           /usr/bin/less
- */
-
-bool
-isRange(std::string_view line) {
-    for (char c : line) {
-        if (c == ' ') {
-            return true;
-        }
-        if (c == ':') {
-            return false;
-        }
-    }
-    return false;
-}
-
+size_t ProcessMemoryStats::normal_page_size = sysconf(_SC_PAGESIZE);
 
 /*
- * Check if address range is anonymous, e.g. not mapped from file.
- * inode number is 0 in that case.
+ * The statm line looks like this:
+ * size resident shared text lib data dt
  *
- * address           perms offset  dev   inode   pathname
+ * Example:
+ * 3332000 1917762 8060 1 0 2960491 0
  *
- * 00400000-00420000 r-xp 00000000 fd:04 16545041                           /usr/bin/less
- * 00625000-00628000 rw-p 00000000 00:00 0
- *
- * The range starting at 00400000 is not anonymous.
- * The range starting at 00625000 is anonymous.
+ * The numbers specify the numbers of pages
  */
-
-bool
-isAnonymous(std::string_view line) {
-    int delims = 0;
-    for (char c : line) {
-        if (delims >= 4) {
-            return (c == '0');
-        }
-        if (c == ' ') {
-            ++delims;
-        }
-    }
-    return true;
-}
-
-
-/*
- * Lines not containing an address range contains a header and a
- * value, e.g.
- *
- * Size:                128 kB
- * Rss:                  96 kB
- * Anonymous:             0 kB
- *
- * The lines with header Anonymous are ignored, thus anonymous pages
- * caused by mmap() of a file with MAP_PRIVATE flags are counted as
- * mapped pages.
- */
-
-std::string_view
-getLineHeader(std::string_view line)
-{
-    return line.substr(0, line.find(':'));
-}
-#endif
-
-}
-
-ProcessMemoryStats
-ProcessMemoryStats::createStatsFromSmaps()
-{
+ProcessMemoryStats ProcessMemoryStats::createStatsFromStatm() {
     ProcessMemoryStats ret;
+    auto               lock = TransientMemoryTracker::acquire_lock();
 #ifdef __linux__
-    asciistream smaps = asciistream::createFromDevice("/proc/self/smaps");
-    bool anonymous = true;
-    uint64_t lineVal = 0;
-    while (!smaps.eof()) {
-        std::string backedLine = smaps.getline();
-        std::string_view line(backedLine);
-        if (isRange(line)) {
-            ret._mappings_count += 1;
-            anonymous = isAnonymous(line);
-        } else if (!line.empty()) {
-            std::string_view lineHeader = getLineHeader(line);
-            if (lineHeader == "Size") {
-                asciistream is(line.substr(lineHeader.size() + 1));
-                is >> lineVal;
-                if (anonymous) {
-                    ret._anonymous_virt += lineVal * 1024;
-                } else {
-                    ret._mapped_virt += lineVal * 1024;
-                }
-            } else if (lineHeader == "Rss") {
-                asciistream is(line.substr(lineHeader.size() + 1));
-                is >> lineVal;
-                if (anonymous) {
-                    ret._anonymous_rss += lineVal * 1024;
-                } else {
-                    ret._mapped_rss += lineVal * 1024;
-                }
-            }
-        }
+    asciistream statm = asciistream::createFromDevice("/proc/self/statm");
+    ret = parseStatm(statm);
+#elif defined(__APPLE__)
+    task_vm_info_data_t    vm_info;
+    mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
+    kern_return_t          result = task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&vm_info, &count);
+    if (result == KERN_SUCCESS) {
+        ret._virt = vm_info.virtual_size;
+        ret._anonymous_rss = vm_info.phys_footprint;
     }
 #endif
+    ret._transient_memory_for_flush = TransientMemoryTracker::get_total_transient_memory(std::move(lock));
     return ret;
 }
 
+ProcessMemoryStats ProcessMemoryStats::parseStatm(asciistream& statm) {
+    ProcessMemoryStats ret;
+    try {
+        // the first three values in statm are size, resident, and shared
+        // the values in statm are measured in numbers of pages
+        uint64_t size, resident, shared;
+        statm >> size >> resident >> shared;
 
-ProcessMemoryStats::ProcessMemoryStats()
-    : _mapped_virt(0),
-      _mapped_rss(0),
-      _anonymous_virt(0),
-      _anonymous_rss(0),
-      _mappings_count(0)
-{
+        // we only get the total program size via statm (no distinction between anonymous and non-anonymous)
+        // VmSize (in status) = size (in statm)
+        ret._virt = size * normal_page_size;
+
+        // RssAnon (in status) = resident - shared (in statm)
+        ret._anonymous_rss = (resident - shared) * normal_page_size;
+
+        // RssFile + RssShmem (in status) = shared (in statm)
+        ret._mapped_rss = shared * normal_page_size;
+
+    } catch (const IllegalArgumentException& e) {
+        LOG(warning, "Error '%s' while reading statm line '%s'", e.what(), statm.str().c_str());
+    }
+
+    return ret;
 }
 
-ProcessMemoryStats::ProcessMemoryStats(uint64_t mapped_virt,
-                                       uint64_t mapped_rss,
-                                       uint64_t anonymous_virt,
-                                       uint64_t anonymous_rss,
-                                       uint64_t mappings_cnt)
-    : _mapped_virt(mapped_virt),
+ProcessMemoryStats::ProcessMemoryStats() noexcept : ProcessMemoryStats(0, 0, 0, 0) {
+}
+
+ProcessMemoryStats::ProcessMemoryStats(uint64_t virt, uint64_t mapped_rss, uint64_t anonymous_rss) noexcept
+    : ProcessMemoryStats(virt, mapped_rss, anonymous_rss, 0) {
+}
+
+ProcessMemoryStats::ProcessMemoryStats(uint64_t virt, uint64_t mapped_rss, uint64_t anonymous_rss,
+                                       size_t transient_memory_for_flush_) noexcept
+    : _virt(virt),
       _mapped_rss(mapped_rss),
-      _anonymous_virt(anonymous_virt),
       _anonymous_rss(anonymous_rss),
-      _mappings_count(mappings_cnt)
-{
+      _transient_memory_for_flush(transient_memory_for_flush_) {
 }
 
 namespace {
 
-bool
-similar(uint64_t lhs, uint64_t rhs, double epsilon)
-{
-    uint64_t maxDiff = std::max(uint64_t(1_Mi), uint64_t(epsilon * (lhs+rhs)/2.0));
+bool similar(uint64_t lhs, uint64_t rhs, double epsilon) {
+    uint64_t maxDiff = std::max(uint64_t(1_Mi), uint64_t(epsilon * (lhs + rhs) / 2.0));
     return (lhs < rhs) ? ((rhs - lhs) <= maxDiff) : ((lhs - rhs) <= maxDiff);
 }
 
+} // namespace
+
+bool ProcessMemoryStats::similarTo(const ProcessMemoryStats& rhs, double epsilon) const noexcept {
+    return similar(_virt, rhs._virt, epsilon) && similar(_mapped_rss, rhs._mapped_rss, epsilon) &&
+           similar(_anonymous_rss, rhs._anonymous_rss, epsilon);
 }
 
-bool
-ProcessMemoryStats::similarTo(const ProcessMemoryStats &rhs, double epsilon) const
-{
-    return similar(_mapped_virt, rhs._mapped_virt, epsilon) &&
-           similar(_mapped_rss, rhs._mapped_rss, epsilon) &&
-           similar(_anonymous_virt, rhs._anonymous_virt, epsilon) &&
-           similar(_anonymous_rss, rhs._anonymous_rss, epsilon) &&
-           (_mappings_count == rhs._mappings_count);
-}
-
-std::string
-ProcessMemoryStats::toString() const
-{
+std::string ProcessMemoryStats::toString() const {
     vespalib::asciistream stream;
-    stream << "_mapped_virt=" << _mapped_virt << ", "
-           << "_mapped_rss=" << _mapped_rss << ", "
-           << "_anonymous_virt=" << _anonymous_virt << ", "
-           << "_anonymous_rss=" << _anonymous_rss << ", "
-           << "_mappings_count=" << _mappings_count;
+    stream << "_virt=" << _virt << ", _mapped_rss=" << _mapped_rss << ", _anonymous_rss=" << _anonymous_rss
+           << ", transient_memory_for_flush=" << _transient_memory_for_flush;
     return stream.str();
 }
 
-ProcessMemoryStats
-ProcessMemoryStats::create(double epsilon)
-{
-    constexpr size_t NUM_TRIES = 3;
+ProcessMemoryStats ProcessMemoryStats::create(double epsilon) {
+    constexpr size_t                NUM_TRIES = 3;
     std::vector<ProcessMemoryStats> samples;
     samples.reserve(NUM_TRIES + 1);
-    samples.push_back(createStatsFromSmaps());
+    samples.push_back(createStatsFromStatm());
     for (size_t i = 0; i < NUM_TRIES; ++i) {
-        samples.push_back(createStatsFromSmaps());
-        if (samples.back().similarTo(*(samples.rbegin()+1), epsilon)) {
+        samples.push_back(createStatsFromStatm());
+        if (samples.back().similarTo(*(samples.rbegin() + 1), epsilon)) {
             return samples.back();
         }
-        LOG(debug, "create(): Memory stats have changed, trying to read smaps file again: i=%zu, prevStats={%s}, currStats={%s}",
-            i, (samples.rbegin()+1)->toString().c_str(), samples.back().toString().c_str());
+        LOG(debug,
+            "create(): Memory stats have changed, trying to sample again: i=%zu, prevStats={%s}, currStats={%s}", i,
+            (samples.rbegin() + 1)->toString().c_str(), samples.back().toString().c_str());
     }
     std::sort(samples.begin(), samples.end());
-    LOG(debug, "We failed to find 2 consecutive samples that where similar with epsilon of %d%%.\nSmallest is '%s',\n median is '%s',\n largest is '%s'",
-        int(epsilon*1000), samples.front().toString().c_str(), samples[samples.size()/2].toString().c_str(), samples.back().toString().c_str());
-    return samples[samples.size()/2];
+    LOG(debug,
+        "We failed to find 2 consecutive samples that were similar with epsilon of %d%%.\nSmallest is '%s',\n median "
+        "is '%s',\n largest is '%s'",
+        int(epsilon * 1000), samples.front().toString().c_str(), samples[samples.size() / 2].toString().c_str(),
+        samples.back().toString().c_str());
+    return samples[samples.size() / 2];
 }
 
-}
+} // namespace vespalib

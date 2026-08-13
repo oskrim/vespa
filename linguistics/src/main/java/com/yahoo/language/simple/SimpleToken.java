@@ -50,6 +50,7 @@ public class SimpleToken implements Token {
         return (tokenString != null ? 1 : 0) + (stems != null ? stems.size() : 0);
     }
 
+    /** Returns a stem (or more generally: Alternative form) of this token. */
     @Override
     public String getStem(int i) {
         if (i == 0)
@@ -69,6 +70,13 @@ public class SimpleToken implements Token {
         return components.get(i);
     }
 
+    public SimpleToken addStem(String stem) {
+        if (this.stems == null)
+            this.stems = new ArrayList<>();
+        stems.add(stem);
+        return this;
+    }
+
     public SimpleToken addComponent(Token token) {
         components.add(token);
         return this;
@@ -79,8 +87,8 @@ public class SimpleToken implements Token {
         return tokenString;
     }
 
-    public SimpleToken setTokenString(String str) {
-        tokenString = str;
+    public SimpleToken setTokenString(String string) {
+        tokenString = string;
         return this;
     }
 
@@ -149,7 +157,19 @@ public class SimpleToken implements Token {
 
     @Override
     public String toString() {
-        return "token '" + tokenString + "'" + ( ! tokenString.equals(original) ? " (original: " + original + ")" : "");
+        var s = new StringBuilder("token '" + tokenString + "'");
+        var extra = new StringBuilder();
+        if (stems != null && !stems.isEmpty()) {
+            extra.append("stems: ").append(stems);
+        }
+        if ( ! tokenString.equals(original)) {
+            if (!extra.isEmpty())
+                extra.append(", ");
+            extra.append("original: '").append(original).append("'");
+        }
+        if ( ! extra.isEmpty())
+            s.append(" (").append(extra).append(")");
+        return s.toString();
     }
 
     public String toDetailString() {

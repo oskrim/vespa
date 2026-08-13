@@ -1,6 +1,7 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 #pragma once
 
+#include <cstdint>
 #include <memory>
 
 namespace mbus {
@@ -20,7 +21,7 @@ public:
     /**
      * Virtual destructor required for inheritance.
      */
-    virtual ~ITimer() { /* empty */ }
+    virtual ~ITimer() = default;
 
     /**
      * Returns the current value of some arbitrary timer, in milliseconds. This
@@ -33,4 +34,3 @@ public:
 };
 
 } // namespace mbus
-

@@ -8,14 +8,17 @@ import com.yahoo.config.model.api.ValidationParameters;
 import com.yahoo.config.model.api.ValidationParameters.CheckRouting;
 import com.yahoo.config.model.api.ValidationParameters.FailOnIncompatibleChange;
 import com.yahoo.config.model.api.ValidationParameters.IgnoreValidationErrors;
-import com.yahoo.config.model.application.provider.*;
+import com.yahoo.config.model.application.provider.ApplicationPackageXmlFilesValidator;
+import com.yahoo.config.model.application.provider.FilesApplicationPackage;
 import com.yahoo.config.model.deploy.DeployState;
+import com.yahoo.config.model.deploy.TestDeployState;
 import com.yahoo.vespa.config.VespaVersion;
 import com.yahoo.vespa.model.VespaModel;
 import com.yahoo.vespa.model.application.validation.Validation;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.Map;
 
 /**
  * For testing purposes only
@@ -41,7 +44,7 @@ public class VespaModelCreatorWithFilePkg {
 
     public VespaModelCreatorWithFilePkg(File directory, ConfigModelRegistry configModelRegistry) {
         this.configModelRegistry = configModelRegistry;
-        this.applicationPkg = FilesApplicationPackage.fromFile(directory);
+        this.applicationPkg = FilesApplicationPackage.fromDir(directory, Map.of());
     }
 
     public VespaModel create() {
@@ -60,7 +63,7 @@ public class VespaModelCreatorWithFilePkg {
             if (validateApplicationWithSchema) {
                 validate();
             }
-            DeployState deployState = new DeployState.Builder().applicationPackage(applicationPkg).build();
+            DeployState deployState = TestDeployState.create(applicationPkg);
             VespaModel model = new VespaModel(configModelRegistry, deployState);
             // Validate, but without checking configSources or routing (routing
             // is constructed in a special way and cannot always be validated in

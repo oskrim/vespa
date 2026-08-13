@@ -26,6 +26,7 @@ import java.nio.file.Files;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Enumeration;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Random;
 import java.util.concurrent.CountDownLatch;
@@ -129,6 +130,7 @@ public class CliClient {
 
                 printBenchmarkResult(System.nanoTime() - startNanos, successes.get(), failures.get(), feedClient.stats(), cliArgs.benchmarkModeEnabled() ? systemOut : systemError);
                 if (fatal.get() != null) throw fatal.get();
+                if (cliArgs.exitOnFeedErrorsEnabled() && failures.get() > 0) return 1;
             }
             return 0;
         }
@@ -176,6 +178,7 @@ public class CliClient {
         cliArgs.doomSeconds().ifPresent(doom -> builder.setCircuitBreaker(new GracePeriodCircuitBreaker(Duration.ofSeconds(10),
                                                                                                         Duration.ofSeconds(doom))));
         cliArgs.proxy().ifPresent(builder::setProxy);
+        cliArgs.initialInflightFactor().ifPresent(builder::setInitialInflightFactor);
         return builder.build();
     }
 
@@ -237,18 +240,39 @@ public class CliClient {
             writeFloatField(generator, "http.response.latency.millis.avg", stats.averageLatencyMillis(), 3);
             writeFloatField(generator, "http.response.latency.millis.max", stats.maxLatencyMillis(), 3);
 
-            generator.writeObjectFieldStart("http.response.code.counts");
-            for (Map.Entry<Integer, Long> entry : stats.responsesByCode().entrySet())
-                generator.writeNumberField(Integer.toString(entry.getKey()), entry.getValue());
-            generator.writeEndObject();
+            // Hide new experimental output behind feature flag
+            if (System.getenv("VESPA_EXTENDED_STATS") != null) {
+                generator.writeObjectFieldStart("operation.latency");
+                generator.writeNumberField("min", stats.operationMinLatencyMillis());
+                generator.writeNumberField("avg", stats.operationAverageLatencyMillis());
+                generator.writeNumberField("max", stats.operationMaxLatencyMillis());
+                generator.writeEndObject();
 
+                generator.writeObjectFieldStart("http.response");
+                for (var e : stats.statsByCode().entrySet()) {
+                    generator.writeObjectFieldStart(Integer.toString(e.getKey()));
+                    generator.writeNumberField("count", e.getValue().count());
+                    generator.writeObjectFieldStart("latency");
+                    generator.writeNumberField("min", e.getValue().minLatencyMillis());
+                    generator.writeNumberField("avg", e.getValue().averageLatencyMillis());
+                    generator.writeNumberField("max", e.getValue().maxLatencyMillis());
+                    generator.writeEndObject();
+                    generator.writeEndObject();
+                }
+                generator.writeEndObject();
+            } else {
+                generator.writeObjectFieldStart("http.response.code.counts");
+                for (Map.Entry<Integer, OperationStats.Response> entry : stats.statsByCode().entrySet())
+                    generator.writeNumberField(Integer.toString(entry.getKey()), entry.getValue().count());
+                generator.writeEndObject();
+            }
             generator.writeEndObject();
         }
     }
 
     private static void writeFloatField(JsonGenerator generator, String name, double value, int precision) throws IOException {
         generator.writeFieldName(name);
-        generator.writeNumber(String.format("%." + precision + "f", value));
+        generator.writeNumber(String.format(Locale.ROOT, "%." + precision + "f", value));
     }
 
     /** Creates an input stream that spits out random documents (id and data) for one minute. */
@@ -259,7 +283,7 @@ public class CliClient {
 
     static InputStream createDummyInputStream(int payloadSize, Random random, BooleanSupplier hasNext) {
         int idSize = 8;
-        String template = String.format("{ \"put\": \"id:test:test::%s\", \"fields\": { \"test\": \"%s\" } }\n",
+        String template = String.format(Locale.ROOT, "{ \"put\": \"id:test:test::%s\", \"fields\": { \"test\": \"%s\" } }\n",
                                         IntStream.range(0, idSize).mapToObj(__ -> "*").collect(joining()),
                                         IntStream.range(0, payloadSize).mapToObj(__ -> "#").collect(joining()));
         byte[] buffer = template.getBytes(StandardCharsets.UTF_8);

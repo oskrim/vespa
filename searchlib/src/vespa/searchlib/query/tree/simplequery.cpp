@@ -18,6 +18,8 @@ SimpleONear::~SimpleONear() = default;
 
 SimpleOr::~SimpleOr() = default;
 
+SimpleWeakAnd::~SimpleWeakAnd() = default;
+
 SimpleEquiv::~SimpleEquiv() = default;
 
 SimplePhrase::~SimplePhrase() = default;
@@ -56,4 +58,6 @@ SimpleFuzzyTerm::~SimpleFuzzyTerm() = default;
 
 SimpleInTerm::~SimpleInTerm() = default;
 
-}
+SimpleWordAlternatives::~SimpleWordAlternatives() = default;
+
+} // namespace search::query

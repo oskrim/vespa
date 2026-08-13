@@ -13,7 +13,11 @@ import com.yahoo.tensor.Tensor;
 import com.yahoo.data.access.helpers.MatchFeatureData;
 import com.yahoo.data.access.helpers.MatchFeatureFilter;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.function.Supplier;
 import java.util.logging.Logger;
 
@@ -54,6 +58,7 @@ public class GlobalPhaseRanker {
         var mainSpec = setup.globalPhaseEvalSpec;
         var mainSrc = withQueryPrep(mainSpec.evalSource(), mainSpec.fromQuery(), setup.defaultValues, query);
         int rerankCount = resolveRerankCount(setup, query);
+        double rankScoreDropLimit = resolveRankScoreDropLimit(setup, query);
         var normalizers = new ArrayList<NormalizerContext>();
         for (var nSetup : setup.normalizers) {
             var normSpec = nSetup.inputEvalSpec();
@@ -63,7 +68,26 @@ public class GlobalPhaseRanker {
         var rescorer = new HitRescorer(mainSrc, mainSpec.fromMF(), normalizers);
         var reranker = new ResultReranker(rescorer, rerankCount);
         reranker.rerankHits(result);
+        removeBelowRankScoreDropLimit(result, rankScoreDropLimit);
         hideImplicitMatchFeatures(result, setup.matchFeaturesToHide);
+    }
+
+    private static void removeBelowRankScoreDropLimit(Result result, double rankScoreDropLimit) {
+        // If this is the Default value we don't need to iterate
+        if (rankScoreDropLimit == -Double.MAX_VALUE) return;
+
+        // Collect the hits whose relevance is below rankScoreDropLimit
+        List<Hit> toBeRemoved = result.hits().asList().stream()
+                .filter(hit -> hit.getRelevance().getScore() <= rankScoreDropLimit).toList();
+
+        // Remove hits that have too low relevance score
+        for (Hit hitToRemove : toBeRemoved) {
+            result.hits().remove(hitToRemove.getId());
+        }
+        // Adjust the totalHitCount
+        int removedCount = toBeRemoved.size();
+        result.setTotalHitCount(result.getTotalHitCount() - removedCount);
+        // TODO: There could be a metric that specifies how many hits were removed
     }
 
     public void rerankHits(Query query, Result result, String schema) {
@@ -86,7 +110,7 @@ public class GlobalPhaseRanker {
     }
 
     private static void hideImplicitMatchFeatures(Result result, Collection<String> namesToHide) {
-        if (namesToHide.size() == 0) return;
+        if (namesToHide.isEmpty()) return;
         var filter = new MatchFeatureFilter(namesToHide);
         for (var iterator = result.hits().deepIterator(); iterator.hasNext();) {
             Hit hit = iterator.next();
@@ -121,5 +145,17 @@ public class GlobalPhaseRanker {
             return override;
         }
         return setup.rerankCount;
+    }
+
+    private static double resolveRankScoreDropLimit(GlobalPhaseSetup setup, Query query) {
+        if (setup == null) {
+            // there is no global-phase at all (ignore override)
+            return -Double.MAX_VALUE;
+        }
+        Double override = query.getRanking().getGlobalPhase().getRankScoreDropLimit();
+        if (override != null) {
+            return override;
+        }
+        return setup.rankScoreDropLimit;
     }
 }

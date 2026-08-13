@@ -2,15 +2,20 @@
 package com.yahoo.schema.parser;
 
 import com.yahoo.config.model.application.provider.BaseDeployLogger;
-import com.yahoo.config.model.deploy.TestProperties;
 import com.yahoo.io.IOUtils;
+import com.yahoo.text.Text;
 import static com.yahoo.config.model.test.TestUtil.joinLines;
 
 import java.io.File;
 
 import org.junit.jupiter.api.Test;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * @author arnej
@@ -19,10 +24,9 @@ public class SchemaParserTestCase {
 
     ParsedSchema parseString(String input) throws Exception {
         var deployLogger = new BaseDeployLogger();
-        var modelProperties = new TestProperties();
         var stream = new SimpleCharStream(input);
         try {
-            var parser = new SchemaParser(stream, deployLogger, modelProperties);
+            var parser = new SchemaParser(stream, deployLogger);
             return parser.schema();
         } catch (ParseException pe) {
             throw new ParseException(stream.formatException(pe.getMessage()));
@@ -98,6 +102,7 @@ public class SchemaParserTestCase {
                     global-phase {
                         expression: onnx(mymodel)
                         rerank-count: 79
+                        rank-score-drop-limit: 1.0
                     }
                 }
             }
@@ -116,8 +121,10 @@ public class SchemaParserTestCase {
         assertEquals("bar", rp1.name());
         assertTrue(rp1.getGlobalPhaseRerankCount().isPresent());
         assertTrue(rp1.getGlobalPhaseExpression().isPresent());
+        assertTrue(rp1.getGlobalPhaseRankScoreDropLimit().isPresent());
         assertEquals(79, rp1.getGlobalPhaseRerankCount().get());
         assertEquals("onnx(mymodel)", rp1.getGlobalPhaseExpression().get());
+        assertEquals(1.0d, rp1.getGlobalPhaseRankScoreDropLimit().get());
     }
 
     @Test
@@ -154,6 +161,105 @@ public class SchemaParserTestCase {
     }
 
     @Test
+    void weakand_stopword_limit_can_be_parsed() throws Exception {
+        String input = joinLines("schema foo {",
+                        "rank-profile rp {",
+                            "weakand {",
+                                "stopword-limit: 0.6",
+                            "}",
+                        "}",
+                    "}");
+        var schema = parseString(input);
+        var limit = schema.getRankProfiles().get(0).getWeakandStopwordLimit();
+        assertTrue(limit.isPresent());
+        assertEquals(0.6, limit.get());
+    }
+
+    @Test
+    void weakand_allow_drop_all_can_be_parsed() throws Exception {
+        String input = joinLines("schema foo {",
+                        "rank-profile rp {",
+                            "weakand {",
+                                "allow-drop-all: true",
+                            "}",
+                        "}",
+                    "}");
+        var schema = parseString(input);
+        var target = schema.getRankProfiles().get(0).getWeakandAllowDropAll();
+        assertTrue(target.isPresent());
+        assertEquals(true, target.get());
+    }
+
+    @Test
+    void weakand_adjust_target_can_be_parsed() throws Exception {
+        String input = joinLines("schema foo {",
+                        "rank-profile rp {",
+                            "weakand {",
+                                "adjust-target: 0.01",
+                            "}",
+                        "}",
+                    "}");
+        var schema = parseString(input);
+        var target = schema.getRankProfiles().get(0).getWeakandAdjustTarget();
+        assertTrue(target.isPresent());
+        assertEquals(0.01, target.get());
+    }
+
+    @Test
+    void filter_threshold_can_be_parsed() throws Exception {
+        String input = joinLines("schema foo {",
+                "rank-profile rp {",
+                "filter-threshold: 0.05",
+                "}",
+                "}");
+        var schema = parseString(input);
+        var target = schema.getRankProfiles().get(0).getFilterThreshold();
+        assertTrue(target.isPresent());
+        assertEquals(0.05, target.get());
+    }
+
+    private void assertRankProfileWithOutOfRangeThrows(String rpContent) {
+        var input = Text.format("schema foo { rank-profile rp { %s } }", rpContent);
+        var e = assertThrows(IllegalArgumentException.class, () -> parseString(input));
+        assertTrue(e.getMessage().contains("must be in range [0, 1]"));
+    }
+
+    @Test
+    void range_bounded_properties_fail_parsing_on_out_of_range_input() {
+        assertRankProfileWithOutOfRangeThrows("filter-threshold: -0.1");
+        assertRankProfileWithOutOfRangeThrows("filter-threshold: 1.1");
+        assertRankProfileWithOutOfRangeThrows("weakand { stopword-limit: -0.1 }");
+        assertRankProfileWithOutOfRangeThrows("weakand { stopword-limit: 1.1 }");
+        assertRankProfileWithOutOfRangeThrows("weakand { adjust-target: -0.1 }");
+        assertRankProfileWithOutOfRangeThrows("weakand { adjust-target: 1.1 }");
+    }
+
+    @Test
+    void field_rank_specific_filter_threshold_can_be_parsed() throws Exception {
+        String input = """
+          schema foo {
+            rank-profile rp {
+              rank bar {
+                filter-threshold: 0.05
+              }
+              rank zoid {
+                filter-threshold: 0.07
+              }
+              rank baz: filter
+            }
+          }""";
+        var schema = parseString(input);
+        var rp = schema.getRankProfiles().get(0);
+        var thresholds = rp.getFieldsWithRankFilterThreshold();
+        assertEquals(2, thresholds.size());
+        assertEquals(0.05, thresholds.getOrDefault("bar", 0.0), 0.000001);
+        assertEquals(0.07, thresholds.getOrDefault("zoid", 0.0), 0.000001);
+        // Old-school binary rank filter still supported as expected
+        assertEquals(1, rp.getFieldsWithRankFilter().size());
+        assertTrue(rp.getFieldsWithRankFilter().get("baz"));
+    }
+
+    @Test
     void maxOccurrencesCanBeParsed() throws Exception {
         String input = joinLines
                 ("schema foo {",
@@ -165,7 +271,7 @@ public class SchemaParserTestCase {
                         "  }",
                         "}");
         ParsedSchema schema = parseString(input);
-        var field = schema.getDocument().getFields().get(0);
+        var field = schema.getDocument().getFields().get("bar");
         assertEquals("bar", field.name());
         assertEquals(11, field.matchSettings().getMaxTermOccurrences().get());
     }
@@ -182,7 +288,7 @@ public class SchemaParserTestCase {
                         "  }",
                         "}");
         ParsedSchema schema = parseString(input);
-        var field = schema.getDocument().getFields().get(0);
+        var field = schema.getDocument().getFields().get("bar");
         assertEquals("bar", field.name());
         assertEquals(11, field.matchSettings().getMaxTokenLength().get());
     }
@@ -283,7 +389,6 @@ public class SchemaParserTestCase {
         checkFileParses("src/test/derived/nearestneighbor/test.sd");
         checkFileParses("src/test/derived/newrank/newrank.sd");
         checkFileParses("src/test/derived/nuwa/newsindex.sd");
-        checkFileParses("src/test/derived/orderilscripts/orderilscripts.sd");
         checkFileParses("src/test/derived/position_array/position_array.sd");
         checkFileParses("src/test/derived/position_attribute/position_attribute.sd");
         checkFileParses("src/test/derived/position_extra/position_extra.sd");

@@ -8,6 +8,7 @@
     <version>8-SNAPSHOT</version>
     <relativePath>../parent/pom.xml</relativePath>
   </parent>
+  <name>${project.artifactId}</name>
   <artifactId>config-model</artifactId>
   <packaging>container-plugin</packaging>
   <version>8-SNAPSHOT</version>
@@ -184,12 +185,6 @@
     </dependency>
     <dependency>
       <groupId>com.yahoo.vespa</groupId>
-      <artifactId>container-core</artifactId>
-      <version>${project.version}</version>
-      <scope>provided</scope>
-    </dependency>
-    <dependency>
-      <groupId>com.yahoo.vespa</groupId>
       <artifactId>jrt</artifactId>
       <version>${project.version}</version>
       <scope>provided</scope>
@@ -278,13 +273,7 @@
       <version>${project.version}</version>
     </dependency>
     <dependency>
-      <groupId>com.yahoo.vespa</groupId>
-      <artifactId>jdisc-security-filters</artifactId>
-      <version>${project.version}</version>
-      <scope>provided</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.lz4</groupId>
+      <groupId>at.yawk.lz4</groupId>
       <artifactId>lz4-java</artifactId>
     </dependency>
   </dependencies>
@@ -340,6 +329,7 @@
               <classesDirectory>target/test-classes</classesDirectory>
               <outputDirectory>tmp/</outputDirectory>
               <finalName>simpleplugin</finalName>
+              <classifier>simpleplugin</classifier>
               <includes>
                 <include>**/test/SimplePlugin.class</include>
                 <include>**/test/SimpleService.class</include>
@@ -404,57 +394,11 @@
           </execution>
         </executions>
       </plugin>
-      <plugin>
-        <groupId>org.apache.maven.plugins</groupId>
-        <artifactId>maven-dependency-plugin</artifactId>
-        <executions>
-          <execution>
-            <id>copy-stuff</id>
-            <!-- append to the generate-sources phase, since it needs to be done before src/main/Makefile is run. -->
-            <phase>generate-sources</phase>
-            <goals>
-              <goal>copy</goal>
-            </goals>
-            <configuration>
-              <artifactItems>
-                <artifactItem>
-                  <groupId>com.thaiopensource</groupId>
-                  <artifactId>jing</artifactId>
-                  <version>20091111</version>
-                  <type>jar</type>
-                  <overWrite>true</overWrite>
-                  <outputDirectory>${project.build.directory}</outputDirectory>
-                  <destFileName>jing.jar</destFileName>
-                </artifactItem>
-                <artifactItem>
-                  <groupId>com.thaiopensource</groupId>
-                  <artifactId>trang</artifactId>
-                  <version>20091111</version>
-                  <type>jar</type>
-                  <overWrite>true</overWrite>
-                  <outputDirectory>${project.build.directory}</outputDirectory>
-                  <destFileName>trang.jar</destFileName>
-                </artifactItem>
-              </artifactItems>
-            </configuration>
-          </execution>
-        </executions>
-      </plugin>
-      <!--  process schema files -->
+
       <plugin>
         <groupId>org.codehaus.mojo</groupId>
         <artifactId>exec-maven-plugin</artifactId>
         <executions>
-          <execution>
-            <goals>
-              <goal>exec</goal>
-            </goals>
-            <phase>generate-sources</phase>
-            <configuration>
-              <executable>./make-xsd-files.sh</executable>
-              <workingDirectory>src/main/</workingDirectory>
-            </configuration>
-          </execution>
           <execution>
             <id>generate-vtag</id>
             <phase>generate-sources</phase>
@@ -472,16 +416,6 @@
               <classpathScope>compile</classpathScope>
             </configuration>
           </execution>
-          <execution>
-            <id>test-schema-files</id>
-            <goals>
-              <goal>exec</goal>
-            </goals>
-            <phase>test</phase>
-            <configuration>
-              <executable>src/test/sh/test-schema.sh</executable>
-            </configuration>
-          </execution>
         </executions>
       </plugin>
       <plugin>
@@ -493,8 +427,8 @@
         <artifactId>maven-install-plugin</artifactId>
       </plugin>
       <plugin>
-        <groupId>com.github.os72</groupId>
-        <artifactId>protoc-jar-maven-plugin</artifactId>
+        <groupId>io.github.ascopes</groupId>
+        <artifactId>protobuf-maven-plugin</artifactId>
       </plugin>
       <plugin>
         <groupId>org.codehaus.mojo</groupId>

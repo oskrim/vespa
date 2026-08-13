@@ -1,6 +1,7 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.prelude.query;
 
+import ai.vespa.searchlib.searchprotocol.protobuf.SearchProtocol;
 import com.yahoo.compress.IntegerCompressor;
 
 import java.nio.ByteBuffer;
@@ -117,8 +118,8 @@ public class PredicateQueryItem extends SimpleTaggableItem {
     }
 
     @Override
-    public int encode(ByteBuffer buffer) {
-        super.encodeThis(buffer);
+    public int encode(ByteBuffer buffer, SerializationContext context) {
+        super.encodeThis(buffer, context);
         putString(fieldName, buffer);
         encodeFeatures(features, buffer);
         encodeFeatures(rangeFeatures, buffer);
@@ -185,6 +186,36 @@ public class PredicateQueryItem extends SimpleTaggableItem {
     @Override
     public int hashCode() {
         return Objects.hash(super.hashCode(), fieldName, features, rangeFeatures);
+    }
+
+    @Override
+    SearchProtocol.QueryTreeItem toProtobuf(SerializationContext context) {
+        var builder = SearchProtocol.ItemPredicateQuery.newBuilder();
+        builder.setProperties(ToProtobuf.buildTermProperties(this, getIndexName()));
+
+        // Add features
+        for (Entry entry : features) {
+            var feature = SearchProtocol.PredicateFeature.newBuilder()
+                    .setKey(entry.getKey())
+                    .setValue(entry.getValue())
+                    .setSubQueries(entry.getSubQueryBitmap())
+                    .build();
+            builder.addFeatures(feature);
+        }
+
+        // Add range features
+        for (RangeEntry entry : rangeFeatures) {
+            var rangeFeature = SearchProtocol.PredicateRangeFeature.newBuilder()
+                    .setKey(entry.getKey())
+                    .setValue(entry.getValue())
+                    .setSubQueries(entry.getSubQueryBitmap())
+                    .build();
+            builder.addRangeFeatures(rangeFeature);
+        }
+
+        return SearchProtocol.QueryTreeItem.newBuilder()
+                .setItemPredicateQuery(builder.build())
+                .build();
     }
 
     /** An entry in a predicate item. This is immutable. */

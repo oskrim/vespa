@@ -5,8 +5,8 @@ import com.yahoo.messagebus.Trace;
 
 import java.util.Objects;
 
-import static com.yahoo.documentapi.Response.Outcome.ERROR;
 import static com.yahoo.documentapi.Response.Outcome.SUCCESS;
+import static com.yahoo.documentapi.Response.Outcome.IGNORED;
 
 /**
  * An asynchronous response from the document api.
@@ -66,11 +66,15 @@ public class Response {
     public String getTextMessage() { return textMessage; }
 
     /**
-     * Returns whether this response encodes a success or a failure
+     * Returns whether this response encodes a success or a failure. An ignored
+     * response is considered a success; check #{@link #outcome()} to determine the
+     * exact result.
      *
      * @return true if success
      */
-    public boolean isSuccess() { return outcome == SUCCESS; }
+    public boolean isSuccess() {
+        return outcome == SUCCESS || outcome == IGNORED;
+    }
 
     /** Returns the outcome of this operation. */
     public Outcome outcome() { return outcome; }
@@ -83,8 +87,7 @@ public class Response {
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
-        if ( ! (o instanceof Response)) return false;
-        Response response = (Response) o;
+        if ( ! (o instanceof Response response)) return false;
         return requestId == response.requestId &&
                Objects.equals(textMessage, response.textMessage) &&
                outcome == response.outcome;
@@ -105,6 +108,13 @@ public class Response {
         /** The operation was a success. */
         SUCCESS,
 
+        /**
+         * The operation did not satisfy the document selection constraints set by any
+         * configured content cluster and was ignored. The operation has not been persisted,
+         * but this is not considered an error.
+         */
+        IGNORED,
+
         /** The operation was not carried out due to an unmet test-and-set condition. */
         CONDITION_FAILED,
 
@@ -116,6 +126,16 @@ public class Response {
 
         /** The operation timed out before it reached its destination. */
         TIMEOUT,
+
+        /**
+         * The operation was explicitly rejected by the backend.
+         * Some possible causes are a malformed payload or the operation exceeding
+         * configured maximum size limits. See the error message for details.
+         */
+        REJECTED,
+
+        /** The operation was rejected due to overload/rate limiting. */
+        OVERLOAD,
 
         /** The operation failed for some unknown reason. */
         ERROR

@@ -34,7 +34,6 @@ import com.yahoo.vespa.config.server.application.ApplicationReindexing;
 import com.yahoo.vespa.config.server.application.ClusterReindexing;
 import com.yahoo.vespa.config.server.application.ClusterReindexing.Status;
 import com.yahoo.vespa.config.server.application.HttpProxy;
-import com.yahoo.vespa.config.server.application.OrchestratorMock;
 import com.yahoo.vespa.config.server.deploy.DeployTester;
 import com.yahoo.vespa.config.server.filedistribution.MockFileDistributionFactory;
 import com.yahoo.vespa.config.server.http.HandlerTest;
@@ -81,6 +80,7 @@ import static com.yahoo.jdisc.http.HttpRequest.Method.GET;
 import static com.yahoo.jdisc.http.HttpRequest.Method.POST;
 import static com.yahoo.jdisc.http.HttpRequest.Method.PUT;
 import static com.yahoo.test.json.JsonTestHelper.assertJsonEquals;
+import static com.yahoo.vespa.config.server.application.ConfigConvergenceChecker.ConfigStatus;
 import static com.yahoo.vespa.config.server.application.ConfigConvergenceChecker.ServiceListResponse;
 import static com.yahoo.vespa.config.server.application.ConfigConvergenceChecker.ServiceResponse;
 import static com.yahoo.vespa.config.server.http.HandlerTest.assertHttpStatusCodeAndMessage;
@@ -90,6 +90,7 @@ import static com.yahoo.vespa.config.server.http.v2.ApplicationHandler.HttpServi
 import static com.yahoo.yolean.Exceptions.uncheck;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
@@ -114,8 +115,6 @@ public class ApplicationHandlerTest {
 
     private TenantRepository tenantRepository;
     private ApplicationRepository applicationRepository;
-    private MockProvisioner provisioner;
-    private OrchestratorMock orchestrator;
     private ManualClock clock;
     private List<Endpoint> expectedEndpoints;
     private Availability availability;
@@ -133,7 +132,7 @@ public class ApplicationHandlerTest {
                 .configDefinitionsDir(temporaryFolder.newFolder().getAbsolutePath())
                 .fileReferencesDir(temporaryFolder.newFolder().getAbsolutePath())
                 .build();
-        provisioner = new MockProvisioner();
+        MockProvisioner provisioner = new MockProvisioner();
         tenantRepository = new TestTenantRepository.Builder()
                 .withClock(clock)
                 .withConfigserverConfig(configserverConfig)
@@ -142,11 +141,9 @@ public class ApplicationHandlerTest {
                 .withModelFactoryRegistry(new ModelFactoryRegistry(modelFactories))
                 .build();
         tenantRepository.addTenant(mytenantName);
-        orchestrator = new OrchestratorMock();
         activeTokenFingerprints = new HashMap<>();
         applicationRepository = new ApplicationRepository.Builder()
                 .withTenantRepository(tenantRepository)
-                .withOrchestrator(orchestrator)
                 .withClock(clock)
                 .withTesterClient(testerClient)
                 .withLogRetriever(logRetriever)
@@ -168,15 +165,15 @@ public class ApplicationHandlerTest {
         tenantRepository.addTenant(foobar);
 
         {
-            applicationRepository.deploy(testApp, prepareParams(applicationId));
+            applicationRepository.prepareAndActivate(testApp, prepareParams(applicationId));
             Tenant mytenant = applicationRepository.getTenant(applicationId);
             deleteAndAssertOKResponse(mytenant, applicationId);
         }
 
         {
-            applicationRepository.deploy(testApp, prepareParams(applicationId));
+            applicationRepository.prepareAndActivate(testApp, prepareParams(applicationId));
             deleteAndAssertOKResponseMocked(applicationId, true);
-            applicationRepository.deploy(testApp, prepareParams(applicationId));
+            applicationRepository.prepareAndActivate(testApp, prepareParams(applicationId));
 
             ApplicationId fooId = new ApplicationId.Builder()
                     .tenant(foobar)
@@ -184,7 +181,7 @@ public class ApplicationHandlerTest {
                     .instanceName("quux")
                     .build();
             PrepareParams prepareParams2 = new PrepareParams.Builder().applicationId(fooId).build();
-            applicationRepository.deploy(testAppJdiscOnly, prepareParams2);
+            applicationRepository.prepareAndActivate(testAppJdiscOnly, prepareParams2);
 
             assertApplicationExists(fooId, Zone.defaultZone());
             deleteAndAssertOKResponseMocked(fooId, true);
@@ -200,7 +197,7 @@ public class ApplicationHandlerTest {
                     .instanceName("quux")
                     .build();
             PrepareParams prepareParamsBali = new PrepareParams.Builder().applicationId(baliId).build();
-            applicationRepository.deploy(testApp, prepareParamsBali);
+            applicationRepository.prepareAndActivate(testApp, prepareParamsBali);
             deleteAndAssertOKResponseMocked(baliId, true);
         }
     }
@@ -220,7 +217,7 @@ public class ApplicationHandlerTest {
                 .applicationId(applicationId)
                 .vespaVersion(vespaVersion)
                 .build();
-        long sessionId = applicationRepository.deploy(testApp, prepareParams).sessionId();
+        long sessionId = applicationRepository.prepareAndActivate(testApp, prepareParams).prepareResult().sessionId();
 
         assertApplicationResponse(applicationId, Zone.defaultZone(), sessionId, true, vespaVersion);
         assertApplicationResponse(applicationId, Zone.defaultZone(), sessionId, false, vespaVersion);
@@ -232,7 +229,7 @@ public class ApplicationHandlerTest {
                 .applicationId(applicationId)
                 .vespaVersion(vespaVersion)
                 .build();
-        applicationRepository.deploy(testApp, prepareParams).sessionId();
+        applicationRepository.prepareAndActivate(testApp, prepareParams);
 
         var url = toUrlPath(applicationId, Zone.defaultZone(), true) + "/quota";
         var response = createApplicationHandler().handle(createTestRequest(url, GET));
@@ -244,7 +241,7 @@ public class ApplicationHandlerTest {
 
     @Test
     public void testGetTokenFingerprints() throws IOException {
-        applicationRepository.deploy(testApp, prepareParams(applicationId));
+        applicationRepository.prepareAndActivate(testApp, prepareParams(applicationId));
         activeTokenFingerprints.putAll(Map.of("host", List.of(new Token("t1", List.of("fingers", "toes")),
                                                               new Token("t2", List.of())),
                                               "toast", List.of()));
@@ -258,15 +255,15 @@ public class ApplicationHandlerTest {
     @Test
     public void testReindex() throws Exception {
         ApplicationCuratorDatabase database = applicationRepository.getTenant(applicationId).getApplicationRepo().database();
-        reindexing(applicationId, GET, "{\"error-code\": \"NOT_FOUND\", \"message\": \"Application 'default.default' not found\"}", 404);
+        reindexing(applicationId, GET, "{\"error-code\": \"NOT_FOUND\", \"message\": \"Application 'default.default.default' not found\"}", 404);
 
-        applicationRepository.deploy(testAppMultipleClusters, prepareParams(applicationId));
+        applicationRepository.prepareAndActivate(testAppMultipleClusters, prepareParams(applicationId));
         ApplicationReindexing expected = ApplicationReindexing.empty();
         assertEquals(expected,
                      database.readReindexingStatus(applicationId).orElseThrow());
 
         clock.advance(Duration.ofSeconds(1));
-        reindex(applicationId, "", "{\"message\":\"Reindexing document types [bar] in 'boo', [bar, bax, baz] in 'foo' of application default.default\"}");
+        reindex(applicationId, "", "{\"message\":\"Reindexing document types [bar] in 'boo', [bar, bax, baz] in 'foo' of application default.default.default\"}");
         expected = expected.withReady("boo", "bar", clock.instant(), 1, "reindexing for an unknown reason")
                            .withReady("foo", "bar", clock.instant(), 1, "reindexing for an unknown reason")
                            .withReady("foo", "baz", clock.instant(), 1, "reindexing for an unknown reason")
@@ -275,7 +272,7 @@ public class ApplicationHandlerTest {
                      database.readReindexingStatus(applicationId).orElseThrow());
 
         clock.advance(Duration.ofSeconds(1));
-        reindex(applicationId, "?indexedOnly=true&cause=test%20reindexing", "{\"message\":\"Reindexing document types [bar] in 'foo' of application default.default\"}");
+        reindex(applicationId, "?indexedOnly=true&cause=test%20reindexing", "{\"message\":\"Reindexing document types [bar] in 'foo' of application default.default.default\"}");
         expected = expected.withReady("foo", "bar", clock.instant(), 1, "test reindexing");
         assertEquals(expected,
                      database.readReindexingStatus(applicationId).orElseThrow());
@@ -285,19 +282,19 @@ public class ApplicationHandlerTest {
                            .withReady("foo", "bar", clock.instant(), 1, "reindexing")
                            .withReady("foo", "baz", clock.instant(), 1, "reindexing")
                            .withReady("foo", "bax", clock.instant(), 1, "reindexing");
-        reindex(applicationId, "?clusterId=&cause=reindexing", "{\"message\":\"Reindexing document types [bar] in 'boo', [bar, bax, baz] in 'foo' of application default.default\"}");
+        reindex(applicationId, "?clusterId=&cause=reindexing", "{\"message\":\"Reindexing document types [bar] in 'boo', [bar, bax, baz] in 'foo' of application default.default.default\"}");
         assertEquals(expected,
                      database.readReindexingStatus(applicationId).orElseThrow());
 
         clock.advance(Duration.ofSeconds(1));
         expected = expected.withReady("boo", "bar", clock.instant(), 1, "reindexing")
                            .withReady("foo", "bar", clock.instant(), 1, "reindexing");
-        reindex(applicationId, "?documentType=bar&cause=reindexing", "{\"message\":\"Reindexing document types [bar] in 'boo', [bar] in 'foo' of application default.default\"}");
+        reindex(applicationId, "?documentType=bar&cause=reindexing", "{\"message\":\"Reindexing document types [bar] in 'boo', [bar] in 'foo' of application default.default.default\"}");
         assertEquals(expected,
                      database.readReindexingStatus(applicationId).orElseThrow());
 
         clock.advance(Duration.ofSeconds(1));
-        reindex(applicationId, "?clusterId=foo,boo&cause=reindexing", "{\"message\":\"Reindexing document types [bar] in 'boo', [bar, bax, baz] in 'foo' of application default.default\"}");
+        reindex(applicationId, "?clusterId=foo,boo&cause=reindexing", "{\"message\":\"Reindexing document types [bar] in 'boo', [bar, bax, baz] in 'foo' of application default.default.default\"}");
         expected = expected.withReady("boo", "bar", clock.instant(), 1, "reindexing")
                            .withReady("foo", "bar", clock.instant(), 1, "reindexing")
                            .withReady("foo", "baz", clock.instant(), 1, "reindexing")
@@ -306,16 +303,19 @@ public class ApplicationHandlerTest {
                      database.readReindexingStatus(applicationId).orElseThrow());
 
         clock.advance(Duration.ofSeconds(1));
-        reindex(applicationId, "?clusterId=foo&documentType=bar,baz&speed=0.1&cause=reindexing", "{\"message\":\"Reindexing document types [bar, baz] in 'foo' of application default.default\"}");
+        reindex(applicationId, "?clusterId=foo&documentType=bar,baz&speed=0.1&cause=reindexing", "{\"message\":\"Reindexing document types [bar, baz] in 'foo' of application default.default.default\"}");
         expected = expected.withReady("foo", "bar", clock.instant(), 0.1, "reindexing")
                            .withReady("foo", "baz", clock.instant(), 0.1, "reindexing");
         assertEquals(expected,
                      database.readReindexingStatus(applicationId).orElseThrow());
 
         clock.advance(Duration.ofSeconds(1));
-        reindex(applicationId, PUT, "?documentType=bar&speed=0", "{\"message\":\"Set reindexing speed to '0' for document types [bar] in 'boo', [bar] in 'foo' of application default.default\"}");
+        var activeSession = applicationRepository.getActiveSession(applicationId);
+        reindex(applicationId, PUT, "?documentType=bar&speed=0", "{\"message\":\"Set reindexing speed to '0' for document types [bar] in 'boo', [bar] in 'foo' of application default.default.default\"}");
         expected = expected.withSpeed("boo", "bar", 0)
                            .withSpeed("foo", "bar", 0);
+        // Assert that a new session is activated at when reindexing speed is set to 0 (or any other changes to reindexing)
+        assertNotEquals(activeSession, applicationRepository.getActiveSession(applicationId));
 
         reindexing(applicationId, DELETE, "{\"message\":\"Reindexing disabled\"}");
         expected = expected.enabled(false);
@@ -375,33 +375,25 @@ public class ApplicationHandlerTest {
 
     @Test
     public void testRestart() throws Exception {
-        var result = applicationRepository.deploy(testApp, prepareParams(applicationId));
-        assertTrue(result.configChangeActions().getRestartActions().isEmpty());
+        var result = applicationRepository.prepareAndActivate(testApp, prepareParams(applicationId));
+        assertTrue(result.prepareResult().configChangeActions().getRestartActions().isEmpty());
         restart(applicationId, Zone.defaultZone());
     }
 
-    @Test
-    public void testSuspended() throws Exception {
-        applicationRepository.deploy(testApp, prepareParams(applicationId));
-        assertSuspended(false, applicationId, Zone.defaultZone());
-        orchestrator.suspend(applicationId);
-        assertSuspended(true, applicationId, Zone.defaultZone());
-    }
 
     @Test
     public void testConverge() throws Exception {
-        applicationRepository.deploy(testApp, prepareParams(applicationId));
+        applicationRepository.prepareAndActivate(testApp, prepareParams(applicationId));
         converge(applicationId, Zone.defaultZone());
     }
 
     @Test
     public void testServiceStatus() throws Exception {
-        applicationRepository.deploy(testApp, prepareParams(applicationId));
+        applicationRepository.prepareAndActivate(testApp, prepareParams(applicationId));
         String host = "foo.yahoo.com";
         HttpProxy mockHttpProxy = mock(HttpProxy.class);
         ApplicationRepository applicationRepository = new ApplicationRepository.Builder()
                 .withTenantRepository(tenantRepository)
-                .withOrchestrator(orchestrator)
                 .withTesterClient(testerClient)
                 .withHttpProxy(mockHttpProxy)
                 .build();
@@ -434,7 +426,7 @@ public class ApplicationHandlerTest {
 
     @Test
     public void testFileDistributionStatus() throws Exception {
-        applicationRepository.deploy(testApp, prepareParams(applicationId));
+        applicationRepository.prepareAndActivate(testApp, prepareParams(applicationId));
         Zone zone = Zone.defaultZone();
 
         HttpResponse response = fileDistributionStatus(applicationId, zone);
@@ -446,13 +438,13 @@ public class ApplicationHandlerTest {
         ApplicationId unknown = new ApplicationId.Builder().applicationName("unknown").tenant("default").build();
         HttpResponse responseForUnknown = fileDistributionStatus(unknown, zone);
         assertEquals(404, responseForUnknown.getStatus());
-        assertEquals("{\"error-code\":\"NOT_FOUND\",\"message\":\"Unknown application id 'default.unknown'\"}",
+        assertEquals("{\"error-code\":\"NOT_FOUND\",\"message\":\"Unknown application id 'default.unknown.default'\"}",
                      getRenderedString(responseForUnknown));
     }
 
     @Test
     public void testGetLogs() throws IOException {
-        applicationRepository.deploy(new File("src/test/apps/app-logserver-with-container"), prepareParams(applicationId));
+        applicationRepository.prepareAndActivate(new File("src/test/apps/app-logserver-with-container"), prepareParams(applicationId));
         String url = toUrlPath(applicationId, Zone.defaultZone(), true) + "/logs?from=100&to=200";
         ApplicationHandler mockHandler = createApplicationHandler();
 
@@ -466,7 +458,7 @@ public class ApplicationHandlerTest {
     public void testGetLogsConnectionTimeout() throws IOException {
         logRetriever = new MockLogRetriever(504, "Connection error when getting logs");
         setup();
-        applicationRepository.deploy(new File("src/test/apps/app-logserver-with-container"), prepareParams(applicationId));
+        applicationRepository.prepareAndActivate(new File("src/test/apps/app-logserver-with-container"), prepareParams(applicationId));
         String url = toUrlPath(applicationId, Zone.defaultZone(), true) + "/logs?from=100&to=200";
         ApplicationHandler mockHandler = createApplicationHandler();
 
@@ -478,7 +470,7 @@ public class ApplicationHandlerTest {
 
     @Test
     public void testValidateSecretStore() throws IOException {
-        applicationRepository.deploy(new File("src/test/apps/app-logserver-with-container"), prepareParams(applicationId));
+        applicationRepository.prepareAndActivate(new File("src/test/apps/app-logserver-with-container"), prepareParams(applicationId));
         var url = toUrlPath(applicationId, Zone.defaultZone(), true) + "/validate-secret-store";
         var mockHandler = createApplicationHandler();
 
@@ -494,7 +486,7 @@ public class ApplicationHandlerTest {
 
     @Test
     public void testTesterStatus() throws IOException {
-        applicationRepository.deploy(testApp, prepareParams(applicationId));
+        applicationRepository.prepareAndActivate(testApp, prepareParams(applicationId));
         String url = toUrlPath(applicationId, Zone.defaultZone(), true) + "/tester/status";
         ApplicationHandler mockHandler = createApplicationHandler();
         HttpResponse response = mockHandler.handle(createTestRequest(url, GET));
@@ -504,7 +496,7 @@ public class ApplicationHandlerTest {
 
     @Test
     public void testTesterGetLog() throws IOException {
-        applicationRepository.deploy(testApp, prepareParams(applicationId));
+        applicationRepository.prepareAndActivate(testApp, prepareParams(applicationId));
         String url = toUrlPath(applicationId, Zone.defaultZone(), true) + "/tester/log?after=1234";
         ApplicationHandler mockHandler = createApplicationHandler();
 
@@ -515,7 +507,7 @@ public class ApplicationHandlerTest {
 
     @Test
     public void testTesterStartTests() {
-        applicationRepository.deploy(testApp, prepareParams(applicationId));
+        applicationRepository.prepareAndActivate(testApp, prepareParams(applicationId));
         String url = toUrlPath(applicationId, Zone.defaultZone(), true) + "/tester/run/staging-test";
         ApplicationHandler mockHandler = createApplicationHandler();
 
@@ -527,7 +519,7 @@ public class ApplicationHandlerTest {
 
     @Test
     public void testTesterReady() {
-        applicationRepository.deploy(testApp, prepareParams(applicationId));
+        applicationRepository.prepareAndActivate(testApp, prepareParams(applicationId));
         String url = toUrlPath(applicationId, Zone.defaultZone(), true) + "/tester/ready";
         ApplicationHandler mockHandler = createApplicationHandler();
         HttpRequest testRequest = createTestRequest(url, GET);
@@ -537,7 +529,7 @@ public class ApplicationHandlerTest {
 
     @Test
     public void testGetTestReport() throws IOException {
-        applicationRepository.deploy(testApp, prepareParams(applicationId));
+        applicationRepository.prepareAndActivate(testApp, prepareParams(applicationId));
         String url = toUrlPath(applicationId, Zone.defaultZone(), true) + "/tester/report";
         ApplicationHandler mockHandler = createApplicationHandler();
         HttpRequest testRequest = createTestRequest(url, GET);
@@ -773,6 +765,115 @@ public class ApplicationHandlerTest {
     }
 
     @Test
+    public void service_list_convergence_with_errors() {
+        URI requestUrl = URI.create("https://configserver/serviceconvergence");
+
+        String hostname = "localhost";
+        int port = 1234;
+        String hostAndPort = hostname + ":" + port;
+        URI serviceUrl = URI.create("https://configserver/serviceconvergence/" + hostAndPort);
+
+        String errorMessage = "Failed to construct component Foo";
+        long wantedGeneration = 4;
+        long currentGeneration = 3;
+
+        { // Single service with error response
+            var service = new ServiceListResponse.Service(createServiceInfo(hostname, port, Optional.empty()),
+                                                          currentGeneration,
+                                                          ConfigStatus.failed(currentGeneration, errorMessage));
+            HttpServiceListResponse response =
+                    new HttpServiceListResponse(new ServiceListResponse(List.of(service),
+                                                                        wantedGeneration,
+                                                                        currentGeneration,
+                                                                        false),
+                                                requestUrl);
+            assertResponse("{\n" +
+                           "  \"services\": [\n" +
+                           "    {\n" +
+                           "      \"host\": \"" + hostname + "\",\n" +
+                           "      \"port\": " + port + ",\n" +
+                           "      \"type\": \"container\",\n" +
+                           "      \"url\": \"" + serviceUrl + "\",\n" +
+                           "      \"currentGeneration\": " + currentGeneration + ",\n" +
+                           "      \"config\": {\n" +
+                           "        \"status\": \"failed\",\n" +
+                           "        \"message\": \"" + errorMessage + "\"\n" +
+                           "      }\n" +
+                           "    }\n" +
+                           "  ],\n" +
+                           "  \"url\": \"" + requestUrl + "\",\n" +
+                           "  \"currentGeneration\": " + currentGeneration + ",\n" +
+                           "  \"wantedGeneration\": " + wantedGeneration + ",\n" +
+                           "  \"converged\": false,\n" +
+                           "  \"config\": {\n" +
+                           "    \"status\": \"failed\",\n" +
+                           "    \"host\": \"" + hostname + "\",\n" +
+                           "    \"type\": \"container\",\n" +
+                           "    \"message\": \"" + errorMessage + "\"\n" +
+                           "  }\n" +
+                           "}",
+                           200,
+                           response);
+        }
+
+        { // Two services, one converged and one with an error
+            String hostname2 = "localhost2";
+            int port2 = 5678;
+            String hostAndPort2 = hostname2 + ":" + port2;
+            URI serviceUrl2 = URI.create("https://configserver/serviceconvergence/" + hostAndPort2);
+
+            var convergedService = new ServiceListResponse.Service(createServiceInfo(hostname, port, Optional.empty()),
+                                                                   wantedGeneration,
+                                                                   ConfigStatus.ok(wantedGeneration));
+            var failedService = new ServiceListResponse.Service(createServiceInfo(hostname2, port2, Optional.of("foo")),
+                                                                currentGeneration,
+                                                                ConfigStatus.failed(currentGeneration, errorMessage));
+            HttpServiceListResponse response =
+                    new HttpServiceListResponse(new ServiceListResponse(List.of(convergedService, failedService),
+                                                                        wantedGeneration,
+                                                                        currentGeneration,
+                                                                        false),
+                                                requestUrl);
+            assertResponse("{\n" +
+                           "  \"services\": [\n" +
+                           "    {\n" +
+                           "      \"host\": \"" + hostname + "\",\n" +
+                           "      \"port\": " + port + ",\n" +
+                           "      \"type\": \"container\",\n" +
+                           "      \"url\": \"" + serviceUrl + "\",\n" +
+                           "      \"currentGeneration\": " + wantedGeneration + "\n" +
+                           "    },\n" +
+                           "    {\n" +
+                           "      \"clusterName\": \"foo\",\n" +
+                           "      \"host\": \"" + hostname2 + "\",\n" +
+                           "      \"port\": " + port2 + ",\n" +
+                           "      \"type\": \"container\",\n" +
+                           "      \"url\": \"" + serviceUrl2 + "\",\n" +
+                           "      \"currentGeneration\": " + currentGeneration + ",\n" +
+                           "      \"config\": {\n" +
+                           "        \"status\": \"failed\",\n" +
+                           "        \"message\": \"" + errorMessage + "\"\n" +
+                           "      }\n" +
+                           "    }\n" +
+                           "  ],\n" +
+                           "  \"url\": \"" + requestUrl + "\",\n" +
+                           "  \"currentGeneration\": " + currentGeneration + ",\n" +
+                           "  \"wantedGeneration\": " + wantedGeneration + ",\n" +
+                           "  \"converged\": false,\n" +
+                           "  \"config\": {\n" +
+                           "    \"status\": \"failed\",\n" +
+                           "    \"clusterName\": \"foo\",\n" +
+                           "    \"host\": \"" + hostname2 + "\",\n" +
+                           "    \"type\": \"container\",\n" +
+                           "    \"message\": \"" + errorMessage + "\"\n" +
+                           "  }\n" +
+                           "}",
+                           200,
+                           response);
+        }
+    }
+
+    @Test
     public void service_convergence_timeout() {
         String hostAndPort = "localhost:1234";
         URI uri = URI.create("https://" + hostAndPort + "/serviceconvergence/container");
@@ -879,7 +980,7 @@ public class ApplicationHandlerTest {
         if (expectedBody != null) {
             ByteArrayOutputStream out = new ByteArrayOutputStream();
             response.render(out);
-            assertJsonEquals(out.toString(), expectedBody);
+            assertJsonEquals(out.toString(UTF_8), expectedBody);
         }
         assertEquals(statusCode, response.getStatus());
     }
@@ -923,19 +1024,19 @@ public class ApplicationHandlerTest {
     }
 
     private PrepareParams prepareParams(ApplicationId applicationId) {
-        return new PrepareParams.Builder().applicationId(applicationId).build();
+        return new PrepareParams.Builder().applicationId(applicationId).vespaVersion(vespaVersion).build();
     }
 
     private static void assertResponse(String expectedJson, int status, HttpResponse response) {
         assertResponse((responseBody) -> assertJsonEquals(new String(responseBody
-                                                                             .getBytes()), expectedJson), status, response);
+                                                                             .getBytes(UTF_8), UTF_8), expectedJson), status, response);
     }
 
     private static void assertResponse(Consumer<String> assertFunc, int status, HttpResponse response) {
         ByteArrayOutputStream responseBody = new ByteArrayOutputStream();
         try {
             response.render(responseBody);
-            assertFunc.accept(responseBody.toString());
+            assertFunc.accept(responseBody.toString(UTF_8));
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }

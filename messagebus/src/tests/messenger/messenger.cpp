@@ -1,43 +1,33 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include <vespa/messagebus/messenger.h>
+#include <vespa/vespalib/gtest/gtest.h>
 #include <vespa/vespalib/util/barrier.h>
-#include <vespa/vespalib/testkit/test_kit.h>
 
 using namespace mbus;
 
 class ThrowException : public Messenger::ITask {
 public:
-    void run() override {
-        throw std::exception();
-    }
+    void run() override { throw std::exception(); }
 
-    uint8_t priority() const override {
-        return 0;
-    }
+    uint8_t priority() const override { return 0; }
 };
 
 class BarrierTask : public Messenger::ITask {
 private:
-    vespalib::Barrier &_barrier;
+    vespalib::Barrier& _barrier;
 
 public:
-    BarrierTask(vespalib::Barrier &barrier)
-        : _barrier(barrier)
-    {
+    BarrierTask(vespalib::Barrier& barrier) : _barrier(barrier) {
         // empty
     }
 
-    void run() override {
-        _barrier.await();
-    }
+    void run() override { _barrier.await(); }
 
-    uint8_t priority() const override {
-        return 0;
-    }
+    uint8_t priority() const override { return 0; }
 };
 
-TEST("messenger_test") {
+TEST(MessengerTest, messenger_test) {
 
     Messenger msn;
     msn.start();
@@ -50,4 +40,4 @@ TEST("messenger_test") {
     ASSERT_TRUE(msn.isEmpty());
 }
 
-TEST_MAIN() { TEST_RUN_ALL(); }
+GTEST_MAIN_RUN_ALL_TESTS()

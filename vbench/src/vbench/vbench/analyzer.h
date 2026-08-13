@@ -3,15 +3,15 @@
 #pragma once
 
 #include "request.h"
+
 #include <vbench/core/handler.h>
 
 namespace vbench {
 
-struct Analyzer : public Handler<Request>
-{
+struct Analyzer : public Handler<Request> {
     using UP = std::unique_ptr<Analyzer>;
     virtual void report() = 0;
-    virtual ~Analyzer() {}
+    ~Analyzer() override = default;
 };
 
 } // namespace vbench

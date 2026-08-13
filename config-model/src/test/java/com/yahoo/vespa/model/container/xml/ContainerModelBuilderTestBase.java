@@ -6,6 +6,7 @@ import com.yahoo.component.ComponentId;
 import com.yahoo.config.application.api.DeployLogger;
 import com.yahoo.config.model.builder.xml.test.DomBuilderTest;
 import com.yahoo.config.model.deploy.DeployState;
+import com.yahoo.config.model.deploy.TestDeployState;
 import com.yahoo.config.model.test.MockRoot;
 import com.yahoo.container.ComponentsConfig;
 import com.yahoo.vespa.model.VespaModel;
@@ -21,8 +22,12 @@ import org.w3c.dom.Element;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.logging.Level;
 
+import static java.util.logging.Level.INFO;
+import static java.util.logging.Level.SEVERE;
+import static java.util.logging.Level.WARNING;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 /**
@@ -38,7 +43,8 @@ public abstract class ContainerModelBuilderTestBase {
 
         @Override
         public void log(Level level, String message) {
-            msgs.add(new Pair<>(level, message));
+            if (Set.of(SEVERE, WARNING, INFO).contains(level))
+                msgs.add(new Pair<>(level, message));
         }
     }
 
@@ -78,11 +84,11 @@ public abstract class ContainerModelBuilderTestBase {
     }
 
     public static List<ContainerModel> createModel(MockRoot root, Element... containerElems) {
-        return createModel(root, DeployState.createTestState(), null, containerElems);
+        return createModel(root, TestDeployState.create(), null, containerElems);
     }
 
     public static void createModel(MockRoot root, DeployLogger testLogger, Element... containerElems) {
-        createModel(root, DeployState.createTestState(testLogger), null, containerElems);
+        createModel(root, TestDeployState.create(testLogger), null, containerElems);
     }
 
     private static void generateDefaultSearchChains(ContainerCluster<?> cluster) {

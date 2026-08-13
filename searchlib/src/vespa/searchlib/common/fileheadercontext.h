@@ -4,21 +4,20 @@
 #include <string>
 
 namespace vespalib {
-    class GenericHeader;
+class GenericHeader;
 }
 
 namespace search::common {
 
-class FileHeaderContext
-{
+class FileHeaderContext {
 public:
     FileHeaderContext();
     virtual ~FileHeaderContext();
 
-    virtual void addTags(vespalib::GenericHeader &header, const std::string &name) const = 0;
+    virtual void addTags(vespalib::GenericHeader& header, const std::string& name) const = 0;
 
-    static void addCreateAndFreezeTime(vespalib::GenericHeader &header);
-    static void setFreezeTime(vespalib::GenericHeader &header);
+    static void addCreateAndFreezeTime(vespalib::GenericHeader& header);
+    static void setFreezeTime(vespalib::GenericHeader& header);
 };
 
-}
+} // namespace search::common

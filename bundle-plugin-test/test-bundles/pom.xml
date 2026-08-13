@@ -11,6 +11,7 @@
         <version>8-SNAPSHOT</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
+  <name>${project.artifactId}</name>
     <artifactId>test-bundles</artifactId>
     <version>8-SNAPSHOT</version>
     <packaging>pom</packaging>
@@ -32,7 +33,7 @@
                         <execution>
                             <id>package-test-bundles</id>
                             <!-- Must be done after generating classpath-mappings and copying it in the 'main' bundle. -->
-                            <phase>test-compile</phase>
+                            <phase>pre-integration-test</phase>
                             <goals>
                                 <goal>generate-osgi-manifest</goal>
                                 <goal>assemble-container-plugin</goal>

@@ -13,6 +13,10 @@ import ai.vespa.schemals.index.Symbol.SymbolType;
 import ai.vespa.schemals.tree.SchemaNode;
 import ai.vespa.schemals.tree.rankingexpression.RankNode;
 
+/**
+ * Similar to {@link ai.vespa.schemals.schemadocument.resolvers.RankExpression.argument.FieldArgument}, but this can
+ * be any symbol of a given type, for example an onnx model.
+ */
 public class SymbolArgument implements Argument {
     
     private SymbolType symbolType;
@@ -32,7 +36,7 @@ public class SymbolArgument implements Argument {
         SchemaNode symbolNode = node.getSchemaNode();
 
         while (!symbolNode.hasSymbol() && symbolNode.size() > 0) {
-            symbolNode = symbolNode.get(0);
+            symbolNode = symbolNode.get(0).getSchemaNode();
         }
 
         return symbolNode;
@@ -40,6 +44,9 @@ public class SymbolArgument implements Argument {
 
     @Override
     public boolean validateArgument(RankNode node) {
+        if (node.isTaggedArgument()) {
+            return false;
+        }
         SchemaNode symbolNode = findSymbolNode(node);
         return symbolNode.hasSymbol();
     }

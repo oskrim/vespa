@@ -55,10 +55,11 @@ vespa_define_module(
     src/tests/proton/attribute/attribute_aspect_delayer
     src/tests/proton/attribute/attribute_directory
     src/tests/proton/attribute/attribute_initializer
+    src/tests/proton/attribute/attribute_load_memory_calculator
     src/tests/proton/attribute/attribute_manager
     src/tests/proton/attribute/attribute_populator
-    src/tests/proton/attribute/attribute_transient_memory_calculator
     src/tests/proton/attribute/attribute_usage_filter
+    src/tests/proton/attribute/attribute_usage_notifier
     src/tests/proton/attribute/attribute_usage_stats
     src/tests/proton/attribute/attributes_state_explorer
     src/tests/proton/attribute/document_field_extractor
@@ -82,6 +83,7 @@ vespa_define_module(
     src/tests/proton/feed_and_search
     src/tests/proton/feedtoken
     src/tests/proton/flushengine
+    src/tests/proton/flushengine/flush_history
     src/tests/proton/flushengine/prepare_restart_flush_strategy
     src/tests/proton/flushengine/shrink_lid_space_flush_target
     src/tests/proton/index
@@ -96,7 +98,6 @@ vespa_define_module(
     src/tests/proton/matching/match_phase_limiter
     src/tests/proton/matching/partial_result
     src/tests/proton/matching/request_context
-    src/tests/proton/matching/same_element_builder
     src/tests/proton/matching/unpacking_iterators_optimizer
     src/tests/proton/persistenceconformance
     src/tests/proton/persistenceengine
@@ -115,11 +116,12 @@ vespa_define_module(
     src/tests/proton/reprocessing/document_reprocessing_handler
     src/tests/proton/reprocessing/reprocessing_runner
     src/tests/proton/server
-    src/tests/proton/server/disk_mem_usage_filter
     src/tests/proton/server/disk_mem_usage_metrics
     src/tests/proton/server/disk_mem_usage_sampler
+    src/tests/proton/server/initialization_status
     src/tests/proton/server/initialize_threads_calculator
     src/tests/proton/server/memoryflush
+    src/tests/proton/server/resource_usage_write_filter
     src/tests/proton/server/shared_threading_service
     src/tests/proton/summaryengine
     src/tests/proton/verify_ranksetup

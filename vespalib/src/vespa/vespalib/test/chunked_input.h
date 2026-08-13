@@ -2,6 +2,7 @@
 #pragma once
 
 #include <vespa/vespalib/data/input.h>
+#include <vespa/vespalib/util/require.h>
 
 namespace vespalib {
 namespace test {
@@ -11,17 +12,16 @@ namespace test {
  * than the maximum chunk size given to the constuctor.
  **/
 struct ChunkedInput : Input {
-    Input &input;
+    Input& input;
     size_t max_chunk_size;
-    ChunkedInput(Input &input_in, size_t max_chunk_size_in)
-        : input(input_in), max_chunk_size(max_chunk_size_in) {}
+    ChunkedInput(Input& input_in, size_t max_chunk_size_in) : input(input_in), max_chunk_size(max_chunk_size_in) {}
     Memory obtain() override {
         Memory memory = input.obtain();
         memory.size = std::min(memory.size, max_chunk_size);
         return memory;
     }
-    Input &evict(size_t bytes) override {
-        EXPECT_LESS_EQUAL(bytes, max_chunk_size);
+    Input& evict(size_t bytes) override {
+        REQUIRE(bytes <= max_chunk_size);
         input.evict(bytes);
         return *this;
     }

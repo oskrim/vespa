@@ -10,13 +10,15 @@ import org.eclipse.lsp4j.Position;
 import ai.vespa.schemals.context.EventCompletionContext;
 import ai.vespa.schemals.index.Symbol;
 import ai.vespa.schemals.index.Symbol.SymbolType;
-import ai.vespa.schemals.lsp.schema.completion.utils.CompletionUtils;
+import ai.vespa.schemals.lsp.common.completion.CompletionProvider;
+import ai.vespa.schemals.lsp.common.completion.CompletionUtils;
 import ai.vespa.schemals.parser.Token.TokenType;
 import ai.vespa.schemals.parser.ast.COMMA;
 import ai.vespa.schemals.parser.ast.IDENTIFIER;
 import ai.vespa.schemals.parser.ast.identifierStr;
 import ai.vespa.schemals.parser.ast.identifierWithDashStr;
 import ai.vespa.schemals.tree.CSTUtils;
+import ai.vespa.schemals.tree.Node;
 import ai.vespa.schemals.tree.SchemaNode;
 
 /**
@@ -26,8 +28,8 @@ public class InheritanceCompletion implements CompletionProvider {
     private Optional<SchemaNode> match(EventCompletionContext context) {
         Position searchPos = context.startOfWord();
         if (searchPos == null)searchPos = context.position;
-        SchemaNode last = CSTUtils.getLastCleanNode(context.document.getRootNode(), searchPos);
-        if (last == null) return Optional.empty();
+        Node last = CSTUtils.getLastCleanNode(context.document.getRootNode(), searchPos);
+        if (last == null || !last.isSchemaNode()) return Optional.empty();
 
         if (last.isASTInstance(IDENTIFIER.class))last = last.getParent();
         if (last.isASTInstance(COMMA.class))last = last.getPrevious();
@@ -35,9 +37,9 @@ public class InheritanceCompletion implements CompletionProvider {
 
         // Skip previously declared fields in the list
         // to get to the start where we can determine the pattern fields: ...
-        while (last != null && 
+        while (last != null &&
                 (last.isASTInstance(identifierStr.class) || last.isASTInstance(identifierWithDashStr.class)) && 
-                (last.getPrevious() != null && last.getPrevious().getSchemaType() == TokenType.COMMA)) {
+                (last.getPrevious() != null && last.getPrevious().getSchemaNode().getSchemaType() == TokenType.COMMA)) {
         last = last.getPrevious().getPrevious();
         }
 
@@ -49,7 +51,7 @@ public class InheritanceCompletion implements CompletionProvider {
 
         // edge case for rank profiles.
         if (match != null && match.getParent() != null && match.getParent().getParent() != null && match.getParent().getParent().isASTInstance(identifierWithDashStr.class))
-            match = match.getParent();
+            match = match.getParent().getSchemaNode();
 
         // Has to be on the same line
         if (match != null && match.getRange().getStart().getLine() == context.position.getLine()
@@ -74,7 +76,9 @@ public class InheritanceCompletion implements CompletionProvider {
                       ? null : identifierSymbol.getScope();
 
         for (var symbol : context.schemaIndex.listSymbolsInScope(scope, identifierSymbol.getType())) {
-            if (symbol.getShortIdentifier().equals(identifierSymbol.getShortIdentifier()))continue; // identifier-based, since symbols may be inaccurate in this context
+            // identifier-based comparison, since using symbol equality may be inaccurate in this context
+            if (symbol.getShortIdentifier().equals(identifierSymbol.getShortIdentifier()))continue; 
+
             ret.add(CompletionUtils.constructBasic(symbol.getShortIdentifier(), symbol.getLongIdentifier()));
             if (symbol.getShortIdentifier().equals("default"))defaultSeen = true;
         }

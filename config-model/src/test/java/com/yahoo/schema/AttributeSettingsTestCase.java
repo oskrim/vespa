@@ -16,7 +16,11 @@ import java.io.IOException;
 import java.util.Optional;
 
 import static com.yahoo.config.model.test.TestUtil.joinLines;
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 /**
  * Attribute settings
@@ -174,7 +178,7 @@ public class AttributeSettingsTestCase extends AbstractSchemaTestCase {
                     "}\n");
             fail();
         } catch (IllegalArgumentException e) {
-            assertEquals("Field 'f' in 'test' can not be marked mutable as it is inside the document clause.", e.getMessage());
+            assertEquals("Field 'f' in 'test' cannot be marked mutable as it is inside the document clause.", e.getMessage());
         }
     }
 
@@ -222,11 +226,11 @@ public class AttributeSettingsTestCase extends AbstractSchemaTestCase {
         assertEquals("a", cfg.attribute().get(0).name());
         assertFalse(cfg.attribute().get(0).ismutable());
 
-        assertEquals("f", cfg.attribute().get(1).name());
-        assertFalse(cfg.attribute().get(1).ismutable());
+        assertEquals("m", cfg.attribute().get(1).name());
+        assertTrue(cfg.attribute().get(1).ismutable());
 
-        assertEquals("m", cfg.attribute().get(2).name());
-        assertTrue(cfg.attribute().get(2).ismutable());
+        assertEquals("f", cfg.attribute().get(2).name());
+        assertFalse(cfg.attribute().get(2).ismutable());
     }
 
     @Test
@@ -238,10 +242,10 @@ public class AttributeSettingsTestCase extends AbstractSchemaTestCase {
         assertEquals("a", cfg.attribute().get(0).name());
         assertEquals(13333, cfg.attribute().get(0).maxuncommittedmemory());
 
-        assertEquals("f", cfg.attribute().get(1).name());
+        assertEquals("m", cfg.attribute().get(1).name());
         assertEquals(13333, cfg.attribute().get(1).maxuncommittedmemory());
 
-        assertEquals("m", cfg.attribute().get(2).name());
+        assertEquals("f", cfg.attribute().get(2).name());
         assertEquals(13333, cfg.attribute().get(2).maxuncommittedmemory());
     }
 

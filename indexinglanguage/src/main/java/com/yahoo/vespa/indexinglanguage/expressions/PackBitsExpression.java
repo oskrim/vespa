@@ -21,27 +21,22 @@ public class PackBitsExpression extends Expression  {
 
     private TensorType outputTensorType;
 
-    /** Creates a pack_bits expression. */
-    public PackBitsExpression() {
-        super(TensorDataType.any());
-    }
-
     @Override
-    public DataType setInputType(DataType inputType, VerificationContext context) {
+    public DataType setInputType(DataType inputType, TypeContext context) {
+        if (inputType == null) return null;
         super.setInputType(inputType, context);
         if ( ! validType(inputType))
-            throw new IllegalArgumentException("pack_bits requires a tensor with one dense dimension, " +
-                                               "but got " + inputType);
+            throw new VerificationException(this, "Require a tensor with one dense dimension, but got " + inputType.getName());
         outputTensorType = outputType(((TensorDataType)inputType).getTensorType());
         return new TensorDataType(outputTensorType);
     }
 
     @Override
-    public DataType setOutputType(DataType outputType, VerificationContext context) {
+    public DataType setOutputType(DataType outputType, TypeContext context) {
         super.setOutputType(outputType, context);
-        if ( ! validType(outputType))
-            throw new IllegalArgumentException("pack_bits produces a tensor with one dense dimension, " +
-                                               "but need " + outputType);
+        if (outputType != null && ! validType(outputType))
+            throw new VerificationException(this, "Required to produce " + outputType.getName() +
+                                                  " but this produces a tensor with one dense dimension");
         outputTensorType = ((TensorDataType)outputType).getTensorType();
         return new TensorDataType(inputType(outputTensorType));
     }
@@ -54,18 +49,12 @@ public class PackBitsExpression extends Expression  {
     }
 
     @Override
-    protected void doVerify(VerificationContext context) {}
-
-    @Override
     protected void doExecute(ExecutionContext context) {
         Optional<Tensor> tensor = ((TensorFieldValue)context.getCurrentValue()).getTensor();
         if (tensor.isEmpty()) return;
         Tensor packed = Tensors.packBits(tensor.get());
         context.setCurrentValue(new TensorFieldValue(packed));
     }
-
-    @Override
-    public DataType createdOutputType() { return new TensorDataType(outputTensorType); }
 
     @Override
     public String toString() { return "pack_bits"; }
@@ -78,7 +67,7 @@ public class PackBitsExpression extends Expression  {
 
     /** Returns the type this requires when producing the given output type. */
     private TensorType inputType(TensorType givenType) {
-        var builder = new TensorType.Builder(TensorType.Value.INT8); // Any larger value type is also permissible
+        var builder = new TensorType.Builder(TensorType.Value.DOUBLE); // Any value type is permissible
         for (var d : givenType.dimensions())
             builder.dimension(d.size().isPresent() ? d.withSize(d.size().get() * 8) : d);
         return builder.build();

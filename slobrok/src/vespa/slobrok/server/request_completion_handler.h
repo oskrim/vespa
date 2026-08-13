@@ -13,16 +13,17 @@ namespace slobrok {
  **/
 struct CompletionHandler {
     virtual void doneHandler(OkState result) = 0;
-    virtual ~CompletionHandler() {}
+    virtual ~CompletionHandler() = default;
 };
 
 class RequestCompletionHandler : public CompletionHandler {
 private:
-    FRT_RPCRequest *_parentRequest;
+    FRT_RPCRequest* _parentRequest;
+
 public:
-    RequestCompletionHandler(FRT_RPCRequest *parentRequest);
+    RequestCompletionHandler(FRT_RPCRequest* parentRequest);
     virtual ~RequestCompletionHandler();
     void doneHandler(OkState result) override;
 };
 
-}
+} // namespace slobrok

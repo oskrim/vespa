@@ -3,14 +3,14 @@
 #pragma once
 
 #include "request.h"
+
 #include <vbench/core/handler.h>
 
 namespace vbench {
 
-struct Tagger : public Handler<Request>
-{
+struct Tagger : public Handler<Request> {
     using UP = std::unique_ptr<Tagger>;
-    virtual ~Tagger() {}
+    ~Tagger() override = default;
 };
 
 } // namespace vbench

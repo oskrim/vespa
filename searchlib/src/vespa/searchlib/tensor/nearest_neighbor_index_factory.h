@@ -3,9 +3,14 @@
 #pragma once
 
 #include <vespa/eval/eval/value_type.h>
-#include <memory>
+#include <vespa/searchcommon/attribute/quantization_params.h>
 
-namespace search::attribute { class HnswIndexParams; }
+#include <memory>
+#include <optional>
+
+namespace search::attribute {
+class HnswIndexParams;
+}
 
 namespace search::tensor {
 
@@ -17,12 +22,12 @@ class NearestNeighborIndex;
  */
 class NearestNeighborIndexFactory {
 public:
-    virtual ~NearestNeighborIndexFactory() {}
-    virtual std::unique_ptr<NearestNeighborIndex> make(const DocVectorAccess& vectors,
-                                                       size_t vector_size,
-                                                       bool multi_vector_index,
-                                                       vespalib::eval::CellType cell_type,
-                                                       const search::attribute::HnswIndexParams& params) const = 0;
+    virtual ~NearestNeighborIndexFactory() = default;
+
+    [[nodiscard]] virtual std::unique_ptr<NearestNeighborIndex>
+    make(const DocVectorAccess& vectors, size_t vector_size, bool multi_vector_index,
+         vespalib::eval::CellType cell_type, const search::attribute::HnswIndexParams& params,
+         const std::optional<attribute::QuantizationParams>& quant_params) const = 0;
 };
 
-}
+} // namespace search::tensor

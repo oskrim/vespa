@@ -1,9 +1,11 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
-#include <vespa/vespalib/testkit/test_kit.h>
-#include <vbench/test/all.h>
+#include <vespa/vespalib/gtest/gtest.h>
 #include <vespa/vespalib/net/crypto_engine.h>
 #include <vespa/vespalib/net/tls/tls_crypto_engine.h>
 #include <vespa/vespalib/test/make_tls_options_for_testing.h>
+#include <vespa/vespalib/test/nexus.h>
+
+#include <vbench/test/all.h>
 
 using namespace vbench;
 
@@ -12,59 +14,72 @@ auto tls_crypto = std::make_shared<vespalib::TlsCryptoEngine>(vespalib::test::ma
 
 using OutputWriter = vespalib::OutputWriter;
 using vespalib::CryptoEngine;
+using vespalib::test::Nexus;
 
 const size_t numLines = 100;
 
 struct Agent {
     Stream::UP socket;
     Agent(Stream::UP s) : socket(std::move(s)) {}
-    void write(const char *prefix) {
+    void write(const char* prefix) {
         OutputWriter out(*socket, 32);
         for (size_t i = 0; i < numLines; ++i) {
             out.printf("%s%zu\n", prefix, i);
         }
         out.write("\n");
     }
-    void read(const char *prefix) {
+    void read(const char* prefix) {
         LineReader reader(*socket);
         for (size_t lines = 0; true; ++lines) {
             string line;
             reader.readLine(line);
             if (line.empty()) {
-                EXPECT_EQUAL(numLines, lines);
+                EXPECT_EQ(numLines, lines);
                 break;
             }
-            EXPECT_EQUAL(strfmt("%s%zu", prefix, lines), line);
+            EXPECT_EQ(strfmt("%s%zu", prefix, lines), line);
         }
     }
 };
 
-void verify_socket(CryptoEngine &crypto, ServerSocket &server_socket, size_t thread_id) {
-    if (thread_id == 0) { // client
+void verify_socket(CryptoEngine& crypto, ServerSocket& server_socket, Nexus& ctx) {
+    if (ctx.thread_id() == 0) { // client
         Agent client(std::make_unique<Socket>(crypto, "localhost", server_socket.port()));
         client.write("client-");
         client.read("server-");
-        TEST_BARRIER();   // #1
+        ctx.barrier(); // #1
         LineReader reader(*client.socket);
-        string line;
+        string     line;
         EXPECT_FALSE(reader.readLine(line));
         EXPECT_TRUE(line.empty());
         EXPECT_TRUE(client.socket->eof());
         EXPECT_FALSE(client.socket->tainted());
-    } else {              // server
+    } else { // server
         Agent server(server_socket.accept(crypto));
         server.read("client-");
         server.write("server-");
-        TEST_BARRIER();   // #1
+        ctx.barrier(); // #1
     }
 }
 
-TEST_MT_F("socket", 2, ServerSocket()) {
-    TEST_DO(verify_socket(*null_crypto, f1, thread_id));
+TEST(SocketTest, socket) {
+    size_t       num_threads = 2;
+    ServerSocket f1;
+    auto         task = [&](Nexus& ctx) {
+        SCOPED_TRACE("null crypto");
+        verify_socket(*null_crypto, f1, ctx);
+    };
+    Nexus::run(num_threads, task);
 }
 
-TEST_MT_F("secure socket", 2, ServerSocket()) {
-    TEST_DO(verify_socket(*tls_crypto, f1, thread_id));
+TEST(SocketTest, secure_socket) {
+    size_t       num_threads = 2;
+    ServerSocket f1;
+    auto         task = [&](Nexus& ctx) {
+        SCOPED_TRACE("tls crypto");
+        verify_socket(*tls_crypto, f1, ctx);
+    };
+    Nexus::run(num_threads, task);
 }
 
-TEST_MAIN() { TEST_RUN_ALL(); }
+GTEST_MAIN_RUN_ALL_TESTS()

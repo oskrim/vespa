@@ -6,6 +6,7 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.net.URL;
 import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
@@ -42,11 +43,16 @@ public class UnpackRNGFiles {
             while (entries.hasMoreElements()) {
                 JarEntry entry = entries.nextElement();
                 if (!entry.isDirectory() && entry.getName().endsWith(".rng") && entry.getName().startsWith("resources/schema")) {
-                    Path writePath = serverPath.resolve(entry.getName());
+                    Path writePath = serverPath.resolve(entry.getName()).normalize();
+                    Path targetDir = serverPath.resolve("resources").resolve("schema").normalize();
+                    if (!writePath.startsWith(targetDir)) {
+                        // Potential Zip Slip attack, skip this entry
+                        continue;
+                    }
                     try (InputStream inputStream = Thread.currentThread().getContextClassLoader().getResourceAsStream(entry.getName())) {
-                        BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream));
+                        BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream, StandardCharsets.UTF_8));
                         String content = reader.lines().collect(Collectors.joining(System.lineSeparator()));
-                        Files.write(writePath, content.getBytes(), StandardOpenOption.CREATE);
+                        Files.write(writePath, content.getBytes(StandardCharsets.UTF_8), StandardOpenOption.CREATE);
                     } catch (Exception ex) {
                         // Ignore: unwanted .rng file
                     }

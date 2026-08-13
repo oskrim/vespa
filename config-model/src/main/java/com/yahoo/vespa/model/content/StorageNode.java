@@ -2,18 +2,15 @@
 package com.yahoo.vespa.model.content;
 
 import com.yahoo.config.model.api.ModelContext;
-import com.yahoo.config.model.deploy.DeployState;
-import com.yahoo.config.model.producer.TreeConfigProducer;
 import com.yahoo.vespa.config.content.StorFilestorConfig;
 import com.yahoo.vespa.config.content.core.StorServerConfig;
 import com.yahoo.vespa.defaults.Defaults;
 import com.yahoo.vespa.model.application.validation.RestartConfigs;
-import com.yahoo.vespa.model.builder.xml.dom.ModelElement;
-import com.yahoo.vespa.model.builder.xml.dom.VespaDomBuilder;
 import com.yahoo.vespa.model.content.engines.PersistenceEngine;
 import com.yahoo.vespa.model.content.engines.ProtonProvider;
 import com.yahoo.vespa.model.content.storagecluster.StorageCluster;
-import org.w3c.dom.Element;
+
+import java.util.Objects;
 import java.util.Optional;
 
 /**
@@ -28,17 +25,8 @@ public class StorageNode extends ContentNode implements StorServerConfig.Produce
     private final boolean retired;
     private final StorageCluster cluster;
 
-    public static class Builder extends VespaDomBuilder.DomConfigProducerBuilder<StorageNode, StorageNode> {
-
-        @Override
-        protected StorageNode doBuild(DeployState deployState, TreeConfigProducer<StorageNode> ancestor, Element producerSpec) {
-            ModelElement e = new ModelElement(producerSpec);
-            return new StorageNode(deployState.getProperties(), (StorageCluster)ancestor, e.doubleAttribute("capacity"), e.integerAttribute("distribution-key"), false);
-        }
-
-    }
-
-    StorageNode(ModelContext.Properties properties, StorageCluster cluster, Double capacity, int distributionKey, boolean retired) {
+    public StorageNode(ModelContext.Properties properties, StorageCluster cluster,
+                       Double capacity, int distributionKey, boolean retired) {
         super(properties.featureFlags(), cluster, cluster.getClusterName(),
               rootFolder + cluster.getClusterName() + "/storage/" + distributionKey,
               distributionKey);
@@ -55,11 +43,7 @@ public class StorageNode extends ContentNode implements StorServerConfig.Produce
     }
 
     public double getCapacity() {
-        if (capacity != null) {
-            return capacity;
-        } else {
-            return 1.0;
-        }
+        return Objects.requireNonNullElse(capacity, 1.0);
     }
 
     /** Whether this node is configured as retired, which means all content should migrate off the node */

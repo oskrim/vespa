@@ -4,9 +4,11 @@ package com.yahoo.docprocs.indexing;
 import com.yahoo.document.DocumentType;
 import com.yahoo.document.DocumentTypeManager;
 import com.yahoo.language.Linguistics;
-import java.util.logging.Level;
 
+import com.yahoo.language.process.Chunker;
 import com.yahoo.language.process.Embedder;
+import com.yahoo.language.process.FieldGenerator;
+import com.yahoo.metrics.simple.MetricReceiver;
 import com.yahoo.vespa.configdefinition.IlscriptsConfig;
 import com.yahoo.vespa.indexinglanguage.ScriptParserContext;
 import com.yahoo.vespa.indexinglanguage.expressions.InputExpression;
@@ -16,73 +18,84 @@ import com.yahoo.vespa.indexinglanguage.expressions.StatementExpression;
 import com.yahoo.vespa.indexinglanguage.parser.IndexingInput;
 import com.yahoo.vespa.indexinglanguage.parser.ParseException;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 /**
  * @author Simon Thoresen Hult
  */
-public class ScriptManager {
+class ScriptManager {
 
-    private static final FastLogger log = FastLogger.getLogger(ScriptManager.class.getName());
     private static final String FULL = "[all]";
     private final Map<String, Map<String, DocumentScript>> documentFieldScripts;
-    private final DocumentTypeManager docTypeMgr;
+    private final DocumentTypeManager documentTypeManager;
 
-    public ScriptManager(DocumentTypeManager docTypeMgr, IlscriptsConfig config, Linguistics linguistics,
-                         Map<String, Embedder> embedders) {
-        this.docTypeMgr = docTypeMgr;
-        documentFieldScripts = createScriptsMap(docTypeMgr, config, linguistics, embedders);
+    ScriptManager(DocumentTypeManager documentTypeManager, IlscriptsConfig config, Linguistics linguistics,
+                         Map<String, Chunker> chunkers,
+                         Map<String, Embedder> embedders,
+                         Map<String, FieldGenerator> generators,
+                         MetricReceiver metricReceiver) {
+        this.documentTypeManager = documentTypeManager;
+        documentFieldScripts = createScriptsMap(documentTypeManager, config, linguistics, chunkers, embedders, generators, metricReceiver);
     }
 
     private Map<String, DocumentScript> getScripts(DocumentType inputType) {
         Map<String, DocumentScript> scripts = documentFieldScripts.get(inputType.getName());
         if (scripts != null) return scripts;
         for (Map.Entry<String, Map<String, DocumentScript>> entry : documentFieldScripts.entrySet()) {
-            if (inputType.inherits(docTypeMgr.getDocumentType(entry.getKey())))
+            if (inputType.inherits(documentTypeManager.getDocumentType(entry.getKey())))
                 return entry.getValue();
         }
         for (Map.Entry<String, Map<String, DocumentScript>> entry : documentFieldScripts.entrySet()) {
-            if (docTypeMgr.getDocumentType(entry.getKey()).inherits(inputType))
+            if (documentTypeManager.getDocumentType(entry.getKey()).inherits(inputType))
                 return entry.getValue();
         }
         return null;
     }
 
-    public DocumentScript getScript(DocumentType inputType) {
+    DocumentScript getScript(DocumentType inputType) {
         return getScript(inputType, FULL);
     }
 
-    public DocumentScript getScript(DocumentType inputType, String inputFieldName) {
+    DocumentScript getScript(DocumentType inputType, String inputFieldName) {
         Map<String, DocumentScript> fieldScripts = getScripts(inputType);
-        if (fieldScripts != null) {
-            DocumentScript script = fieldScripts.get(inputFieldName);
-            if (script != null) return script;
-        }
-        return null;
+        if (fieldScripts == null) return null;
+        return fieldScripts.get(inputFieldName);
     }
 
     /**
      * Returns an unmodifiable map from document type name to a map of the subset of indexing statements
      * to run for each input field which *only* depend on that field.
      */
-    private static Map<String, Map<String, DocumentScript>>  createScriptsMap(DocumentTypeManager docTypeMgr,
+    private static Map<String, Map<String, DocumentScript>>  createScriptsMap(DocumentTypeManager documentTypes,
                                                                               IlscriptsConfig config,
                                                                               Linguistics linguistics,
-                                                                              Map<String, Embedder> embedders) {
+                                                                              Map<String, Chunker> chunkers,
+                                                                              Map<String, Embedder> embedders,
+                                                                              Map<String, FieldGenerator> generators,
+                                                                              MetricReceiver metricReceiver) {
         Map<String, Map<String, DocumentScript>> documentFieldScripts = new HashMap<>(config.ilscript().size());
-        ScriptParserContext parserContext = new ScriptParserContext(linguistics, embedders);
+        ScriptParserContext parserContext = new ScriptParserContext(linguistics, chunkers, embedders, generators)
+                .setMetricReceiver(metricReceiver);
         parserContext.getAnnotatorConfig().setMaxTermOccurrences(config.maxtermoccurrences());
         parserContext.getAnnotatorConfig().setMaxTokenizeLength(config.fieldmatchmaxlength());
+        parserContext.getAnnotatorConfig().setMaxReplacementCharactersRatio(config.maxReplacementCharactersRatio());
+        parserContext.getAnnotatorConfig().setMaxReplacementCharacters(config.maxReplacementCharacters());
 
         for (IlscriptsConfig.Ilscript ilscript : config.ilscript()) {
-            DocumentType documentType = docTypeMgr.getDocumentType(ilscript.doctype());
+            DocumentType documentType = documentTypes.getDocumentType(ilscript.doctype());
             InputExpression.FieldPathOptimizer fieldPathOptimizer = new InputExpression.FieldPathOptimizer(documentType);
-            List<StatementExpression> expressions = new ArrayList<>(ilscript.content().size());
+            List<StatementExpression> allStatements = new ArrayList<>(ilscript.content().size());
             Map<String, DocumentScript> fieldScripts = new HashMap<>(ilscript.content().size());
             for (String content : ilscript.content()) {
-                StatementExpression statement = parse(ilscript.doctype(), parserContext, content);
-                expressions.add(statement);
-                List<String> inputFieldNames = InputExpression.InputFieldNameExtractor.runOn(statement);
+                StatementExpression statement = parse(documentType, parserContext, content);
+                allStatements.add(statement);
+                List<String> allInputFieldNames = InputExpression.InputFieldNameExtractor.runOn(statement);
+                Set<String> requiredInputFields = InputExpression.RequiredInputFieldsExtractor.runOn(statement);
                 OutputExpression.OutputFieldNameExtractor outputFieldNameExtractor = new OutputExpression.OutputFieldNameExtractor();
                 statement.select(outputFieldNameExtractor, outputFieldNameExtractor);
                 statement.select(fieldPathOptimizer, fieldPathOptimizer);
@@ -90,40 +103,38 @@ public class ScriptManager {
                     String outputFieldName = outputFieldNameExtractor.getOutputFieldNames().get(0);
                     statement.setStatementOutput(documentType, documentType.getField(outputFieldName));
                 }
-                if (inputFieldNames.size() == 1) {
-                    String fieldName = inputFieldNames.get(0);
-                    ScriptExpression script;
+                if (allInputFieldNames.size() == 1 || requiredInputFields.size() == 1) {
+                    String fieldName = (allInputFieldNames.size() == 1)
+                            ? allInputFieldNames.iterator().next()
+                            : requiredInputFields.iterator().next();
+                    ScriptExpression fieldScript;
                     if (fieldScripts.containsKey(fieldName)) {
-                        DocumentScript prev = fieldScripts.get(fieldName);
-                        List<StatementExpression> appendedList = new ArrayList<>(((ScriptExpression)prev.getExpression()).asList());
+                        DocumentScript existing = fieldScripts.get(fieldName);
+                        List<StatementExpression> appendedList = new ArrayList<>(existing.getExpression().asList());
                         appendedList.add(statement);
-                        script = new ScriptExpression(appendedList);
+                        fieldScript = new ScriptExpression(appendedList);
                     } else {
-                        script = new ScriptExpression(statement);
+                        fieldScript = new ScriptExpression(statement);
                     }
-                    DocumentScript documentScript = new DocumentScript(ilscript.doctype(), inputFieldNames, script);
-                    fieldScripts.put(fieldName, documentScript);
-                } else {
-                    log.log(Level.FINE, "Non single(" + inputFieldNames.size() +"" +
-                                        ") inputs = " + inputFieldNames + ". Script = " + statement);
+                    fieldScripts.put(fieldName, new DocumentScript(documentType, List.of(fieldName), fieldScript));
                 }
             }
 
-            ScriptExpression script = new ScriptExpression(expressions);
+            var script = new ScriptExpression(allStatements);
             script.select(fieldPathOptimizer, fieldPathOptimizer);
-            fieldScripts.put(FULL, new DocumentScript(ilscript.doctype(), ilscript.docfield(),script));
+            fieldScripts.put(FULL, new DocumentScript(documentType, ilscript.docfield(), script));
             documentFieldScripts.put(ilscript.doctype(), Collections.unmodifiableMap(fieldScripts));
         }
         return Collections.unmodifiableMap(documentFieldScripts);
     }
 
-    private static StatementExpression parse(String docType, ScriptParserContext parserConfig, String content) {
-        parserConfig.setInputStream(new IndexingInput(content));
+    private static StatementExpression parse(DocumentType type, ScriptParserContext parserConfig, String content) {
         try {
+            parserConfig.setInputStream(new IndexingInput(content));
             return StatementExpression.newInstance(parserConfig);
         } catch (ParseException e) {
-            throw new IllegalArgumentException("Illegal indexing script for document type '" +
-                                               docType + "'; " + content, e);
+            throw new IllegalArgumentException("Illegal indexing script for " + type, e);
         }
     }
+
 }

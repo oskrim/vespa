@@ -20,7 +20,6 @@ import org.w3c.dom.Element;
 
 import java.util.Collection;
 import java.util.List;
-import java.util.logging.Level;
 
 /**
  * Config model adaptor of the Admin class.
@@ -78,7 +77,9 @@ public class AdminModel extends ConfigModel {
 
         @Override
         public void doBuild(AdminModel model, Element adminElement, ConfigModelContext modelContext) {
-            if (modelContext.getDeployState().isHosted()) { // admin v4 is used on hosted: Build a default V4 instead
+            // admin v4 is used on hosted: Build a default V4 instead. We want to allow version 2.0 so
+            // that self-hosted apps deploy without changes. TODO: Warn if tags from version 2.0 are used (and ignored)
+            if (modelContext.getDeployState().isHosted()) {
                 new BuilderV4().doBuild(model, adminElement, modelContext);
                 return;
             }
@@ -99,8 +100,7 @@ public class AdminModel extends ConfigModel {
     public static class BuilderV4 extends ConfigModelBuilder<AdminModel> {
 
         public static final List<ConfigModelId> configModelIds =
-                List.of(ConfigModelId.fromNameAndVersion("admin", "3.0"),
-                        ConfigModelId.fromNameAndVersion("admin", "4.0"));
+                List.of(ConfigModelId.fromNameAndVersion("admin", "4.0"));
 
         public BuilderV4() {
             super(AdminModel.class);
@@ -111,12 +111,6 @@ public class AdminModel extends ConfigModel {
 
         @Override
         public void doBuild(AdminModel model, Element adminElement, ConfigModelContext modelContext) {
-            // TODO: Remove in Vespa 9
-            if ("3.0".equals(adminElement.getAttribute("version")))
-                modelContext.getDeployState().getDeployLogger()
-                            .logApplicationPackage(Level.WARNING, "admin model version 3.0 is deprecated and support will removed in Vespa 9, " +
-                                    "please use version 4.0 or remove the element completely. See https://cloud.vespa.ai/en/reference/services#ignored-elements");
-
             TreeConfigProducer<AnyConfigProducer> parent = modelContext.getParentProducer();
             ModelContext.Properties properties = modelContext.getDeployState().getProperties();
             DomAdminV4Builder domBuilder = new DomAdminV4Builder(modelContext,

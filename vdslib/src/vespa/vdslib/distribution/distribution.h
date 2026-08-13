@@ -9,13 +9,14 @@
 #pragma once
 
 #include "group.h"
+
 #include <vespa/document/bucket/bucketid.h>
 #include <vespa/vdslib/state/nodetype.h>
 #include <vespa/vespalib/util/exception.h>
 #include <vespa/vespalib/util/small_vector.h>
 
 namespace vespa::config::content::internal {
-    class InternalStorDistributionType;
+class InternalStorDistributionType;
 }
 namespace storage::lib {
 
@@ -27,28 +28,26 @@ class NodeState;
 
 class Distribution : public document::Printable {
 public:
-    using SP = std::shared_ptr<Distribution>;
-    using UP = std::unique_ptr<Distribution>;
     using DistributionConfig = const vespa::config::content::internal::InternalStorDistributionType;
     using DistributionConfigBuilder = vespa::config::content::internal::InternalStorDistributionType;
 
 private:
-    std::vector<uint32_t>      _distributionBitMasks;
-    std::unique_ptr<Group>     _nodeGraph;
-    std::vector<const Group *> _node2Group;
-    uint16_t _redundancy;
-    uint16_t _initialRedundancy;
-    uint16_t _readyCopies;
-    bool     _activePerGroup;
-    bool     _ensurePrimaryPersisted;
-    std::string _serialized;
+    std::unique_ptr<Group>    _nodeGraph;
+    std::vector<const Group*> _node2Group;
+    uint16_t                  _redundancy;
+    uint16_t                  _initialRedundancy;
+    uint16_t                  _readyCopies;
+    bool                      _global;
+    bool                      _activePerGroup;
+    bool                      _ensurePrimaryPersisted;
+    bool                      _relative_node_order_scoring;
+    std::string               _serialized;
 
     struct ResultGroup {
         const Group* _group;
-        uint16_t _redundancy;
+        uint16_t     _redundancy;
 
-        ResultGroup(const Group& group, uint16_t redundancy) noexcept
-            : _group(&group), _redundancy(redundancy) {}
+        ResultGroup(const Group& group, uint16_t redundancy) noexcept : _group(&group), _redundancy(redundancy) {}
 
         bool operator<(const ResultGroup& other) const noexcept {
             return _group->getIndex() < other._group->getIndex();
@@ -75,7 +74,8 @@ private:
     void getIdealGroups(const document::BucketId& bucket, const ClusterState& clusterState, const Group& parent,
                         uint16_t redundancy, std::vector<ResultGroup>& results) const;
 
-    const Group* getIdealDistributorGroup(const document::BucketId& bucket, const ClusterState& clusterState, const Group& parent) const;
+    const Group* getIdealDistributorGroup(const document::BucketId& bucket, const ClusterState& clusterState,
+                                          const Group& parent) const;
 
     /**
      * Since distribution object may be used often in ideal state calculations
@@ -83,24 +83,30 @@ private:
      * You need to create a new distribution object to change it. This function
      * is thus private so only constructor can call it.
      */
-    void configure(const DistributionConfig & config);
+    void configure(const DistributionConfig& config);
 
 public:
     class ConfigWrapper {
     public:
-        ConfigWrapper(ConfigWrapper && rhs) noexcept = default;
-        ConfigWrapper & operator = (ConfigWrapper && rhs) noexcept = default;
+        ConfigWrapper(ConfigWrapper&& rhs) noexcept = default;
+        ConfigWrapper& operator=(ConfigWrapper&& rhs) noexcept = default;
         explicit ConfigWrapper(std::unique_ptr<DistributionConfig> cfg) noexcept;
         ~ConfigWrapper();
-        [[nodiscard]] const DistributionConfig & get() const noexcept { return *_cfg; }
+        [[nodiscard]] const DistributionConfig& get() const noexcept { return *_cfg; }
         [[nodiscard]] std::unique_ptr<DistributionConfig> steal() noexcept;
+
     private:
         std::unique_ptr<DistributionConfig> _cfg;
     };
     Distribution();
     Distribution(const Distribution&);
-    explicit Distribution(const ConfigWrapper & cfg);
-    explicit Distribution(const DistributionConfig & cfg);
+    explicit Distribution(const ConfigWrapper& cfg);
+    explicit Distribution(const DistributionConfig& cfg);
+    // If `is_global == true`, it is the responsibility of the caller to ensure the
+    // config has been transformed in such a way that it passes legacy cross-node
+    // distribution config hash checks for global distribution configs. This constructor
+    // does _not_ perform any config rewriting.
+    Distribution(const DistributionConfig& cfg, bool is_global);
     explicit Distribution(const std::string& serialized);
     ~Distribution() override;
 
@@ -114,6 +120,7 @@ public:
     [[nodiscard]] uint16_t getReadyCopies() const noexcept { return _readyCopies; }
     [[nodiscard]] bool ensurePrimaryPersisted() const noexcept { return _ensurePrimaryPersisted; }
     [[nodiscard]] bool activePerGroup() const noexcept { return _activePerGroup; }
+    [[nodiscard]] bool is_global() const noexcept { return _global; }
 
     bool operator==(const Distribution& o) const noexcept { return (_serialized == o._serialized); }
     bool operator!=(const Distribution& o) const noexcept { return (_serialized != o._serialized); }
@@ -121,10 +128,12 @@ public:
     void print(std::ostream& out, bool, const std::string&) const override;
 
     /** Simplified wrapper for getIdealNodes() */
-    [[nodiscard]] std::vector<uint16_t> getIdealStorageNodes(const ClusterState&, const document::BucketId&, const char* upStates = "uim") const;
+    [[nodiscard]] std::vector<uint16_t> getIdealStorageNodes(const ClusterState&, const document::BucketId&,
+                                                             const char* upStates = "uim") const;
 
     /** Simplified wrapper for getIdealNodes() */
-    [[nodiscard]] uint16_t getIdealDistributorNode(const ClusterState&, const document::BucketId&, const char* upStates = "uim") const;
+    [[nodiscard]] uint16_t getIdealDistributorNode(const ClusterState&, const document::BucketId&,
+                                                   const char* upStates = "uim") const;
 
     /**
      * @throws TooFewBucketBitsInUseException If distribution bit count is
@@ -151,7 +160,11 @@ public:
     std::vector<IndexList> splitNodesIntoLeafGroups(std::span<const uint16_t> nodes) const;
 
     static bool allDistributorsDown(const Group&, const ClusterState&);
+
+    // BucketId LSB mask based on the current cluster distribution bit value
+    [[nodiscard]] constexpr static uint32_t distribution_bit_mask(const uint32_t distribution_bits) noexcept {
+        return static_cast<uint32_t>((uint64_t{1} << distribution_bits) - 1);
+    }
 };
 
-} // storage::lib
-
+} // namespace storage::lib

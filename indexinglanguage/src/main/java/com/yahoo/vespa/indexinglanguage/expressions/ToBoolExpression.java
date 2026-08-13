@@ -2,6 +2,7 @@
 package com.yahoo.vespa.indexinglanguage.expressions;
 
 import com.yahoo.document.DataType;
+import com.yahoo.document.NumericDataType;
 import com.yahoo.document.datatypes.BoolFieldValue;
 import com.yahoo.document.datatypes.FieldValue;
 import com.yahoo.document.datatypes.NumericFieldValue;
@@ -12,13 +13,19 @@ import com.yahoo.document.datatypes.StringFieldValue;
  */
 public final class ToBoolExpression extends Expression {
 
-    public ToBoolExpression() {
-        super(UnresolvedDataType.INSTANCE);
+    @Override
+    public DataType setInputType(DataType input, TypeContext context) {
+        super.setInputType(input, context);
+        if (input == null) return null;
+        if ( ! (input.isAssignableTo(DataType.STRING)) && ! (input instanceof NumericDataType))
+            throw new VerificationException(this, "Input must be a string or number, but got " + input.getName());
+        return DataType.BOOL;
     }
 
     @Override
-    protected void doVerify(VerificationContext context) {
-        context.setCurrentType(createdOutputType());
+    public DataType setOutputType(DataType output, TypeContext context) {
+        super.setOutputType(DataType.BOOL, output, null, context);
+        return getInputType(context);
     }
 
     @Override
@@ -33,9 +40,6 @@ public final class ToBoolExpression extends Expression {
             return ! ((StringFieldValue)value).getString().isEmpty();
         return false;
     }
-
-    @Override
-    public DataType createdOutputType() { return DataType.BOOL; }
 
     @Override
     public String toString() { return "to_bool"; }

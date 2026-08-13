@@ -9,7 +9,9 @@ import org.junit.Test;
 
 import static com.yahoo.vespa.indexinglanguage.expressions.ExpressionAssert.assertVerify;
 import static com.yahoo.vespa.indexinglanguage.expressions.ExpressionAssert.assertVerifyThrows;
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.fail;
 
 /**
  * @author Simon Thoresen Hult
@@ -34,10 +36,9 @@ public class JoinTestCase {
     @Test
     public void requireThatExpressionCanBeVerified() {
         Expression exp = new JoinExpression(";");
-        assertVerify(DataType.getArray(DataType.INT), exp, DataType.STRING);
-        assertVerify(DataType.getArray(DataType.STRING), exp, DataType.STRING);
-        assertVerifyThrows(null, exp, "Expected any input, but no input is specified");
-        assertVerifyThrows(DataType.INT, exp, "Expected Array input, got int");
+        assertVerify(DataType.getArray(DataType.INT), new JoinExpression(";"), DataType.STRING);
+        assertVerify(DataType.getArray(DataType.STRING), new JoinExpression(";"), DataType.STRING);
+        assertVerifyThrows("Invalid expression 'join \";\"': Expected Array input, got type int", DataType.INT, new JoinExpression(";"));
     }
 
     @Test

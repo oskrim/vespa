@@ -2,9 +2,7 @@ package ai.vespa.schemals;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
-import java.io.ByteArrayOutputStream;
 import java.io.File;
-import java.io.PrintStream;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -12,14 +10,11 @@ import java.util.List;
 import java.util.stream.Stream;
 
 import org.eclipse.lsp4j.Diagnostic;
-import org.eclipse.lsp4j.DiagnosticSeverity;
-import org.eclipse.lsp4j.Position;
 import org.junit.jupiter.api.DynamicTest;
 import org.junit.jupiter.api.TestFactory;
 
 import com.yahoo.io.IOUtils;
 
-import ai.vespa.schemals.common.ClientLogger;
 import ai.vespa.schemals.common.FileUtils;
 import ai.vespa.schemals.context.ParseContext;
 import ai.vespa.schemals.index.SchemaIndex;
@@ -27,38 +22,17 @@ import ai.vespa.schemals.schemadocument.SchemaDocument;
 import ai.vespa.schemals.schemadocument.SchemaDocument.ParseResult;
 import ai.vespa.schemals.schemadocument.SchemaDocumentScheduler;
 
-import ai.vespa.schemals.testutils.*;
+import ai.vespa.schemals.testutils.TestLogger;
+import ai.vespa.schemals.testutils.TestSchemaDiagnosticsHandler;
+import ai.vespa.schemals.testutils.TestSchemaMessageHandler;
+import ai.vespa.schemals.testutils.TestSchemaProgressHandler;
+import ai.vespa.schemals.testutils.Utils;
 
 public class SchemaParserTest {
-    static long countErrors(List<Diagnostic> diagnostics) {
-        return diagnostics.stream()
-                          .filter(diag -> diag.getSeverity() == DiagnosticSeverity.Error || diag.getSeverity() == null)
-                          .count();
-    }
-
-    static String constructDiagnosticMessage(List<Diagnostic> diagnostics, int indent) {
-        String message = "";
-        for (var diagnostic : diagnostics) {
-            String severityString = "";
-            if (diagnostic.getSeverity() == null) severityString = "No Severity";
-            else severityString = diagnostic.getSeverity().toString();
-
-            Position start = diagnostic.getRange().getStart();
-            message += "\n" + new String(new char[indent]).replace('\0', '\t') +
-                "Diagnostic" + "[" + severityString + "]: \"" + diagnostic.getMessage() + "\", at position: (" + start.getLine() + ", " + start.getCharacter() + ")";
-
-        }
-        return message;
-    }
 
     ParseResult parseString(String input, String fileName) throws Exception {
-        SchemaMessageHandler messageHandler = new TestSchemaMessageHandler();
-        ClientLogger logger = new TestLogger(messageHandler);
-        SchemaIndex schemaIndex = new SchemaIndex(logger);
-        TestSchemaDiagnosticsHandler diagnosticsHandler = new TestSchemaDiagnosticsHandler(new ArrayList<>());
-        SchemaDocumentScheduler scheduler = new SchemaDocumentScheduler(logger, diagnosticsHandler, schemaIndex, messageHandler);
-        schemaIndex.clearDocument(fileName);
-        ParseContext context = new ParseContext(input, logger, fileName, schemaIndex, scheduler);
+        ParseContext context = Utils.createTestContext(input, fileName);
+        context.useGeneralIdentifers();
         context.useDocumentIdentifiers();
         return SchemaDocument.parseContent(context);
     }
@@ -75,8 +49,8 @@ public class SchemaParserTest {
     void checkFileParses(String fileName) throws Exception {
         try {
             var parseResult = parseFile(fileName);
-            String testMessage = "For file: " + fileName + constructDiagnosticMessage(parseResult.diagnostics(), 1);
-            assertEquals(0, countErrors(parseResult.diagnostics()), testMessage);
+            String testMessage = "For file: " + fileName + Utils.constructDiagnosticMessage(parseResult.diagnostics(), 1);
+            assertEquals(0, Utils.countErrors(parseResult.diagnostics()), testMessage);
         } catch(Exception e) {
             throw new Exception(fileName + "\n" + e.getMessage());
         }
@@ -84,20 +58,21 @@ public class SchemaParserTest {
 
     void checkFileFails(String fileName, int expectedErrors) throws Exception {
         var parseResult = parseFile(fileName);
-        String testMessage = "For file: " + fileName + constructDiagnosticMessage(parseResult.diagnostics(), 1);
-        assertEquals(expectedErrors, countErrors(parseResult.diagnostics()), testMessage);
+        String testMessage = "For file: " + fileName + Utils.constructDiagnosticMessage(parseResult.diagnostics(), 1);
+        assertEquals(expectedErrors, Utils.countErrors(parseResult.diagnostics()), testMessage);
     }
 
     void checkDirectoryParses(String directoryPath) throws Exception {
         String directoryURI = new File(directoryPath).toURI().toString();
 
-        SchemaMessageHandler messageHandler = new TestSchemaMessageHandler();
-        ClientLogger logger = new TestLogger(messageHandler);
+        TestSchemaMessageHandler messageHandler = new TestSchemaMessageHandler();
+        TestSchemaProgressHandler progressHandler = new TestSchemaProgressHandler();
+        TestLogger logger = new TestLogger(messageHandler);
         SchemaIndex schemaIndex = new SchemaIndex(logger);
 
         List<Diagnostic> diagnostics = new ArrayList<>();
         SchemaDiagnosticsHandler diagnosticsHandler = new TestSchemaDiagnosticsHandler(diagnostics);
-        SchemaDocumentScheduler scheduler = new SchemaDocumentScheduler(logger, diagnosticsHandler, schemaIndex, messageHandler);
+        SchemaDocumentScheduler scheduler = new SchemaDocumentScheduler(logger, diagnosticsHandler, schemaIndex, messageHandler, progressHandler);
 
         scheduler.setupWorkspace(URI.create(directoryURI));
 
@@ -112,18 +87,25 @@ public class SchemaParserTest {
             diagnostics.clear();
             var documentHandle = scheduler.getRankProfileDocument(rankProfileURI);
             documentHandle.reparseContent();
-            testMessage += "\n    File: " + rankProfileURI + constructDiagnosticMessage(diagnostics, 2);
+            testMessage += "\n    File: " + rankProfileURI + Utils.constructDiagnosticMessage(diagnostics, 2);
 
-            numErrors += countErrors(diagnostics);
+            numErrors += Utils.countErrors(diagnostics);
         }
 
         for (String schemaURI : schemaFiles) {
             diagnostics.clear();
             var documentHandle = scheduler.getSchemaDocument(schemaURI);
             documentHandle.reparseContent();
-            testMessage += "\n    File: " + schemaURI + constructDiagnosticMessage(diagnostics, 2);
+            testMessage += "\n    File: " + schemaURI + Utils.constructDiagnosticMessage(diagnostics, 2);
 
-            numErrors += countErrors(diagnostics);
+            numErrors += Utils.countErrors(diagnostics);
+        }
+
+        List<String> clientErrors = logger.getErrorMessages();
+        numErrors += clientErrors.size();
+
+        for (var s : clientErrors) {
+            testMessage += "\n    Client error: " + s;
         }
 
         assertEquals(0, numErrors, testMessage);
@@ -173,7 +155,6 @@ public class SchemaParserTest {
             "../../../config-model/src/test/derived/nearestneighbor/test.sd",
             "../../../config-model/src/test/derived/newrank/newrank.sd",
             "../../../config-model/src/test/derived/nuwa/newsindex.sd",
-            "../../../config-model/src/test/derived/orderilscripts/orderilscripts.sd",
             "../../../config-model/src/test/derived/position_array/position_array.sd",
             "../../../config-model/src/test/derived/position_attribute/position_attribute.sd",
             "../../../config-model/src/test/derived/position_extra/position_extra.sd",
@@ -198,70 +179,75 @@ public class SchemaParserTest {
             "../../../config-model/src/test/configmodel/types/types.sd",
 
             "../../../config-model/src/test/examples/arrays.sd",
-            "../../../config-model/src/test/examples/arraysweightedsets.sd",  
-            "../../../config-model/src/test/examples/attributesettings.sd",  
-            "../../../config-model/src/test/examples/attributesexactmatch.sd",  
-            "../../../config-model/src/test/examples/casing.sd",  
-            "../../../config-model/src/test/examples/comment.sd",  
-            "../../../config-model/src/test/examples/documentidinsummary.sd",  
-            "../../../config-model/src/test/examples/implicitsummaries_attribute.sd",  
-            "../../../config-model/src/test/examples/implicitsummaryfields.sd",  
-            "../../../config-model/src/test/examples/incorrectrankingexpressionfileref.sd",  
-            "../../../config-model/src/test/examples/indexing.sd",  
-            "../../../config-model/src/test/examples/indexing_extra.sd",  
-            "../../../config-model/src/test/examples/indexing_input_other_field.sd",  
-            "../../../config-model/src/test/examples/indexing_multiline_output_conflict.sd",  
-            "../../../config-model/src/test/examples/indexing_summary_changed.sd",  
-            "../../../config-model/src/test/examples/indexrewrite.sd",  
-            "../../../config-model/src/test/examples/indexsettings.sd",  
-            "../../../config-model/src/test/examples/integerindex2attribute.sd",  
-            "../../../config-model/src/test/examples/invalidngram1.sd",  
-            "../../../config-model/src/test/examples/invalidngram2.sd",  
-            "../../../config-model/src/test/examples/invalidngram3.sd",  
-            "../../../config-model/src/test/examples/largerankingexpressions/rankexpression.sd",  
-            "../../../config-model/src/test/examples/multiplesummaries.sd",  
-            "../../../config-model/src/test/examples/nextgen/boldedsummaryfields.sd",  
-            "../../../config-model/src/test/examples/nextgen/dynamicsummaryfields.sd",  
-            "../../../config-model/src/test/examples/nextgen/extrafield.sd",  
-            "../../../config-model/src/test/examples/nextgen/implicitstructtypes.sd",  
-            "../../../config-model/src/test/examples/nextgen/simple.sd",  
-            "../../../config-model/src/test/examples/nextgen/summaryfield.sd",  
-            "../../../config-model/src/test/examples/nextgen/toggleon.sd",  
-            "../../../config-model/src/test/examples/nextgen/untransformedsummaryfields.sd",  
-            "../../../config-model/src/test/examples/nextgen/unusedfields.sd",  
-            "../../../config-model/src/test/examples/nextgen/uri_array.sd",  
-            "../../../config-model/src/test/examples/nextgen/uri_simple.sd",  
-            "../../../config-model/src/test/examples/nextgen/uri_wset.sd",  
-            "../../../config-model/src/test/examples/ngram.sd",  
-            "../../../config-model/src/test/examples/outsidedoc.sd",  
-            "../../../config-model/src/test/examples/outsidesummary.sd",  
-            "../../../config-model/src/test/examples/position_array.sd",  
-            "../../../config-model/src/test/examples/position_attribute.sd",  
-            "../../../config-model/src/test/examples/position_base.sd",  
-            "../../../config-model/src/test/examples/position_extra.sd",  
-            "../../../config-model/src/test/examples/position_index.sd",  
-            "../../../config-model/src/test/examples/position_summary.sd",  
-            "../../../config-model/src/test/examples/rankingexpressionfunction/rankingexpressionfunction.sd",  
-            "../../../config-model/src/test/examples/rankingexpressioninfile/rankingexpressioninfile.sd",  
-            "../../../config-model/src/test/examples/rankmodifier/literal.sd",  
-            "../../../config-model/src/test/examples/rankpropvars.sd",  
-            "../../../config-model/src/test/examples/reserved_words_as_field_names.sd",  
-            "../../../config-model/src/test/examples/stemmingdefault.sd",  
-            "../../../config-model/src/test/examples/stemmingsetting.sd",  
-            "../../../config-model/src/test/examples/strange.sd",  
-            "../../../config-model/src/test/examples/struct.sd",  
-            "../../../config-model/src/test/examples/struct_outside.sd",  
-            "../../../config-model/src/test/examples/structanddocumentwithsamenames.sd",  
-            "../../../config-model/src/test/examples/structoutsideofdocument.sd",  
-            "../../../config-model/src/test/examples/summaryfieldcollision.sd",  
-            "../../../config-model/src/test/examples/weightedset-summaryto.sd",  
+            "../../../config-model/src/test/examples/arraysweightedsets.sd",
+            "../../../config-model/src/test/examples/attributesettings.sd",
+            "../../../config-model/src/test/examples/attributesexactmatch.sd",
+            "../../../config-model/src/test/examples/casing.sd",
+            "../../../config-model/src/test/examples/comment.sd",
+            "../../../config-model/src/test/examples/documentidinsummary.sd",
+            "../../../config-model/src/test/examples/implicitsummaries_attribute.sd",
+            "../../../config-model/src/test/examples/implicitsummaryfields.sd",
+            "../../../config-model/src/test/examples/incorrectrankingexpressionfileref.sd",
+            "../../../config-model/src/test/examples/indexing.sd",
+            "../../../config-model/src/test/examples/indexing_extra.sd",
+            "../../../config-model/src/test/examples/indexing_input_other_field.sd",
+            "../../../config-model/src/test/examples/indexing_multiline_output_conflict.sd",
+            "../../../config-model/src/test/examples/indexing_summary_changed.sd",
+            "../../../config-model/src/test/examples/indexrewrite.sd",
+            "../../../config-model/src/test/examples/indexsettings.sd",
+            "../../../config-model/src/test/examples/integerindex2attribute.sd",
+            "../../../config-model/src/test/examples/invalidngram1.sd",
+            "../../../config-model/src/test/examples/invalidngram2.sd",
+            "../../../config-model/src/test/examples/invalidngram3.sd",
+            "../../../config-model/src/test/examples/multiplesummaries.sd",
+            "../../../config-model/src/test/examples/nextgen/boldedsummaryfields.sd",
+            "../../../config-model/src/test/examples/nextgen/dynamicsummaryfields.sd",
+            "../../../config-model/src/test/examples/nextgen/extrafield.sd",
+            "../../../config-model/src/test/examples/nextgen/implicitstructtypes.sd",
+            "../../../config-model/src/test/examples/nextgen/simple.sd",
+            "../../../config-model/src/test/examples/nextgen/summaryfield.sd",
+            "../../../config-model/src/test/examples/nextgen/toggleon.sd",
+            "../../../config-model/src/test/examples/nextgen/untransformedsummaryfields.sd",
+            "../../../config-model/src/test/examples/nextgen/unusedfields.sd",
+            "../../../config-model/src/test/examples/nextgen/uri_array.sd",
+            "../../../config-model/src/test/examples/nextgen/uri_simple.sd",
+            "../../../config-model/src/test/examples/nextgen/uri_wset.sd",
+            "../../../config-model/src/test/examples/ngram.sd",
+            "../../../config-model/src/test/examples/outsidedoc.sd",
+            "../../../config-model/src/test/examples/outsidesummary.sd",
+            "../../../config-model/src/test/examples/position_array.sd",
+            "../../../config-model/src/test/examples/position_attribute.sd",
+            "../../../config-model/src/test/examples/position_base.sd",
+            "../../../config-model/src/test/examples/position_extra.sd",
+            "../../../config-model/src/test/examples/position_index.sd",
+            "../../../config-model/src/test/examples/position_summary.sd",
+            "../../../config-model/src/test/examples/rankingexpressioninfile/rankingexpressioninfile.sd",
+            "../../../config-model/src/test/examples/rankmodifier/literal.sd",
+            "../../../config-model/src/test/examples/reserved_words_as_field_names.sd",
+            "../../../config-model/src/test/examples/stemmingdefault.sd",
+            "../../../config-model/src/test/examples/stemmingsetting.sd",
+            "../../../config-model/src/test/examples/strange.sd",
+            "../../../config-model/src/test/examples/struct.sd",
+            "../../../config-model/src/test/examples/struct_outside.sd",
+            "../../../config-model/src/test/examples/structanddocumentwithsamenames.sd",
+            "../../../config-model/src/test/examples/structoutsideofdocument.sd",
+            "../../../config-model/src/test/examples/summaryfieldcollision.sd",
+            "../../../config-model/src/test/examples/weightedset-summaryto.sd",
 
 
             /*
              * CUSTOM TESTS
              * */
-            "src/test/sdfiles/single/structinfieldset.sd",
             "src/test/sdfiles/single/attributeposition.sd",
+            "src/test/sdfiles/single/bm25label.sd",
+            "src/test/sdfiles/single/defaultdefault.sd",
+            "src/test/sdfiles/single/elementwise.sd",
+            "src/test/sdfiles/single/embed.sd",
+            "src/test/sdfiles/single/foreach.sd",
+            "src/test/sdfiles/single/rankprofilebuiltin.sd",
+            "src/test/sdfiles/single/structinfieldset.sd",
+            "src/test/sdfiles/single/subqueries.sd",
+            "src/test/sdfiles/single/tensorfromlabels.sd",
         };
 
         return Arrays.stream(filePaths)
@@ -297,6 +283,7 @@ public class SchemaParserTest {
              */
             "src/test/sdfiles/multi/types/",
             "src/test/sdfiles/multi/bookandmusic/",
+            "src/test/sdfiles/multi/documentid/",
         };
 
         return Arrays.stream(directories)
@@ -320,15 +307,18 @@ public class SchemaParserTest {
             new BadFileTestCase("../../../config-model/src/test/examples/invalid-name.sd", 1),
             new BadFileTestCase("../../../config-model/src/test/examples/invalid_sd_construct.sd", 1),
             new BadFileTestCase("../../../config-model/src/test/examples/invalid_sd_junk_at_end.sd", 1),
-            new BadFileTestCase("../../../config-model/src/test/examples/invalid_sd_lexical_error.sd", 1), 
+            new BadFileTestCase("../../../config-model/src/test/examples/invalid_sd_lexical_error.sd", 1),
             new BadFileTestCase("../../../config-model/src/test/examples/invalid_sd_missing_document.sd", 2),
-            new BadFileTestCase("../../../config-model/src/test/examples/invalid_sd_no_closing_bracket.sd", 1), 
-            new BadFileTestCase("../../../config-model/src/test/examples/invalidimplicitsummarysource.sd", 1), 
+            new BadFileTestCase("../../../config-model/src/test/examples/invalid_sd_no_closing_bracket.sd", 1),
+            new BadFileTestCase("../../../config-model/src/test/examples/invalidimplicitsummarysource.sd", 1),
             new BadFileTestCase("../../../config-model/src/test/examples/invalidselfreferringsummary.sd", 1),
             new BadFileTestCase("../../../config-model/src/test/examples/invalidsummarysource.sd", 1),
+            new BadFileTestCase("../../../config-model/src/test/examples/largerankingexpressions/rankexpression.sd", 2),
+            new BadFileTestCase("../../../config-model/src/test/examples/rankingexpressionfunction/rankingexpressionfunction.sd", 2),
+            new BadFileTestCase("../../../config-model/src/test/examples/rankpropvars.sd", 2),
             new BadFileTestCase("../../../config-model/src/test/examples/stemmingresolver.sd", 1),
-            new BadFileTestCase("../../../config-model/src/test/derived/rankingexpression/rankexpression.sd", 7),
-            new BadFileTestCase("../../../config-model/src/test/derived/renamedfeatures/foo.sd", 1),
+            new BadFileTestCase("../../../config-model/src/test/derived/rankingexpression/rankexpression.sd", 41),
+            new BadFileTestCase("../../../config-model/src/test/derived/renamedfeatures/foo.sd", 4),
 
             new BadFileTestCase("../../../config-model/src/test/derived/rankprofiles/rankprofiles.sd", 1), // only throws a warning during vespa deploy, but it is an unresolved reference case.
 
@@ -336,9 +326,26 @@ public class SchemaParserTest {
 
             new BadFileTestCase("../../../config-model/src/test/examples/simple.sd", 5), // TODO: unused rank-profile functions should throw errors? Also rank-type doesntexist: ... in field?
 
-            new BadFileTestCase("src/test/sdfiles/single/rankprofilefuncs.sd", 2),
+            new BadFileTestCase("src/test/sdfiles/single/bm25forlabelsargsbad.sd", 1),
+            new BadFileTestCase("src/test/sdfiles/single/bm25forlabelsattrbad.sd", 1),
+            new BadFileTestCase("src/test/sdfiles/single/bm25labelbarebad.sd", 1),
+            new BadFileTestCase("src/test/sdfiles/single/bm25labelemptybad.sd", 1),
+            new BadFileTestCase("src/test/sdfiles/single/bm25quotelabelemptybad.sd", 1),
+            new BadFileTestCase("src/test/sdfiles/single/bm25labelunknownfieldbad.sd", 1),
+            new BadFileTestCase("src/test/sdfiles/single/bm25labelwrapperbad.sd", 1),
+            new BadFileTestCase("src/test/sdfiles/single/bm25labelwrongtagbad.sd", 1),
+            new BadFileTestCase("src/test/sdfiles/single/bm25numericfieldbad.sd", 1),
+            new BadFileTestCase("src/test/sdfiles/single/bm25quotefieldattrbad.sd", 1),
+            new BadFileTestCase("src/test/sdfiles/single/bm25quotefieldunknownbad.sd", 1),
+            new BadFileTestCase("src/test/sdfiles/single/elementwisebm25labelbad.sd", 1),
+            new BadFileTestCase("src/test/sdfiles/single/featuresinheritance.sd", 1),
+            new BadFileTestCase("src/test/sdfiles/single/foreachbad.sd", 1),
             new BadFileTestCase("src/test/sdfiles/single/onnxmodel.sd", 1),
-            new BadFileTestCase("src/test/sdfiles/single/tensorGenerate.sd", 2)
+            new BadFileTestCase("src/test/sdfiles/single/onnxmodelinput.sd", 6),
+            new BadFileTestCase("src/test/sdfiles/single/rankprofilefuncs.sd", 2),
+            new BadFileTestCase("src/test/sdfiles/single/rankproperties.sd", 1),
+            new BadFileTestCase("src/test/sdfiles/single/tensorGenerate.sd", 2),
+            new BadFileTestCase("src/test/sdfiles/single/tensorfromlabelsbad.sd", 1),
         };
 
         return Arrays.stream(tests)

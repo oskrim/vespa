@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 # Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 # BEGIN environment bootstrap section
@@ -82,6 +82,7 @@ exec java \
 -server -enableassertions \
 -XX:ThreadStackSize=512 \
 -XX:MaxJavaStackTraceDepth=1000000 \
+-Djava.io.tmpdir=${VESPA_HOME}/var/tmp \
 -Djava.library.path=${VESPA_HOME}/libexec64/native:${VESPA_HOME}/lib64 \
 -XX:MaxDirectMemorySize=32m -Djava.awt.headless=true $(getJavaOptionsIPV46) \
 -cp ${VESPA_HOME}/lib/jars/vespaclient-java-jar-with-dependencies.jar:$CLASSPATH com.yahoo.vespavisit.VdsVisitTarget "$@"

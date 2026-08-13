@@ -1,16 +1,17 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
-#include <vespa/vespalib/testkit/test_kit.h>
-#include <vespa/vespalib/util/shutdownguard.h>
+#include <vespa/vespalib/gtest/gtest.h>
 #include <vespa/vespalib/util/malloc_mmap_guard.h>
-#include <thread>
-#include <unistd.h>
+#include <vespa/vespalib/util/shutdownguard.h>
+
 #include <sys/wait.h>
+#include <unistd.h>
+
 #include <cstdlib>
+#include <thread>
 
 using namespace vespalib;
 
-TEST("test shutdown guard")
-{
+TEST(ShutdownGuardTest, test_shutdown_guard) {
     {
         ShutdownGuard farFuture(1000000s);
         std::this_thread::sleep_for(20ms);
@@ -29,15 +30,15 @@ TEST("test shutdown guard")
         int stat = 0;
         if (waitpid(child, &stat, WNOHANG) == child) {
             EXPECT_TRUE(WIFEXITED(stat));
-            EXPECT_EQUAL(1, WEXITSTATUS(stat));
+            EXPECT_EQ(1, WEXITSTATUS(stat));
             break;
         }
         EXPECT_TRUE(i < 800);
     }
 }
 
-TEST("test malloc mmap guard") {
+TEST(ShutdownGuardTest, test_malloc_mmap_guard) {
     MallocMmapGuard guard(0x100000);
 }
 
-TEST_MAIN() { TEST_RUN_ALL(); }
+GTEST_MAIN_RUN_ALL_TESTS()

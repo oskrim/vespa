@@ -8,6 +8,7 @@ import com.yahoo.schema.Schema;
 import com.yahoo.schema.processing.DynamicSummaryTransformUtils;
 import com.yahoo.vespa.config.search.SummaryConfig;
 import com.yahoo.vespa.documentmodel.DocumentSummary;
+import com.yahoo.vespa.documentmodel.SummaryElementsSelector;
 import com.yahoo.vespa.documentmodel.SummaryField;
 import com.yahoo.vespa.documentmodel.SummaryTransform;
 
@@ -44,7 +45,7 @@ public class SummaryClass extends Derived {
      * @param deployLogger a {@link DeployLogger}
      */
     public SummaryClass(Schema schema, DocumentSummary summary, DeployLogger deployLogger) {
-        super(summary.getName());
+        super(summary.name());
         this.deployLogger = deployLogger;
         this.rawAsBase64 = schema.isRawAsBase64();
         this.omitSummaryFeatures = summary.omitSummaryFeatures();
@@ -52,15 +53,15 @@ public class SummaryClass extends Derived {
         deriveFields(schema, summary, fields);
         deriveImplicitFields(summary, fields);
         this.fields = Collections.unmodifiableMap(fields);
-        this.id = deriveId(summary.getName(), fields);
+        this.id = deriveId(summary.name(), fields);
     }
 
     public int id() { return id; }
 
     /** MUST be called after all other fields are added */
     private void deriveImplicitFields(DocumentSummary summary, Map<String, SummaryClassField> fields) {
-        if (summary.getName().equals("default")) {
-            addField(SummaryClass.DOCUMENT_ID_FIELD, DataType.STRING, SummaryTransform.DOCUMENT_ID, "", fields);
+        if (summary.name().equals("default")) {
+            addField(SummaryClass.DOCUMENT_ID_FIELD, DataType.STRING, SummaryElementsSelector.selectAll(), SummaryTransform.DOCUMENT_ID, "", fields);
         }
     }
 
@@ -69,12 +70,13 @@ public class SummaryClass extends Derived {
             if (!accessingDiskSummary && schema.isAccessingDiskSummary(summaryField)) {
                 accessingDiskSummary = true;
             }
-            addField(summaryField.getName(), summaryField.getDataType(), summaryField.getTransform(),
+            addField(summaryField.getName(), summaryField.getDataType(), summaryField.getElementsSelector(), summaryField.getTransform(),
                     getSource(summaryField, schema), fields);
         }
     }
 
     private void addField(String name, DataType type,
+                          SummaryElementsSelector elementsSelector,
                           SummaryTransform transform,
                           String source,
                           Map<String, SummaryClassField> fields) {
@@ -85,7 +87,7 @@ public class SummaryClass extends Derived {
                                                                   ". " + "Declared as type " + sf.getType() + " and " + type);
             }
         } else {
-            fields.put(name, new SummaryClassField(name, type, transform, source, rawAsBase64));
+            fields.put(name, new SummaryClassField(name, type, elementsSelector, transform, source, rawAsBase64));
         }
     }
 
@@ -114,7 +116,8 @@ public class SummaryClass extends Derived {
             classBuilder.fields(new SummaryConfig.Classes.Fields.Builder().
                     name(field.getName()).
                     command(field.getCommand()).
-                    source(field.getSource()));
+                    source(field.getSource()).
+                    elements(convertElementsSelector(field.getElementsSelector())));
         }
         return classBuilder;
     }
@@ -152,8 +155,6 @@ public class SummaryClass extends Derived {
                 summaryField.getTransform() == SummaryTransform.DISTANCE ||
                 summaryField.getTransform() == SummaryTransform.GEOPOS ||
                 summaryField.getTransform() == SummaryTransform.POSITIONS ||
-                summaryField.getTransform() == SummaryTransform.MATCHED_ELEMENTS_FILTER ||
-                summaryField.getTransform() == SummaryTransform.MATCHED_ATTRIBUTE_ELEMENTS_FILTER ||
                 summaryField.getTransform() == SummaryTransform.TOKENS ||
                 summaryField.getTransform() == SummaryTransform.ATTRIBUTE_TOKENS)
         {
@@ -165,14 +166,35 @@ public class SummaryClass extends Derived {
         }
     }
 
+    static SummaryConfig.Classes.Fields.Elements.Builder convertElementsSelector(SummaryElementsSelector elementsSelector) {
+        var builder = new SummaryConfig.Classes.Fields.Elements.Builder();
+        switch (elementsSelector.getSelect()) {
+            case ALL -> builder.select(SummaryConfig.Classes.Fields.Elements.Select.ALL);
+            case BY_MATCH -> builder.select(SummaryConfig.Classes.Fields.Elements.Select.BY_MATCH);
+            case BY_SUMMARY_FEATURE -> builder.select(SummaryConfig.Classes.Fields.Elements.Select.BY_SUMMARY_FEATURE);
+        }
+        builder.summary_feature(elementsSelector.getSummaryFeature());
+        return builder;
+    }
+
     /**
      * A dynamic transform that needs the query to perform its computations.
      * We need this because some model information is shared through configs instead of model - see usage
      */
     static boolean commandRequiringQuery(String commandName) {
-        return (commandName.equals("dynamicteaser") ||
-                commandName.equals(SummaryTransform.MATCHED_ELEMENTS_FILTER.getName()) ||
-                commandName.equals(SummaryTransform.MATCHED_ATTRIBUTE_ELEMENTS_FILTER.getName()));
+        return (commandName.equals("dynamicteaser"));
+    }
+
+    /**
+     * An elements selector that needs the query to perform its computations.
+     * We need this because some model information is shared through configs instead of model - see usage
+     */
+    static boolean elementsSelectorRequiringQuery(SummaryElementsSelector elementsSelector) {
+        return switch (elementsSelector.getSelect()) {
+            case ALL -> false;
+            case BY_MATCH -> true;
+            case BY_SUMMARY_FEATURE -> true;
+        };
     }
 
 }

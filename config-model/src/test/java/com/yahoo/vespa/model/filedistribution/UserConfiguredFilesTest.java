@@ -138,6 +138,7 @@ public class UserConfiguredFilesTest {
     void require_that_simple_model_field_with_path_and_url_is_modified() {
         var originalValue = ModelReference.unresolved(Optional.empty(),
                                                       Optional.of(new UrlReference("myUrl")),
+                                                      Optional.empty(),
                                                       Optional.of(new FileReference("myModel.onnx")));
         def.addModelDef("modelVal");
         builder.setField("modelVal", originalValue.toString());
@@ -158,6 +159,7 @@ public class UserConfiguredFilesTest {
         userConfiguredFiles().register(producer);
         var expected = ModelReference.unresolved(originalValue.modelId(),
                                                  originalValue.url(),
+                                                 Optional.empty(),
                                                  Optional.of(new FileReference("myModelHash")));
         assertEquals(expected, ModelReference.valueOf(builder.getObject("modelVal").getValue()));
     }
@@ -302,19 +304,20 @@ public class UserConfiguredFilesTest {
 
     @Test
     void require_that_using_empty_dir_fails(@TempDir Path tempDir) {
-        String relativeTempDir = tempDir.toString().substring(tempDir.toString().lastIndexOf("target") + 7);
+        Path foobarDir = tempDir.resolve("foobar");
+        foobarDir.toFile().mkdir();
         ApplicationPackage applicationPackage =
                 new MockApplicationPackage.Builder()
-                        .withRoot(tempDir.toFile().getParentFile())
-                        .withFiles(Map.of(com.yahoo.path.Path.fromString(tempDir.toFile().getAbsolutePath()), ""))
+                        .withRoot(tempDir.toFile())
+                        .withFiles(Map.of(com.yahoo.path.Path.fromString(foobarDir.toAbsolutePath().toString()), ""))
                         .build();
 
         var logger = new TestDeployLogger();
         def.addPathDef("pathVal");
-        builder.setField("pathVal", relativeTempDir);
-        fileRegistry.pathToRef.put(relativeTempDir, new FileReference("bazshash"));
+        builder.setField("pathVal", "foobar");
+        fileRegistry.pathToRef.put("foobar", new FileReference("bazshash"));
         userConfiguredFiles(applicationPackage, logger).register(producer);
-        assertEquals("Directory '" + relativeTempDir + "' is empty", logger.log);
+        assertEquals("Directory 'foobar' is empty", logger.log);
     }
 
     @Test

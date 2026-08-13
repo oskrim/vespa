@@ -3,7 +3,7 @@ import * as vscode from 'vscode';
 import fs from 'fs';
 import hasbin from 'hasbin';
 
-import { ExecuteCommandParams, ExecuteCommandRequest, LanguageClient, LanguageClientOptions, ProtocolRequestType, RequestType, ServerOptions, ExecuteCommandRegistrationOptions } from 'vscode-languageclient/node';
+import { LanguageClient, LanguageClientOptions, ServerOptions, CancellationToken, ShowDocumentParams, ShowDocumentRequest, ResponseError } from 'vscode-languageclient/node';
 
 let schemaClient: LanguageClient | null = null;
 
@@ -14,7 +14,7 @@ const RECOMMEND_XML_SETTING = 'recommendXML';
 const JAVA_DOWNLOAD_URL = 'https://www.oracle.com/java/technologies/downloads/#java17';
 
 
-type maybeString = string|null|undefined;
+type maybeString = string | null | undefined;
 
 function javaExecutableExists(javaHome: maybeString) {
     if (javaHome === null || javaHome === undefined) {
@@ -24,7 +24,7 @@ function javaExecutableExists(javaHome: maybeString) {
 }
 
 function findJavaHomeExecutable(): maybeString {
-	// Try workspace setting first
+    // Try workspace setting first
     const config = vscode.workspace.getConfiguration(EXTENSION_NAME);
     const javaHome = config.get(JAVA_HOME_SETTING) as maybeString;
     if (javaExecutableExists(javaHome)) {
@@ -42,7 +42,7 @@ function findJavaHomeExecutable(): maybeString {
     return null;
 }
 
-function findJavaExecutable(): string|null {
+function findJavaExecutable(): string | null {
     const javaPath = findJavaHomeExecutable();
     if (javaPath !== null && javaPath !== undefined) {
         return javaPath as string;
@@ -64,43 +64,53 @@ function createAndStartClient(serverPath: string): LanguageClient | null {
         return null;
     }
 
-	const serverOptions: ServerOptions = {
-		command: javaExecutable,
-		args: ['-jar', serverPath],
-		options: {}
-	};
+    const serverOptions: ServerOptions = {
+        command: javaExecutable,
+        args: ['-jar', serverPath],
+        options: {}
+    };
 
-	let clientOptions: LanguageClientOptions = {
-		// Register the server for plain text documents
-		documentSelector: [{
-			scheme: 'file',
-			language: 'vespaSchema',
-		}],
-		middleware: { 
-			provideCompletionItem: async (document, position, context, token, next) => {
-				const r = await next(document, position, context, token);
-				return r;
-			},
-			provideDocumentHighlights: async (document, position, token, next) => {
-				const r = await next(document, position, token);
-				return r;
-			},
-			provideDocumentSemanticTokens: async (document, token, next) => {
-				const r = await next(document, token);
-				return r;
-			},
-		},
+    let clientOptions: LanguageClientOptions = {
+        // Register the server for plain text documents
+        documentSelector: [
+            {
+                scheme: 'file',
+                language: 'vespaSchema',
+            },
+            {
+                scheme: 'file',
+                language: 'vespaYQL'
+            }
+        ],
         synchronize: {
             fileEvents: vscode.workspace.createFileSystemWatcher("**/*{.sd,.profile}")
+        },
+        middleware: {
+            window: {
+                showDocument: async (params: ShowDocumentParams, next: ShowDocumentRequest.HandlerSignature) => {
+                    if (!params.takeFocus) {
+                        vscode.window.showTextDocument(vscode.Uri.parse(params.uri), {
+                            viewColumn: vscode.ViewColumn.Two,
+                            preview: false
+                        });
+                        return { success: true };
+                    }
+                    const res = await next(params, CancellationToken.None);
+                    if (res instanceof ResponseError) {
+                        return { success: false };
+                    }
+                    return res;
+                }
+            }
         }
-	};
+    };
     const client = new LanguageClient('vespaSchemaLS', 'Vespa Schema Language Server', serverOptions, clientOptions);
 
     client.start().then(result => {
         console.log(result);
     });
-    return client; 
-} 
+    return client;
+}
 
 function showJavaErrorMessage() {
     const openSettingsButton = {
@@ -119,7 +129,7 @@ function showJavaErrorMessage() {
             vscode.commands.executeCommand('workbench.action.openSettings', JAVA_HOME_SETTING);
         } else if (result === openOracleDownloadsButton) {
             vscode.env.openExternal(vscode.Uri.parse(JAVA_DOWNLOAD_URL));
-        } 
+        }
     });
 }
 
@@ -127,11 +137,11 @@ export function activate(context: vscode.ExtensionContext) {
 
     checkForXMLExtension();
 
-	const jarPath = path.join(__dirname, '..', 'server', 'schema-language-server-jar-with-dependencies.jar');
+    const jarPath = path.join(__dirname, '..', 'server', 'schema-language-server-jar-with-dependencies.jar');
 
     schemaClient = createAndStartClient(jarPath);
 
-    const logger = vscode.window.createOutputChannel("Vespa language client", {log: true});
+    const logger = vscode.window.createOutputChannel("Vespa language client", { log: true });
 
     context.subscriptions.push(vscode.commands.registerCommand("vespaSchemaLS.restart", (() => {
         if (schemaClient === null) {
@@ -143,11 +153,17 @@ export function activate(context: vscode.ExtensionContext) {
         }
     })));
 
+    context.subscriptions.push(vscode.commands.registerCommand("vespaSchemaLS.stop", async () => {
+        if (schemaClient === null) {
+            return;
+        }
+
+        await schemaClient.stop();
+    }));
+
 
     context.subscriptions.push(vscode.commands.registerCommand("vespaSchemaLS.commands.schema.findSchemaDefinition", async (fileName) => {
-        if (schemaClient === null) {
-            return null;
-        }
+        if (schemaClient === null) { return null; }
         try {
             const result = await schemaClient.sendRequest("workspace/executeCommand", {
                 command: "FIND_SCHEMA_DEFINITION",
@@ -162,9 +178,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     // This command exists to setup schema language server workspace in case the first opened document is an xml file (which not handled by schema language server)
     context.subscriptions.push(vscode.commands.registerCommand("vespaSchemaLS.commands.schema.setupWorkspace", async (fileURI) => {
-        if (schemaClient === null) {
-            return;
-        }
+        if (schemaClient === null) { return; }
         try {
             schemaClient.sendRequest("workspace/executeCommand", {
                 command: "SETUP_WORKSPACE",
@@ -175,10 +189,8 @@ export function activate(context: vscode.ExtensionContext) {
         }
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand("vespaSchemaLS.commands.schema.hasSetupWorkspace", async () =>  {
-        if (schemaClient === null) {
-            return false;
-        }
+    context.subscriptions.push(vscode.commands.registerCommand("vespaSchemaLS.commands.schema.hasSetupWorkspace", async () => {
+        if (schemaClient === null) { return false; }
 
         try {
             const result: boolean = await schemaClient.sendRequest("workspace/executeCommand", {
@@ -192,15 +204,65 @@ export function activate(context: vscode.ExtensionContext) {
         return false;
     }));
 
+    context.subscriptions.push(vscode.commands.registerCommand("vespaSchemaLS.commands.schema.createSchemaFile", async (schemaName) => {
+        if (schemaClient === null) { return false; }
+        try {
+            schemaClient.sendRequest("workspace/executeCommand", {
+                command: "CREATE_SCHEMA_FILE",
+                arguments: [schemaName]
+            });
+        } catch (err) {
+            logger.error("Error when sending command: " + err);
+        }
+    }));
+
+    context.subscriptions.push(vscode.commands.registerCommand("vespaSchemaLS.commands.schema.getDefinedSchemas", async () => {
+        if (schemaClient === null) { return false; }
+        try {
+            const result = await schemaClient.sendRequest("workspace/executeCommand", {
+                command: "GET_DEFINED_SCHEMAS",
+                arguments: []
+            });
+            return result;
+        } catch (err) {
+            logger.error("Error when sending command: " + err);
+        }
+    }));
+
+    context.subscriptions.push(vscode.commands.registerCommand("vespaSchemaLS.commands.schema.getSchemaFields", async (schemaName) => {
+        if (schemaClient === null) { return false; }
+        try {
+            const result: string[][] = await schemaClient.sendRequest("workspace/executeCommand", {
+                command: "GET_SCHEMA_FIELDS",
+                arguments: [schemaName]
+            });
+            return JSON.stringify(result);
+        } catch (err) {
+            logger.error("Error when sending command: " + err);
+        }
+    }));
+
+    context.subscriptions.push(vscode.commands.registerCommand("vespaSchemaLS.commands.schema.writeYQLQuery", (fileName, query) => {
+        if (schemaClient === null) { return false; }
+        try {
+            schemaClient.sendRequest("workspace/executeCommand", {
+                command: "WRITE_YQL_QUERY",
+                arguments: [fileName, query]
+            });
+        } catch (err) {
+            logger.error("Error when sending command: " + err);
+        }
+    }));
+
     logger.info("Vespa language client activated");
 }
 
 
-export function deactivate() { 
-	if (!schemaClient) {
-		return undefined;
-	}
-	return schemaClient.stop();
+export function deactivate() {
+    if (!schemaClient) {
+        return undefined;
+    }
+    return schemaClient.stop();
 }
 
 async function checkForXMLExtension() {

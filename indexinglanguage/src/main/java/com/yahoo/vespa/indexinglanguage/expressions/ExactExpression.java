@@ -4,6 +4,7 @@ package com.yahoo.vespa.indexinglanguage.expressions;
 import com.yahoo.document.DataType;
 import com.yahoo.document.annotation.Annotation;
 import com.yahoo.document.annotation.AnnotationTypes;
+import com.yahoo.document.annotation.internal.SimpleIndexingAnnotations;
 import com.yahoo.document.annotation.Span;
 import com.yahoo.document.annotation.SpanList;
 import com.yahoo.document.annotation.SpanNode;
@@ -14,28 +15,33 @@ import com.yahoo.document.datatypes.StringFieldValue;
 import com.yahoo.language.process.TokenType;
 import com.yahoo.vespa.indexinglanguage.linguistics.AnnotatorConfig;
 
-import java.util.OptionalInt;
+import java.util.Objects;
 
 import static com.yahoo.language.LinguisticsCase.toLowerCase;
 
 /**
  * @author Simon Thoresen Hult
  */
+@SuppressWarnings({"deprecation", "removal"})
 public final class ExactExpression extends Expression {
 
-    private final int maxTokenLength;
+    private final AnnotatorConfig config;
 
-    private ExactExpression(OptionalInt maxTokenLength) {
-        super(DataType.STRING);
-        this.maxTokenLength = maxTokenLength.isPresent() ? maxTokenLength.getAsInt() : AnnotatorConfig.getDefaultMaxTokenLength();
+    public ExactExpression(AnnotatorConfig config) {
+        this.config = config;
     }
 
-    public ExactExpression() {
-        this(OptionalInt.empty());;
+    @Override
+    public boolean isMutating() { return false; }
+
+    @Override
+    public DataType setInputType(DataType inputType, TypeContext context) {
+        return super.setInputType(inputType, DataType.STRING, context);
     }
 
-    public ExactExpression(int maxTokenLength) {
-        this(OptionalInt.of(maxTokenLength));
+    @Override
+    public DataType setOutputType(DataType outputType, TypeContext context) {
+        return super.setOutputType(DataType.STRING, outputType, null, context);
     }
 
     @Override
@@ -47,24 +53,26 @@ public final class ExactExpression extends Expression {
         context.setCurrentValue(output);
 
         String prev = output.getString();
-        String next = toLowerCase(prev);
+        String next = config.getLowercase() ? toLowerCase(prev) : prev;
 
-        SpanTree tree = output.getSpanTree(SpanTrees.LINGUISTICS);
-        if (next.length() > maxTokenLength) {
-            if (tree != null) {
-                output.removeSpanTree(SpanTrees.LINGUISTICS);
-            }
+        if (next.length() > config.getMaxTokenLength()) {
+            output.removeSpanTree(SpanTrees.LINGUISTICS);
             return;
         }
-        SpanList root;
-        if (tree == null) {
-            root = new SpanList();
-            tree = new SpanTree(SpanTrees.LINGUISTICS, root);
-            output.setSpanTree(tree);
+
+        // Try simple path first
+        if (output.wantSimpleAnnotations()) {
+            SimpleIndexingAnnotations simple = new SimpleIndexingAnnotations();
+            String termOverride = next.equals(prev) ? null : next;
+            simple.add(0, prev.length(), termOverride);
+            // Note: TOKEN_TYPE annotation is not created - it's unused by C++ anyway
+            output.setSimpleAnnotations(simple);
+            return;
         }
-        else {
-            root = (SpanList)tree.getRoot();
-        }
+
+        // Fallback to full mode
+        SpanTree tree = output.setSpanTree(new SpanTree(SpanTrees.LINGUISTICS));
+        SpanList root = tree.spanList();
         SpanNode node = new Span(0, prev.length());
         tree.annotate(node, new Annotation(AnnotationTypes.TERM,
                                            next.equals(prev) ? null : new StringFieldValue(next)));
@@ -74,26 +82,20 @@ public final class ExactExpression extends Expression {
     }
 
     @Override
-    public DataType createdOutputType() { return null; }
-
-    @Override
     public String toString() {
-        StringBuilder s = new StringBuilder();
-        s.append("exact");
-        if (maxTokenLength != AnnotatorConfig.getDefaultMaxTokenLength()) {
-            s.append(" max-token-length:").append(maxTokenLength);
-        }
-        return s.toString();
+        return "exact" + config.parameterString();
     }
 
     @Override
-    public boolean equals(Object obj) {
-        return obj instanceof ExactExpression;
+    public boolean equals(Object o) {
+        if (!(o instanceof ExactExpression other)) return false;
+        if (!config.equals(other.config)) return false;
+        return true;
     }
 
     @Override
     public int hashCode() {
-        return getClass().hashCode();
+        return Objects.hash(getClass(), config);
     }
 
 }

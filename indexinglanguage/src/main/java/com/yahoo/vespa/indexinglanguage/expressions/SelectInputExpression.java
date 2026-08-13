@@ -27,9 +27,11 @@ public final class SelectInputExpression extends CompositeExpression {
     }
 
     public SelectInputExpression(List<Pair<String, Expression>> cases) {
-        super(null);
         this.cases = cases;
     }
+
+    @Override
+    public boolean requiresInput() { return false; }
 
     @Override
     public SelectInputExpression convertChildren(ExpressionConverter converter) {
@@ -39,22 +41,47 @@ public final class SelectInputExpression extends CompositeExpression {
     }
 
     @Override
+    public DataType setInputType(DataType inputType, TypeContext context) {
+        super.setInputType(inputType, context);
+
+        DataType outputType = null;
+        boolean outputNeverAssigned = true; // Needed to separate this null case from the "cannot be inferred" case
+        for (Pair<String, Expression> entry : cases) {
+            DataType fieldType = context.getFieldType(entry.getFirst(), this);
+            if (fieldType == null)
+                throw new VerificationException(this, "Field '" + entry.getFirst() + "' not found");
+            var entryOutputType = entry.getSecond().setInputType(fieldType, context);
+            outputType = outputNeverAssigned ? entryOutputType : mostGeneralOf(outputType, entryOutputType);
+            outputNeverAssigned = false;
+        }
+        return outputType;
+    }
+
+    @Override
+    public DataType setOutputType(DataType outputType, TypeContext context) {
+        super.setOutputType(outputType, context);
+
+        for (Pair<String, Expression> entry : cases) {
+            DataType fieldType = context.getFieldType(entry.getFirst(), this);
+            if (fieldType == null)
+                throw new VerificationException(this, "Field '" + entry.getFirst() + "' not found");
+            DataType inputType = entry.getSecond().setOutputType(outputType, context);
+            if ( ! fieldType.isAssignableTo(inputType))
+                throw new VerificationException(this, "Field '" + entry.getFirst() + "' not found");
+        }
+        return AnyDataType.instance;
+    }
+
+    @Override
     public void setStatementOutput(DocumentType documentType, Field field) {
         for (var casePair : cases)
             casePair.getSecond().setStatementOutput(documentType, field);
     }
 
     @Override
-    protected void doVerify(VerificationContext context) {
-        DataType input = context.getCurrentType();
-        for (Pair<String, Expression> entry : cases) {
-            DataType val = context.getFieldType(entry.getFirst(), this);
-            if (val == null) {
-                throw new VerificationException(this, "Field '" + entry.getFirst() + "' not found");
-            }
-            context.setCurrentType(val).verify(entry.getSecond());
-        }
-        context.setCurrentType(input);
+    protected void doResolve(TypeContext context) {
+        for (Pair<String, Expression> entry : cases)
+            context.resolve(entry.getSecond());
     }
 
     @Override
@@ -76,9 +103,6 @@ public final class SelectInputExpression extends CompositeExpression {
             select(entry.getSecond(), predicate, operation);
         }
     }
-
-    @Override
-    public DataType createdOutputType() { return null; }
 
     public List<Pair<String, Expression>> getCases() {
         return Collections.unmodifiableList(cases);

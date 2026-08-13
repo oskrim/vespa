@@ -12,6 +12,7 @@ import com.yahoo.schema.derived.SchemaInfo;
 import com.yahoo.schema.document.Attribute;
 import com.yahoo.schema.document.ImmutableSDField;
 import com.yahoo.schema.document.MatchType;
+import com.yahoo.text.Text;
 import com.yahoo.vespa.model.application.validation.Validation.Context;
 import com.yahoo.vespa.model.search.SearchCluster;
 
@@ -26,22 +27,26 @@ public class StreamingValidator implements Validator {
     @Override
     public void validate(Context context) {
         List<SearchCluster> searchClusters = context.model().getSearchClusters();
+        var deployLogger = context.deployState().getDeployLogger();
         for (SearchCluster cluster : searchClusters) {
             for (SchemaInfo schemaInfo : cluster.schemas().values()) {
                 if (schemaInfo.getIndexMode() == SchemaInfo.IndexMode.STREAMING) {
-                    var deployLogger = context.deployState().getDeployLogger();
                     warnStreamingAttributes(cluster.getClusterName(), schemaInfo.fullSchema(), deployLogger);
                     warnStreamingIndexFields(cluster.getClusterName(), schemaInfo.fullSchema(), deployLogger);
                     warnStreamingGramMatching(cluster.getClusterName(), schemaInfo.fullSchema(), deployLogger);
                     failStreamingDocumentReferences(cluster.getClusterName(), cluster.getDocumentDB(schemaInfo.name()).getDerivedConfiguration(), context);
                 }
             }
+            if (cluster.hasStreaming() && cluster.hasIndexed()) {
+                deployLogger.logApplicationPackage(Level.WARNING, "For search cluster '" + cluster +
+                        "': Using document types with both streaming and indexed mode is discouraged, see https://docs.vespa.ai/en/performance/streaming-search.html.");
+            }
         }
     }
 
     private static void logWarning(String cluster, Schema schema, ImmutableSDField sd, DeployLogger logger, String message) {
         logger.logApplicationPackage(Level.WARNING, "For search cluster '" + cluster +
-                "', streaming schema '" + schema.getName() + "', SD field '" + sd.getName() + "': " + message);
+                "', streaming schema '" + schema.getName() + "', schema field '" + sd.getName() + "': " + message);
     }
 
     private static void warnStreamingGramMatching(String cluster, Schema schema, DeployLogger logger) {
@@ -85,7 +90,7 @@ public class StreamingValidator implements Validator {
         for (Attribute attribute : derived.getAttributeFields().attributes()) {
             DataType dataType = attribute.getDataType();
             if (dataType instanceof NewDocumentReferenceDataType) {
-                String errorMessage = String.format("For search cluster '%s', streaming schema '%s': Attribute '%s' has type '%s'. " +
+                String errorMessage = Text.format("For search cluster '%s', streaming schema '%s': Attribute '%s' has type '%s'. " +
                                                     "Document references and imported fields are not allowed in streaming search.",
                                                     cluster, derived.getSchema().getName(), attribute.getName(), dataType.getName());
                 context.illegal(errorMessage);

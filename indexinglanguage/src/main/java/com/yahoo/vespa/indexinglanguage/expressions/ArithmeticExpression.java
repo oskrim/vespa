@@ -3,7 +3,13 @@ package com.yahoo.vespa.indexinglanguage.expressions;
 
 import com.yahoo.document.DataType;
 import com.yahoo.document.NumericDataType;
-import com.yahoo.document.datatypes.*;
+import com.yahoo.document.datatypes.ByteFieldValue;
+import com.yahoo.document.datatypes.DoubleFieldValue;
+import com.yahoo.document.datatypes.FieldValue;
+import com.yahoo.document.datatypes.FloatFieldValue;
+import com.yahoo.document.datatypes.IntegerFieldValue;
+import com.yahoo.document.datatypes.LongFieldValue;
+import com.yahoo.document.datatypes.NumericFieldValue;
 import com.yahoo.vespa.indexinglanguage.ExpressionConverter;
 import com.yahoo.vespa.objects.ObjectOperation;
 import com.yahoo.vespa.objects.ObjectPredicate;
@@ -48,11 +54,13 @@ public final class ArithmeticExpression extends CompositeExpression {
     private final Expression right;
 
     public ArithmeticExpression(Expression left, Operator op, Expression right) {
-        super(requiredInputType(left, right));
         this.left = Objects.requireNonNull(left);
         this.op = Objects.requireNonNull(op);
         this.right = Objects.requireNonNull(right);
     }
+
+    @Override
+    public boolean requiresInput() { return false; }
 
     public Expression getLeftHandSide() { return left; }
 
@@ -62,15 +70,52 @@ public final class ArithmeticExpression extends CompositeExpression {
 
     @Override
     public ArithmeticExpression convertChildren(ExpressionConverter converter) {
-        // TODO: branch()?
         return new ArithmeticExpression(converter.convert(left), op, converter.convert(right));
     }
 
     @Override
-    protected void doVerify(VerificationContext context) {
-        DataType input = context.getCurrentType();
-        context.setCurrentType(evaluate(context.setCurrentType(input).verify(left).getCurrentType(),
-                                        context.setCurrentType(input).verify(right).getCurrentType()));
+    public DataType setInputType(DataType inputType, TypeContext context) {
+        super.setInputType(inputType, context);
+        DataType leftOutput = left.setInputType(inputType, context);
+        DataType rightOutput = right.setInputType(inputType, context);
+        return resultingType(leftOutput, rightOutput);
+    }
+
+    @Override
+    public DataType setOutputType(DataType outputType, TypeContext context) {
+        if (outputType == null) return null;
+        super.setOutputType(outputType, context);
+        DataType leftInput = left.setOutputType(AnyNumericDataType.instance, context);
+        DataType rightInput = right.setOutputType(AnyNumericDataType.instance, context);
+
+        if (leftInput == null) return getInputType(context);
+        if (rightInput == null) return getInputType(context);
+        if (leftInput.isAssignableTo(rightInput))
+            return rightInput;
+        else if (rightInput.isAssignableTo(leftInput))
+            return leftInput;
+        else
+            throw new VerificationException(this, "The left argument requires " + leftInput.getName() +
+                                                  ", while the right argument requires " + rightInput.getName() +
+                                                  ": These are incompatible");
+    }
+
+    private DataType resultingType(DataType left, DataType right) {
+        if (left == null || right == null)
+            return null;
+        if ( ! (left instanceof NumericDataType))
+            throw new VerificationException(this, "The first argument must be a number, but has type " + left.getName());
+        if ( ! (right instanceof NumericDataType))
+            throw new VerificationException(this, "The second argument must be a number, but has type " + right.getName());
+
+        if (left == DataType.FLOAT || left == DataType.DOUBLE || right == DataType.FLOAT || right == DataType.DOUBLE) {
+            if (left == DataType.DOUBLE || right == DataType.DOUBLE)
+                return DataType.DOUBLE;
+            return DataType.FLOAT;
+        }
+        if (left == DataType.LONG || right == DataType.LONG)
+            return DataType.LONG;
+        return DataType.INT;
     }
 
     @Override
@@ -78,22 +123,6 @@ public final class ArithmeticExpression extends CompositeExpression {
         FieldValue input = context.getCurrentValue();
         context.setCurrentValue(evaluate(context.setCurrentValue(input).execute(left).getCurrentValue(),
                                          context.setCurrentValue(input).execute(right).getCurrentValue()));
-    }
-
-    private static DataType requiredInputType(Expression lhs, Expression rhs) {
-        DataType lhsType = lhs.requiredInputType();
-        DataType rhsType = rhs.requiredInputType();
-        if (lhsType == null) return rhsType;
-        if (rhsType == null) return lhsType;
-        if (!lhsType.equals(rhsType))
-            throw new VerificationException(ArithmeticExpression.class, "Operands require conflicting input types, " +
-                                                                        lhsType.getName() + " vs " + rhsType.getName());
-        return lhsType;
-    }
-
-    @Override
-    public DataType createdOutputType() {
-        return UnresolvedDataType.INSTANCE;
     }
 
     @Override
@@ -114,23 +143,6 @@ public final class ArithmeticExpression extends CompositeExpression {
     @Override
     public int hashCode() {
         return getClass().hashCode() + left.hashCode() + op.hashCode() + right.hashCode();
-    }
-
-    private DataType evaluate(DataType lhs, DataType rhs) {
-        if (lhs == null || rhs == null)
-            throw new VerificationException(this, "Attempting to perform arithmetic on a null value");
-        if (!(lhs instanceof NumericDataType) || !(rhs instanceof NumericDataType))
-            throw new VerificationException(this, "Attempting to perform unsupported arithmetic: [" +
-                                                  lhs.getName() + "] " + op + " [" + rhs.getName() + "]");
-
-        if (lhs == DataType.FLOAT || lhs == DataType.DOUBLE || rhs == DataType.FLOAT || rhs == DataType.DOUBLE) {
-            if (lhs == DataType.DOUBLE || rhs == DataType.DOUBLE)
-                return DataType.DOUBLE;
-            return DataType.FLOAT;
-        }
-        if (lhs == DataType.LONG || rhs == DataType.LONG)
-            return DataType.LONG;
-        return DataType.INT;
     }
 
     private FieldValue evaluate(FieldValue lhs, FieldValue rhs) {

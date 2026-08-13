@@ -1,6 +1,8 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.prelude.query;
 
+import ai.vespa.searchlib.searchprotocol.protobuf.SearchProtocol;
+
 import java.util.Map;
 
 /**
@@ -17,5 +19,38 @@ public class DotProductItem extends WeightedSetItem {
 
     @Override
     public ItemType getItemType() { return ItemType.DOTPRODUCT; }
+
+    @Override
+    SearchProtocol.QueryTreeItem toProtobuf(SerializationContext context) {
+        if (hasOnlyLongs()) {
+            var builder = SearchProtocol.ItemDotProductOfLong.newBuilder();
+            builder.setProperties(ToProtobuf.buildTermProperties(this, getIndexName()));
+            for (var it = getTokens(); it.hasNext();) {
+                var entry = it.next();
+                var weightedLong = SearchProtocol.PureWeightedLong.newBuilder()
+                        .setWeight(entry.getValue())
+                        .setValue((Long) entry.getKey())
+                        .build();
+                builder.addWeightedLongs(weightedLong);
+            }
+            return SearchProtocol.QueryTreeItem.newBuilder()
+                    .setItemDotProductOfLong(builder.build())
+                    .build();
+        } else {
+            var builder = SearchProtocol.ItemDotProductOfString.newBuilder();
+            builder.setProperties(ToProtobuf.buildTermProperties(this, getIndexName()));
+            for (var it = getTokens(); it.hasNext();) {
+                var entry = it.next();
+                var weightedString = SearchProtocol.PureWeightedString.newBuilder()
+                        .setWeight(entry.getValue())
+                        .setValue(entry.getKey().toString())
+                        .build();
+                builder.addWeightedStrings(weightedString);
+            }
+            return SearchProtocol.QueryTreeItem.newBuilder()
+                    .setItemDotProductOfString(builder.build())
+                    .build();
+        }
+    }
 
 }

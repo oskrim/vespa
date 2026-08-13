@@ -39,6 +39,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.junit.Assert.assertEquals;
@@ -74,7 +75,7 @@ public class ApplicationTest {
     public void setupHandler() throws IOException, SAXException {
         File testApp = new File("src/test/apps/app");
         ServerCache cache = createCacheAndAddContent();
-        VespaModel model = new VespaModel(FilesApplicationPackage.fromFile(testApp));
+        VespaModel model = new VespaModel(FilesApplicationPackage.fromDir(testApp, Map.of()));
         ApplicationId applicationId = new ApplicationId.Builder().tenant("foo").applicationName("foo").build();
         handler = new Application(model, cache, 1L, new Version(1, 2, 3),
                                   new MetricUpdater(Metrics.createTestMetrics(), Metrics.createDimensions(applicationId)), applicationId);
@@ -120,7 +121,7 @@ public class ApplicationTest {
                                             ModelConfig.CONFIG_DEF_NAMESPACE,
                                             ModelConfig.CONFIG_DEF_SCHEMA))
                 .serialize(baos, CompressionType.UNCOMPRESSED);
-        assertTrue(baos.toString().startsWith("{\"vespaVersion\":\"1.0.0\",\"hosts\":[{\"name\":\"mytesthost\""));
+        assertTrue(baos.toString(StandardCharsets.UTF_8).startsWith("{\"vespaVersion\":\"1.0.0\",\"hosts\":[{\"name\":\"mytesthost\""));
     }
 
     @Test

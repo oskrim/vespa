@@ -24,9 +24,9 @@ import java.util.Set;
 
 
 /**
- * <p>A document definition is a list of fields. Documents may inherit other documents,
- * implicitly acquiring their fields as it's own. If a document is not set to inherit
- * any document, it will always inherit the document "document.0".</p>
+ * A document definition is a list of fields. Documents may inherit other documents,
+ * implicitly acquiring their fields as its own. If a document is not set to inherit
+ * any document, it will always inherit the document "document".
  *
  * @author Thomas Gundersen
  * @author bratseth
@@ -483,6 +483,7 @@ public class DocumentType extends StructuredDataType {
         return contentStructType.getFields().iterator();
     }
 
+    @Override
     public boolean equals(Object o) {
         if (!(o instanceof DocumentType other)) return false;
         // Ignore whether one of them have added inheritance to super Document.0 type
@@ -497,8 +498,14 @@ public class DocumentType extends StructuredDataType {
         return false;
     }
 
+    @Override
     public int hashCode() {
         return super.hashCode() + contentStructType.hashCode() + inherits.hashCode();
+    }
+
+    @Override
+    public String toString() {
+        return "document type '" + getName() + "'";
     }
 
     @Override
@@ -509,11 +516,11 @@ public class DocumentType extends StructuredDataType {
         // TODO: what if it's not a DocumentWriter?
     }
 
-
     @Override
     public void visitMembers(ObjectVisitor visitor) {
         super.visitMembers(visitor);
         visitor.visit("headertype", contentStructType);
         visitor.visit("inherits", inherits);
     }
+
 }

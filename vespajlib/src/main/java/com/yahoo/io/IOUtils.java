@@ -80,9 +80,9 @@ public abstract class IOUtils {
         return new BufferedReader(new InputStreamReader(new FileInputStream(filename), encoding));
     }
 
-    /** Creates a buffered reader in the default encoding */
+    /** Creates a buffered reader using UTF-8 encoding */
     public static BufferedReader createReader(String filename) throws IOException {
-        return new BufferedReader(new FileReader(filename));
+        return new BufferedReader(new FileReader(filename, utf8Charset));
     }
 
     /**
@@ -108,7 +108,7 @@ public abstract class IOUtils {
      */
     public static BufferedWriter createWriter(File file, String encoding, boolean append) throws IOException {
         createDirectory(file.getAbsolutePath());
-        return new BufferedWriter(new OutputStreamWriter(new FileOutputStream(file, append),encoding));
+        return new BufferedWriter(new OutputStreamWriter(new FileOutputStream(file, append), encoding));
     }
 
     /**
@@ -119,7 +119,7 @@ public abstract class IOUtils {
      */
     public static BufferedWriter createWriter(String filename, boolean append) throws IOException {
         createDirectory(filename);
-        return new BufferedWriter(new FileWriter(filename, append));
+        return new BufferedWriter(new FileWriter(filename, utf8Charset, append));
     }
 
     /**
@@ -130,7 +130,7 @@ public abstract class IOUtils {
      */
     public static BufferedWriter createWriter(File file, boolean append) throws IOException {
         createDirectory(file.getAbsolutePath());
-        return new BufferedWriter(new FileWriter(file, append));
+        return new BufferedWriter(new FileWriter(file, utf8Charset, append));
     }
 
     /** Creates the directory path of this file if it does not exist */
@@ -200,7 +200,7 @@ public abstract class IOUtils {
      *        If it is 0, sourceLocation will only be copied if it is a file, not a directory.
      *        If it is negative, recursion is infinite.
      * @throws IOException if copying any file fails. This will typically result in some files being copied and
-     *         others not, i.e this method is not exception safe
+     *         others not, i.e. this method is not exception safe
      */
     public static void copyDirectory(File sourceLocation , File targetLocation, int maxRecurseLevel) throws IOException {
         copyDirectory(sourceLocation, targetLocation, maxRecurseLevel, new FilenameFilter() {
@@ -223,14 +223,14 @@ public abstract class IOUtils {
      *        If it is negative, recursion is infinite.
      * @param filter Only copy files passing through filter.
      * @throws IOException if copying any file fails. This will typically result in some files being copied and
-     *         others not, i.e this method is not exception safe
+     *         others not, i.e. this method is not exception safe
      */
     public static void copyDirectory(File sourceLocation, File targetLocation, int maxRecurseLevel, FilenameFilter filter) throws IOException {
         if ( ! sourceLocation.exists()) throw new IllegalArgumentException(sourceLocation.getAbsolutePath() + " does not exist");
 
         if ( ! sourceLocation.isDirectory()) { // copy file
-            InputStream in=null;
-            OutputStream out=null;
+            InputStream in = null;
+            OutputStream out = null;
             try {
                 in = new FileInputStream(sourceLocation);
                 out = new FileOutputStream(targetLocation);
@@ -246,15 +246,15 @@ public abstract class IOUtils {
                 closeOutputStream(out);
             }
         }
-        else if (maxRecurseLevel!=0) { // copy directory if allowed
+        else if (maxRecurseLevel != 0) { // copy directory if allowed
             if (!targetLocation.exists())
                 targetLocation.mkdirs();
 
             String[] children = sourceLocation.list(filter);
-            for (int i=0; i<children.length; i++)
+            for (int i = 0; i < children.length; i++)
                 copyDirectory(new File(sourceLocation, children[i]),
                               new File(targetLocation, children[i]),
-                              maxRecurseLevel-1);
+                              maxRecurseLevel - 1);
         }
     }
 
@@ -265,7 +265,7 @@ public abstract class IOUtils {
      * @param sourceLocation the source directory
      * @param targetLocation the target directory
      * @throws IOException if copying any file fails. This will typically result in some files being copied and
-     *         others not, i.e this method is not exception safe
+     *         others not, i.e. this method is not exception safe
      */
     public static void copyDirectory(File sourceLocation , File targetLocation) throws IOException {
         copyDirectory(sourceLocation, targetLocation, -1);
@@ -273,8 +273,9 @@ public abstract class IOUtils {
 
     /**
      * Copies the whole source directory (infinitely recursively) into the target directory.
+     *
      * @throws IOException if copying any file fails. This will typically result in some files being copied and
-     *         others not, i.e this method is not exception safe
+     *         others not, i.e. this method is not exception safe
      */
     public static void copyDirectoryInto(File sourceLocation, File targetLocation) throws IOException {
         File destination = new File(targetLocation, sourceLocation.getAbsoluteFile().getName());
@@ -283,14 +284,14 @@ public abstract class IOUtils {
 
     /**
      * Returns the number of lines in a file.
-     * If the file does not exists, 0 is returned
+     * If the file does not exist, 0 is returned
      */
     public static int countLines(String file) {
         BufferedReader reader = null;
         int lineCount = 0;
 
         try {
-            reader = createReader(file,"utf8");
+            reader = createReader(file);
             while (reader.readLine() != null)
                 lineCount++;
             return lineCount;
@@ -302,7 +303,7 @@ public abstract class IOUtils {
     }
 
     /**
-     * Returns a list containing the lines in the given file as strings
+     * Returns a list containing the lines in the given file as strings.
      *
      * @return a list of Strings for the lines of the file, in order
      * @throws IOException if the file could not be read
@@ -313,7 +314,7 @@ public abstract class IOUtils {
         try {
             List<String> lines = new java.util.ArrayList<>();
 
-            reader = createReader(fileName,"utf8");
+            reader = createReader(fileName);
             String line;
 
             while (null != (line = reader.readLine()))
@@ -324,9 +325,7 @@ public abstract class IOUtils {
         }
     }
 
-    /**
-     * Recursive deletion of directories
-     */
+    /** Recursively deletes the given directory and any content. */
     public static boolean recursiveDeleteDir(File dir) {
         if (dir.isDirectory()) {
             String[] children = dir.list();
@@ -342,9 +341,7 @@ public abstract class IOUtils {
         return dir.delete();
     }
 
-    /**
-     * Encodes string as UTF-8 into ByteBuffer
-     */
+    /** Encodes a string as UTF-8 into ByteBuffer. */
     public static ByteBuffer utf8ByteBuffer(String s) {
         return utf8Charset.encode(s);
     }
@@ -365,9 +362,7 @@ public abstract class IOUtils {
         }
     }
 
-    /**
-     * Reads all the content of the given input stream, in chunks of at max chunkSize
-     */
+    /** Reads all the content of the given input stream, in chunks of at max chunkSize. */
     public static byte[] readBytes(InputStream stream, int chunkSize) throws IOException {
         ByteArrayOutputStream buffer = new ByteArrayOutputStream();
 
@@ -379,9 +374,7 @@ public abstract class IOUtils {
         return buffer.toByteArray();
     }
 
-    /**
-     * Reads the content of a file into a byte array
-     */
+    /** Reads the content of a file into a byte array. */
     public static byte[] readFileBytes(File file) throws IOException {
         long lengthL = file.length();
         if (lengthL>Integer.MAX_VALUE)
@@ -398,20 +391,18 @@ public abstract class IOUtils {
         }
     }
 
-    /**
-     * Reads all data from a reader into a string. Uses a buffer to speed up reading.
-     */
+    /** Reads all data from a reader into a string. Uses a buffer to speed up reading. */
     public static String readAll(Reader reader) throws IOException {
         StringBuilder sb = new StringBuilder();
         try (BufferedReader buffered = new BufferedReader(reader)) {
             int c;
             while ((c = buffered.read()) != -1)
-                sb.appendCodePoint(c);
+                sb.append((char)c);
         }
         return sb.toString();
     }
 
-    /** Read an input stream completely into a string */
+    /** Reads an input stream completely into a string. */
     public static String readAll(InputStream stream, Charset charset) throws IOException {
         return new String(stream.readAllBytes(), charset);
     }
@@ -423,9 +414,7 @@ public abstract class IOUtils {
             closeReader(reader);
     }
 
-    /**
-     * Writes the given string to the file
-     */
+    /** Writes the given string to the file. */
     public static void writeFile(File file, String text, boolean append) throws IOException {
        BufferedWriter out = null;
        try {
@@ -447,9 +436,7 @@ public abstract class IOUtils {
         }
     }
 
-    /**
-     * Writes the given string to the file
-     */
+    /** Writes the given string to the file. */
     public static void writeFile(String file, String text, boolean append) throws IOException {
         writeFile(new File(file), text, append);
      }

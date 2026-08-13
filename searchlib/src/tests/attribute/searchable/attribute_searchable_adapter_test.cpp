@@ -1,20 +1,20 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
-#include <vespa/vespalib/testkit/test_kit.h>
 #include <vespa/searchcommon/attribute/config.h>
 #include <vespa/searchcommon/attribute/iattributecontext.h>
 #include <vespa/searchlib/attribute/attribute_blueprint_factory.h>
-#include <vespa/searchlib/attribute/attributefactory.h>
+#include <vespa/searchlib/attribute/attribute_read_guard.h>
 #include <vespa/searchlib/attribute/attributecontext.h>
+#include <vespa/searchlib/attribute/attributefactory.h>
 #include <vespa/searchlib/attribute/attributeguard.h>
 #include <vespa/searchlib/attribute/attributevector.h>
-#include <vespa/searchlib/attribute/attribute_read_guard.h>
-#include <vespa/searchlib/attribute/singlestringattribute.h>
 #include <vespa/searchlib/attribute/iattributemanager.h>
 #include <vespa/searchlib/attribute/predicate_attribute.h>
 #include <vespa/searchlib/attribute/singlenumericattribute.h>
-#include <vespa/searchlib/predicate/predicate_index.h>
+#include <vespa/searchlib/attribute/singlenumericpostattribute.h>
+#include <vespa/searchlib/attribute/singlestringattribute.h>
 #include <vespa/searchlib/fef/fef.h>
+#include <vespa/searchlib/predicate/predicate_index.h>
 #include <vespa/searchlib/query/tree/location.h>
 #include <vespa/searchlib/query/tree/point.h>
 #include <vespa/searchlib/query/tree/predicate_query_term.h>
@@ -27,7 +27,7 @@
 #include <vespa/searchlib/queryeval/field_spec.h>
 #include <vespa/searchlib/queryeval/searchiterator.h>
 #include <vespa/searchlib/queryeval/wand/parallel_weak_and_search.h>
-#include <vespa/searchlib/attribute/singlenumericpostattribute.h>
+#include <vespa/vespalib/gtest/gtest.h>
 
 #include <vespa/log/log.h>
 LOG_SETUP("attribute_searchable_adapter_test");
@@ -48,35 +48,35 @@ using search::query::Point;
 using search::query::PredicateQueryTerm;
 using search::query::Rectangle;
 using search::query::SimpleDotProduct;
+using search::query::SimpleInTerm;
 using search::query::SimpleLocationTerm;
 using search::query::SimplePredicateQuery;
 using search::query::SimplePrefixTerm;
 using search::query::SimpleRangeTerm;
-using search::query::SimpleSuffixTerm;
-using search::query::SimpleSubstringTerm;
 using search::query::SimpleStringTerm;
+using search::query::SimpleSubstringTerm;
+using search::query::SimpleSuffixTerm;
 using search::query::SimpleWandTerm;
 using search::query::SimpleWeightedSetTerm;
-using search::query::SimpleInTerm;
 using search::query::StringTermVector;
 using search::query::Weight;
 using search::queryeval::Blueprint;
-using search::queryeval::FieldSpec;
 using search::queryeval::FakeRequestContext;
+using search::queryeval::FieldSpec;
 using search::queryeval::MinMaxPostingInfo;
 using search::queryeval::ParallelWeakAndSearch;
 using search::queryeval::PostingInfo;
 using search::queryeval::SearchIterator;
-using std::vector;
 using std::string;
+using std::vector;
 using vespalib::make_string;
 using namespace search::attribute;
 using namespace search;
 
 namespace {
 
-const string field = "field";
-const string other = "other";
+const string   field = "field";
+const string   other = "other";
 const uint32_t num_docs = 1000;
 
 class MyAttributeManager : public IAttributeManager {
@@ -84,15 +84,13 @@ class MyAttributeManager : public IAttributeManager {
     AttributeVector::SP _other;
 
 public:
-    MyAttributeManager(MyAttributeManager && rhs);
-    explicit MyAttributeManager(AttributeVector *attr);
+    MyAttributeManager(MyAttributeManager&& rhs);
+    explicit MyAttributeManager(AttributeVector* attr);
 
     explicit MyAttributeManager(AttributeVector::SP attr);
     ~MyAttributeManager() override;
 
-    void set_other(AttributeVector::SP attr) {
-        _other = attr;
-    }
+    void set_other(AttributeVector::SP attr) { _other = attr; }
 
     AttributeGuard::UP getAttribute(std::string_view name) const override {
         if (name == field) {
@@ -104,8 +102,8 @@ public:
         }
     }
 
-    std::unique_ptr<attribute::AttributeReadGuard>
-    getAttributeReadGuard(std::string_view name, bool stableEnumGuard) const override {
+    std::unique_ptr<attribute::AttributeReadGuard> getAttributeReadGuard(std::string_view name,
+                                                                         bool stableEnumGuard) const override {
         if (name == field && _attribute_vector) {
             return _attribute_vector->makeReadGuard(stableEnumGuard);
         } else if (name == other && _other) {
@@ -115,15 +113,14 @@ public:
         }
     }
 
-    void getAttributeList(vector<AttributeGuard> &) const override {
-        assert(!"Not implemented");
-    }
+    void getAttributeList(vector<AttributeGuard>&) const override { assert(!"Not implemented"); }
     IAttributeContext::UP createContext() const override {
         assert(!"Not implemented");
         return IAttributeContext::UP();
     }
 
-    std::shared_ptr<attribute::ReadableAttributeVector> readable_attribute_vector(std::string_view name) const override {
+    std::shared_ptr<attribute::ReadableAttributeVector>
+    readable_attribute_vector(std::string_view name) const override {
         if (name == field) {
             return _attribute_vector;
         } else if (name == other) {
@@ -138,22 +135,21 @@ public:
 struct Result {
     struct Hit {
         uint32_t docid;
-        double raw_score;
-        int32_t match_weight;
+        double   raw_score;
+        int32_t  match_weight;
         Hit(uint32_t id, double raw, int32_t match_weight_in) noexcept
-            : docid(id), raw_score(raw), match_weight(match_weight_in)
-        {}
+            : docid(id), raw_score(raw), match_weight(match_weight_in) {}
     };
-    size_t est_hits;
-    bool est_empty;
-    bool has_minmax;
-    int32_t min_weight;
-    int32_t max_weight;
-    size_t wand_hits;
-    int64_t wand_initial_threshold;
-    double wand_boost_factor;
+    size_t           est_hits;
+    bool             est_empty;
+    bool             has_minmax;
+    int32_t          min_weight;
+    int32_t          max_weight;
+    size_t           wand_hits;
+    int64_t          wand_initial_threshold;
+    double           wand_boost_factor;
     std::vector<Hit> hits;
-    std::string iterator_dump;
+    std::string      iterator_dump;
 
     Result(size_t est_hits_in, bool est_empty_in);
     ~Result();
@@ -166,45 +162,44 @@ struct Result {
 };
 
 Result::Result(size_t est_hits_in, bool est_empty_in)
-    : est_hits(est_hits_in), est_empty(est_empty_in), has_minmax(false), min_weight(0), max_weight(0), wand_hits(0),
-      wand_initial_threshold(0), wand_boost_factor(0.0), hits(), iterator_dump()
-{}
+    : est_hits(est_hits_in),
+      est_empty(est_empty_in),
+      has_minmax(false),
+      min_weight(0),
+      max_weight(0),
+      wand_hits(0),
+      wand_initial_threshold(0),
+      wand_boost_factor(0.0),
+      hits(),
+      iterator_dump() {
+}
 
 Result::~Result() = default;
 
+MyAttributeManager::MyAttributeManager(MyAttributeManager&& rhs)
+    : IAttributeManager(), _attribute_vector(std::move(rhs._attribute_vector)), _other(std::move(rhs._other)) {
+}
+MyAttributeManager::MyAttributeManager(AttributeVector* attr) : _attribute_vector(attr), _other() {
+}
 
-MyAttributeManager::MyAttributeManager(MyAttributeManager && rhs)
-    : IAttributeManager(),
-      _attribute_vector(std::move(rhs._attribute_vector)),
-      _other(std::move(rhs._other))
-{}
-MyAttributeManager::MyAttributeManager(AttributeVector *attr)
-    : _attribute_vector(attr),
-      _other()
-{}
-
-MyAttributeManager::MyAttributeManager(AttributeVector::SP attr)
-    : _attribute_vector(std::move(attr)),
-      _other()
-{}
+MyAttributeManager::MyAttributeManager(AttributeVector::SP attr) : _attribute_vector(std::move(attr)), _other() {
+}
 
 MyAttributeManager::~MyAttributeManager() = default;
 
-void
-MyAttributeManager::asyncForAttribute(std::string_view, std::unique_ptr<IAttributeFunctor>) const {
-
+void MyAttributeManager::asyncForAttribute(std::string_view, std::unique_ptr<IAttributeFunctor>) const {
 }
 
-    void extract_posting_info(Result &result, const PostingInfo *postingInfo) {
-    if (postingInfo != NULL) {
-        const MinMaxPostingInfo *minMax = dynamic_cast<const MinMaxPostingInfo *>(postingInfo);
-        if (minMax != NULL) {
+void extract_posting_info(Result& result, const PostingInfo* postingInfo) {
+    if (postingInfo != nullptr) {
+        const MinMaxPostingInfo* minMax = dynamic_cast<const MinMaxPostingInfo*>(postingInfo);
+        if (minMax != nullptr) {
             result.set_minmax(minMax->getMinWeight(), minMax->getMaxWeight());
         }
     }
 }
 
-void extract_wand_params(Result &result, ParallelWeakAndSearch *wand) {
+void extract_wand_params(Result& result, ParallelWeakAndSearch* wand) {
     if (wand != nullptr) {
         result.wand_hits = wand->getMatchParams().scores.getScoresToTrack();
         result.wand_initial_threshold = wand->getMatchParams().scoreThreshold;
@@ -212,21 +207,27 @@ void extract_wand_params(Result &result, ParallelWeakAndSearch *wand) {
     }
 }
 
-Result do_search(IAttributeManager &attribute_manager, const Node &node, bool strict) {
-    uint32_t fieldId = 0;
-    AttributeContext ac(attribute_manager);
-    FakeRequestContext requestContext(&ac);
+Result do_search(IAttributeManager& attribute_manager, const Node& node, bool strict) {
+    uint32_t                  fieldId = 0;
+    AttributeContext          ac(attribute_manager);
+    FakeRequestContext        requestContext(&ac);
     AttributeBlueprintFactory source;
-    MatchDataLayout mdl;
-    TermFieldHandle handle = mdl.allocTermField(fieldId);
-    MatchData::UP match_data = mdl.createMatchData();
-    Blueprint::UP bp = source.createBlueprint(requestContext, FieldSpec(field, fieldId, handle), node);
-    ASSERT_TRUE(bp);
+    MatchDataLayout           mdl;
+    TermFieldHandle           handle = mdl.allocTermField(fieldId);
+    Blueprint::UP bp = source.createBlueprint(requestContext, FieldSpec(field, fieldId, handle), node, mdl);
+    EXPECT_TRUE(bp);
+    if (!bp) {
+        return {0, true};
+    }
     Result result(bp->getState().estimate().estHits, bp->getState().estimate().empty);
     bp->basic_plan(strict, 100);
     bp->fetchPostings(queryeval::ExecuteInfo::FULL);
+    MatchData::UP      match_data = mdl.createMatchData();
     SearchIterator::UP iterator = bp->createSearch(*match_data);
-    ASSERT_TRUE(iterator);
+    EXPECT_TRUE(iterator);
+    if (!iterator) {
+        return {0, true};
+    }
     iterator->initRange(1, num_docs);
     extract_posting_info(result, iterator->getPostingInfo());
     extract_wand_params(result, dynamic_cast<ParallelWeakAndSearch*>(iterator.get()));
@@ -234,68 +235,67 @@ Result do_search(IAttributeManager &attribute_manager, const Node &node, bool st
     for (uint32_t docid = 1; docid < num_docs; ++docid) {
         if (iterator->seek(docid)) {
             iterator->unpack(docid);
-            result.hits.emplace_back(docid,
-                                     match_data->resolveTermField(handle)->getRawScore(),
+            result.hits.emplace_back(docid, match_data->resolveTermField(handle)->getRawScore(),
                                      match_data->resolveTermField(handle)->getWeight());
         }
     }
     return result;
 }
 
-bool search(const Node &node, IAttributeManager &attribute_manager,
-            bool fast_search = false, bool strict = true, bool empty = false)
-{
+bool search(const Node& node, IAttributeManager& attribute_manager, bool fast_search = false, bool strict = true,
+            bool empty = false) {
     Result result = do_search(attribute_manager, node, strict);
     if (fast_search) {
-        EXPECT_LESS(result.est_hits, num_docs / 10);
+        EXPECT_LT(result.est_hits, num_docs / 10);
     } else {
         if (empty) {
             EXPECT_TRUE(result.est_empty);
-            EXPECT_EQUAL(0u, result.est_hits);
+            EXPECT_EQ(0u, result.est_hits);
         } else {
             EXPECT_TRUE(!result.est_empty);
-            EXPECT_EQUAL(num_docs, result.est_hits);
+            EXPECT_EQ(num_docs, result.est_hits);
         }
     }
     return (result.hits.size() == 1) && (result.hits[0].docid == (num_docs - 1));
 }
 
-bool search(const string &term, IAttributeManager &attribute_manager,
-            bool fast_search = false, bool strict = true, bool empty = false)
-{
-    TEST_STATE(term.c_str());
+bool search(const string& term, IAttributeManager& attribute_manager, bool fast_search = false, bool strict = true,
+            bool empty = false) {
+    SCOPED_TRACE(term);
     SimpleStringTerm node(term, "field", 0, Weight(0));
     return search(node, attribute_manager, fast_search, strict, empty);
 }
 
 template <typename T> struct AttributeVectorTypeFinder {
     using Type = search::SingleValueStringAttribute;
-    static void add(Type & a, const T & v) {
-        a.update(a.getNumDocs()-1, v);
+    static void add(Type& a, const T& v) {
+        a.update(a.getNumDocs() - 1, v);
         a.commit();
     }
 };
 template <> struct AttributeVectorTypeFinder<int64_t> {
-    using Type = search::SingleValueNumericAttribute<search::IntegerAttributeTemplate<int64_t> >;
-    static void add(Type & a, int64_t v) { a.set(a.getNumDocs()-1, v); a.commit(); }
+    using Type = search::SingleValueNumericAttribute<search::IntegerAttributeTemplate<int64_t>>;
+    static void add(Type& a, int64_t v) {
+        a.set(a.getNumDocs() - 1, v);
+        a.commit();
+    }
 };
 
-void add_docs(AttributeVector *attr, size_t n) {
+void add_docs(AttributeVector* attr, size_t n) {
     AttributeVector::DocId docid;
     for (size_t i = 0; i < n; ++i) {
         attr->addDoc(docid);
         if (attr->isPredicateType()) {
-            const_cast<uint8_t *>(static_cast<PredicateAttribute *>(attr)->getMinFeatureVector().first)[docid] = 0;
+            const_cast<uint8_t*>(static_cast<PredicateAttribute*>(attr)->getMinFeatureVector().first)[docid] = 0;
         }
     }
-    ASSERT_EQUAL(n - 1, docid);
+    ASSERT_EQ(n - 1, docid);
 }
 
-template <typename T>
-MyAttributeManager makeAttributeManager(T value) {
+template <typename T> MyAttributeManager makeAttributeManager(T value) {
     using AT = AttributeVectorTypeFinder<T>;
     using AttributeVectorType = typename AT::Type;
-    AttributeVectorType *attr = new AttributeVectorType(field);
+    AttributeVectorType* attr = new AttributeVectorType(field);
     add_docs(attr, num_docs);
     AT::add(*attr, value);
     return MyAttributeManager(attr);
@@ -305,26 +305,25 @@ MyAttributeManager makeFastSearchLongAttributeManager(int64_t value) {
     Config cfg(BasicType::INT64, CollectionType::SINGLE);
     cfg.setFastSearch(true);
     AttributeVector::SP attr_ptr = AttributeFactory::createAttribute(field, cfg);
-    IntegerAttribute *attr = static_cast<IntegerAttribute *>(attr_ptr.get());
+    IntegerAttribute*   attr = static_cast<IntegerAttribute*>(attr_ptr.get());
     add_docs(attr, num_docs);
     attr->update(num_docs - 1, value);
     attr->commit();
     return MyAttributeManager(attr_ptr);
 }
 
-TEST("requireThatIteratorsCanBeCreated") {
+TEST(AttributeSearchableAdapterTest, requireThatIteratorsCanBeCreated) {
     MyAttributeManager attribute_manager = makeAttributeManager("foo");
 
     EXPECT_TRUE(search("foo", attribute_manager));
 }
 
-TEST("require that missing attribute produces empty search")
-{
+TEST(AttributeSearchableAdapterTest, require_that_missing_attribute_produces_empty_search) {
     MyAttributeManager attribute_manager(nullptr);
     EXPECT_FALSE(search("foo", attribute_manager, false, false, true));
 }
 
-TEST("requireThatRangeTermsWorkToo") {
+TEST(AttributeSearchableAdapterTest, requireThatRangeTermsWorkToo) {
     MyAttributeManager attribute_manager = makeAttributeManager(int64_t(42));
 
     EXPECT_TRUE(search("[23;46]", attribute_manager));
@@ -333,14 +332,14 @@ TEST("requireThatRangeTermsWorkToo") {
     EXPECT_TRUE(search("[10;]", attribute_manager));
 }
 
-TEST("requireThatPrefixTermsWork") {
+TEST(AttributeSearchableAdapterTest, requireThatPrefixTermsWork) {
     MyAttributeManager attribute_manager = makeAttributeManager("foo");
 
     SimplePrefixTerm node("fo", "field", 0, Weight(0));
     EXPECT_TRUE(search(node, attribute_manager));
 }
 
-TEST("requireThatLocationTermsWork") {
+TEST(AttributeSearchableAdapterTest, requireThatLocationTermsWork) {
     // 0xcc is z-curve for (10, 10).
     MyAttributeManager attribute_manager = makeAttributeManager(int64_t(0xcc));
     {
@@ -361,7 +360,7 @@ TEST("requireThatLocationTermsWork") {
     }
 }
 
-TEST("requireThatOptimizedLocationTermsWork") {
+TEST(AttributeSearchableAdapterTest, requireThatOptimizedLocationTermsWork) {
     // 0xcc is z-curve for (10, 10).
     MyAttributeManager attribute_manager = makeFastSearchLongAttributeManager(int64_t(0xcc));
     {
@@ -382,30 +381,32 @@ TEST("requireThatOptimizedLocationTermsWork") {
     }
 }
 
-TEST("require that optimized location search works with wrapped bounding box (no hits)") {
+TEST(AttributeSearchableAdapterTest,
+     require_that_optimized_location_search_works_with_wrapped_bounding_box_giving_no_hits) {
     // 0xcc is z-curve for (10, 10).
     MyAttributeManager attribute_manager = makeFastSearchLongAttributeManager(int64_t(0xcc));
     SimpleLocationTerm term1(Location(Rectangle(5, 5, 15, 15)), field, 0, Weight(0)); // unwrapped
     SimpleLocationTerm term2(Location(Rectangle(15, 5, 5, 15)), field, 0, Weight(0)); // wrapped x
     SimpleLocationTerm term3(Location(Rectangle(5, 15, 15, 5)), field, 0, Weight(0)); // wrapped y
-    Result result1 = do_search(attribute_manager, term1, true);
-    Result result2 = do_search(attribute_manager, term2, true);
-    Result result3 = do_search(attribute_manager, term3, true);
-    EXPECT_EQUAL(1u, result1.hits.size());
-    EXPECT_EQUAL(0u, result2.hits.size());
-    EXPECT_EQUAL(0u, result3.hits.size());
+    Result             result1 = do_search(attribute_manager, term1, true);
+    Result             result2 = do_search(attribute_manager, term2, true);
+    Result             result3 = do_search(attribute_manager, term3, true);
+    EXPECT_EQ(1u, result1.hits.size());
+    EXPECT_EQ(0u, result2.hits.size());
+    EXPECT_EQ(0u, result3.hits.size());
     EXPECT_TRUE(result1.iterator_dump.find("LocationPreFilterIterator") != std::string::npos);
     EXPECT_TRUE(result2.iterator_dump.find("EmptySearch") != std::string::npos);
     EXPECT_TRUE(result3.iterator_dump.find("EmptySearch") != std::string::npos);
 }
 
-void set_weights(StringAttribute *attr, uint32_t docid,
-                 int32_t foo_weight, int32_t bar_weight, int32_t baz_weight)
-{
+void set_weights(StringAttribute* attr, uint32_t docid, int32_t foo_weight, int32_t bar_weight, int32_t baz_weight) {
     attr->clearDoc(docid);
-    if (foo_weight > 0) attr->append(docid, "foo", foo_weight);
-    if (bar_weight > 0) attr->append(docid, "bar", bar_weight);
-    if (baz_weight > 0) attr->append(docid, "baz", baz_weight);
+    if (foo_weight > 0)
+        attr->append(docid, "foo", foo_weight);
+    if (bar_weight > 0)
+        attr->append(docid, "bar", bar_weight);
+    if (baz_weight > 0)
+        attr->append(docid, "baz", baz_weight);
     attr->commit();
 }
 
@@ -414,94 +415,96 @@ MyAttributeManager make_weighted_string_attribute_manager(bool fast_search, bool
     cfg.setFastSearch(fast_search);
     cfg.setIsFilter(isFilter);
     AttributeVector::SP attr_ptr = AttributeFactory::createAttribute(field, cfg);
-    StringAttribute *attr = static_cast<StringAttribute *>(attr_ptr.get());
+    StringAttribute*    attr = static_cast<StringAttribute*>(attr_ptr.get());
     add_docs(attr, num_docs);
-    set_weights(attr, 10,    0, 200,   0);
-    set_weights(attr, 20,  100, 200, 300);
-    set_weights(attr, 30,    0,   0, 300);
-    set_weights(attr, 40,  100,   0,   0);
-    set_weights(attr, 50, 1000,   0, 300);
+    set_weights(attr, 10, 0, 200, 0);
+    set_weights(attr, 20, 100, 200, 300);
+    set_weights(attr, 30, 0, 0, 300);
+    set_weights(attr, 40, 100, 0, 0);
+    set_weights(attr, 50, 1000, 0, 300);
     MyAttributeManager attribute_manager(attr_ptr);
     return attribute_manager;
 }
 
-TEST("require that attribute dot product works") {
+TEST(AttributeSearchableAdapterTest, require_that_attribute_dot_product_works) {
     for (int i = 0; i <= 0x3; ++i) {
-        bool fast_search = ((i & 0x1) != 0);
-        bool strict = ((i & 0x2) != 0);
+        bool               fast_search = ((i & 0x1) != 0);
+        bool               strict = ((i & 0x2) != 0);
         MyAttributeManager attribute_manager = make_weighted_string_attribute_manager(fast_search);
-        SimpleDotProduct node(4, field, 0, Weight(1));
+        SimpleDotProduct   node(4, field, 0, Weight(1));
         node.addTerm("foo", Weight(1));
         node.addTerm("bar", Weight(1));
         node.addTerm("baz", Weight(1));
         node.addTerm("fox", Weight(1));
         Result result = do_search(attribute_manager, node, strict);
-        ASSERT_EQUAL(5u, result.hits.size());
+        ASSERT_EQ(5u, result.hits.size());
         if (fast_search) {
-            EXPECT_EQUAL(8u, result.est_hits);
+            EXPECT_EQ(8u, result.est_hits);
         } else {
             // 'fox' is detected to produce no hits since it has no enum value
-            EXPECT_EQUAL(num_docs * 3, result.est_hits);
+            EXPECT_EQ(num_docs * 3, result.est_hits);
         }
         EXPECT_FALSE(result.est_empty);
-        EXPECT_EQUAL(10u, result.hits[0].docid);
-        EXPECT_EQUAL(200.0, result.hits[0].raw_score);
-        EXPECT_EQUAL(20u, result.hits[1].docid);
-        EXPECT_EQUAL(600.0, result.hits[1].raw_score);
-        EXPECT_EQUAL(30u, result.hits[2].docid);
-        EXPECT_EQUAL(300.0, result.hits[2].raw_score);
-        EXPECT_EQUAL(40u, result.hits[3].docid);
-        EXPECT_EQUAL(100.0, result.hits[3].raw_score);
-        EXPECT_EQUAL(50u, result.hits[4].docid);
-        EXPECT_EQUAL(1300.0, result.hits[4].raw_score);
+        EXPECT_EQ(10u, result.hits[0].docid);
+        EXPECT_EQ(200.0, result.hits[0].raw_score);
+        EXPECT_EQ(20u, result.hits[1].docid);
+        EXPECT_EQ(600.0, result.hits[1].raw_score);
+        EXPECT_EQ(30u, result.hits[2].docid);
+        EXPECT_EQ(300.0, result.hits[2].raw_score);
+        EXPECT_EQ(40u, result.hits[3].docid);
+        EXPECT_EQ(100.0, result.hits[3].raw_score);
+        EXPECT_EQ(50u, result.hits[4].docid);
+        EXPECT_EQ(1300.0, result.hits[4].raw_score);
     }
 }
 
-TEST("require that attribute dot product can produce no hits") {
+TEST(AttributeSearchableAdapterTest, require_that_attribute_dot_product_can_produce_no_hits) {
     for (int i = 0; i <= 0x3; ++i) {
-        bool fast_search = ((i & 0x1) != 0);
-        bool strict = ((i & 0x2) != 0);
+        bool               fast_search = ((i & 0x1) != 0);
+        bool               strict = ((i & 0x2) != 0);
         MyAttributeManager attribute_manager = make_weighted_string_attribute_manager(fast_search);
-        SimpleDotProduct node(4, field, 0, Weight(1));
+        SimpleDotProduct   node(4, field, 0, Weight(1));
         node.addTerm("notfoo", Weight(1));
         node.addTerm("notbar", Weight(1));
         node.addTerm("notbaz", Weight(1));
         node.addTerm("notfox", Weight(1));
         Result result = do_search(attribute_manager, node, strict);
-        ASSERT_EQUAL(0u, result.hits.size());
-        EXPECT_EQUAL(0u, result.est_hits);
+        ASSERT_EQ(0u, result.hits.size());
+        EXPECT_EQ(0u, result.est_hits);
         EXPECT_TRUE(result.est_empty);
     }
 }
 
-TEST("require that single weighted set turns filter on filter fields") {
-        bool fast_search = true;
-        bool strict = true;
-        bool isFilter = true;
-        MyAttributeManager attribute_manager = make_weighted_string_attribute_manager(fast_search, isFilter);
-        SimpleStringTerm empty_node("notfoo", "", 0, Weight(1));
-        Result empty_result = do_search(attribute_manager, empty_node, strict);
-        EXPECT_EQUAL(0u, empty_result.hits.size());
-        SimpleStringTerm node("foo", "", 0, Weight(1));
-        Result result = do_search(attribute_manager, node, strict);
-        EXPECT_EQUAL(3u, result.est_hits);
-        EXPECT_TRUE(result.iterator_dump.find("DocidWithWeightSearchIterator") == std::string::npos);
-        EXPECT_TRUE(result.iterator_dump.find("FilterAttributePostingListIteratorT") != std::string::npos);
-        ASSERT_EQUAL(3u, result.hits.size());
-        EXPECT_FALSE(result.est_empty);
-        EXPECT_EQUAL(20u, result.hits[0].docid);
-        EXPECT_EQUAL(40u, result.hits[1].docid);
-        EXPECT_EQUAL(50u, result.hits[2].docid);
+TEST(AttributeSearchableAdapterTest, require_that_single_weighted_set_turns_filter_on_filter_fields) {
+    bool               fast_search = true;
+    bool               strict = true;
+    bool               isFilter = true;
+    MyAttributeManager attribute_manager = make_weighted_string_attribute_manager(fast_search, isFilter);
+    SimpleStringTerm   empty_node("notfoo", "", 0, Weight(1));
+    Result             empty_result = do_search(attribute_manager, empty_node, strict);
+    EXPECT_EQ(0u, empty_result.hits.size());
+    SimpleStringTerm node("foo", "", 0, Weight(1));
+    Result           result = do_search(attribute_manager, node, strict);
+    EXPECT_EQ(3u, result.est_hits);
+    EXPECT_TRUE(result.iterator_dump.find("DocidWithWeightSearchIterator") == std::string::npos);
+    EXPECT_TRUE(result.iterator_dump.find("FilterAttributePostingListIteratorT") != std::string::npos);
+    ASSERT_EQ(3u, result.hits.size());
+    EXPECT_FALSE(result.est_empty);
+    EXPECT_EQ(20u, result.hits[0].docid);
+    EXPECT_EQ(40u, result.hits[1].docid);
+    EXPECT_EQ(50u, result.hits[2].docid);
 }
 
-const char *as_str(bool flag) { return flag? "true" : "false"; }
+const char* as_str(bool flag) {
+    return flag ? "true" : "false";
+}
 
-TEST("require that attribute parallel wand works") {
+TEST(AttributeSearchableAdapterTest, require_that_attribute_parallel_wand_works) {
     for (int i = 0; i <= 0x3; ++i) {
-        bool fast_search = ((i & 0x1) != 0);
-        bool strict = ((i & 0x2) != 0);
+        bool               fast_search = ((i & 0x1) != 0);
+        bool               strict = ((i & 0x2) != 0);
         MyAttributeManager attribute_manager = make_weighted_string_attribute_manager(fast_search);
-        SimpleWandTerm node(4, field, 0, Weight(1), 10, 500, 1.5);
+        SimpleWandTerm     node(4, field, 0, Weight(1), 10, 500, 1.5);
         node.addTerm("foo", Weight(1));
         node.addTerm("bar", Weight(1));
         node.addTerm("baz", Weight(1));
@@ -509,34 +512,35 @@ TEST("require that attribute parallel wand works") {
         Result result = do_search(attribute_manager, node, strict);
         EXPECT_FALSE(result.est_empty);
         if (fast_search) {
-            EXPECT_EQUAL(8u, result.est_hits);
+            EXPECT_EQ(8u, result.est_hits);
         } else {
             // 'fox' is detected to produce no hits since it has no enum value
-            EXPECT_EQUAL(num_docs * 3, result.est_hits);
+            EXPECT_EQ(num_docs * 3, result.est_hits);
         }
-        if (EXPECT_EQUAL(2u, result.hits.size())) {
+        bool success = true;
+        EXPECT_EQ(2u, result.hits.size()) << (success = false, "");
+        if (success) {
             if (result.iterator_dump.find("MonitoringDumpIterator") == std::string::npos) {
-                EXPECT_EQUAL(10u, result.wand_hits);
-                EXPECT_EQUAL(500, result.wand_initial_threshold);
-                EXPECT_EQUAL(1.5, result.wand_boost_factor);
+                EXPECT_EQ(10u, result.wand_hits);
+                EXPECT_EQ(500, result.wand_initial_threshold);
+                EXPECT_EQ(1.5, result.wand_boost_factor);
             }
-            EXPECT_EQUAL(20u, result.hits[0].docid);
-            EXPECT_EQUAL(600.0, result.hits[0].raw_score);
-            EXPECT_EQUAL(50u, result.hits[1].docid);
-            EXPECT_EQUAL(1300.0, result.hits[1].raw_score);
+            EXPECT_EQ(20u, result.hits[0].docid);
+            EXPECT_EQ(600.0, result.hits[0].raw_score);
+            EXPECT_EQ(50u, result.hits[1].docid);
+            EXPECT_EQ(1300.0, result.hits[1].raw_score);
         } else {
-            fprintf(stderr, "    (fast_search: %s, strict: %s)\n",
-                    as_str(fast_search), as_str(strict));
+            fprintf(stderr, "    (fast_search: %s, strict: %s)\n", as_str(fast_search), as_str(strict));
             LOG_ABORT("should not reach here");
         }
     }
 }
 
-TEST("require that attribute weighted set term works") {
+TEST(AttributeSearchableAdapterTest, require_that_attribute_weighted_set_term_works) {
     for (int i = 0; i <= 0x3; ++i) {
-        bool fast_search = ((i & 0x1) != 0);
-        bool strict = ((i & 0x2) != 0);
-        MyAttributeManager attribute_manager = make_weighted_string_attribute_manager(fast_search);
+        bool                  fast_search = ((i & 0x1) != 0);
+        bool                  strict = ((i & 0x2) != 0);
+        MyAttributeManager    attribute_manager = make_weighted_string_attribute_manager(fast_search);
         SimpleWeightedSetTerm node(4, field, 0, Weight(1));
         node.addTerm("foo", Weight(10));
         node.addTerm("bar", Weight(20));
@@ -544,105 +548,105 @@ TEST("require that attribute weighted set term works") {
         node.addTerm("fox", Weight(40));
         Result result = do_search(attribute_manager, node, strict);
         EXPECT_FALSE(result.est_empty);
-        ASSERT_EQUAL(5u, result.hits.size());
+        ASSERT_EQ(5u, result.hits.size());
         if (fast_search && result.iterator_dump.find("MonitoringDumpIterator") == std::string::npos) {
             fprintf(stderr, "DUMP: %s\n", result.iterator_dump.c_str());
             EXPECT_TRUE(result.iterator_dump.find("PostingIteratorPack") != std::string::npos);
         }
-        EXPECT_EQUAL(10u, result.hits[0].docid);
-        EXPECT_EQUAL(20, result.hits[0].match_weight);
-        EXPECT_EQUAL(20u, result.hits[1].docid);
-        EXPECT_EQUAL(30, result.hits[1].match_weight);
-        EXPECT_EQUAL(30u, result.hits[2].docid);
-        EXPECT_EQUAL(30, result.hits[2].match_weight);
-        EXPECT_EQUAL(40u, result.hits[3].docid);
-        EXPECT_EQUAL(10, result.hits[3].match_weight);
-        EXPECT_EQUAL(50u, result.hits[4].docid);
-        EXPECT_EQUAL(30, result.hits[4].match_weight);
+        EXPECT_EQ(10u, result.hits[0].docid);
+        EXPECT_EQ(20, result.hits[0].match_weight);
+        EXPECT_EQ(20u, result.hits[1].docid);
+        EXPECT_EQ(30, result.hits[1].match_weight);
+        EXPECT_EQ(30u, result.hits[2].docid);
+        EXPECT_EQ(30, result.hits[2].match_weight);
+        EXPECT_EQ(40u, result.hits[3].docid);
+        EXPECT_EQ(10, result.hits[3].match_weight);
+        EXPECT_EQ(50u, result.hits[4].docid);
+        EXPECT_EQ(30, result.hits[4].match_weight);
     }
 }
 
-TEST("require that attribute in term works") {
+TEST(AttributeSearchableAdapterTest, require_that_attribute_in_term_works) {
     for (int i = 0; i <= 0x3; ++i) {
-        bool fast_search = ((i & 0x1) != 0);
-        bool strict = ((i & 0x2) != 0);
+        bool               fast_search = ((i & 0x1) != 0);
+        bool               strict = ((i & 0x2) != 0);
         MyAttributeManager attribute_manager = make_weighted_string_attribute_manager(fast_search);
-        auto stv = std::make_unique<StringTermVector>(4);
+        auto               stv = std::make_unique<StringTermVector>(4);
         stv->addTerm("foo");
         stv->addTerm("bar");
         stv->addTerm("baz");
         stv->addTerm("fox");
         SimpleInTerm node(std::move(stv), SimpleInTerm::Type::STRING, field, 0, Weight(1));
-        Result result = do_search(attribute_manager, node, strict);
+        Result       result = do_search(attribute_manager, node, strict);
         EXPECT_FALSE(result.est_empty);
-        ASSERT_EQUAL(5u, result.hits.size());
+        ASSERT_EQ(5u, result.hits.size());
         if (fast_search && result.iterator_dump.find("MonitoringDumpIterator") == std::string::npos) {
             fprintf(stderr, "DUMP: %s\n", result.iterator_dump.c_str());
             EXPECT_TRUE(result.iterator_dump.find("PostingIteratorPack") != std::string::npos);
         }
-        EXPECT_EQUAL(10u, result.hits[0].docid);
-        EXPECT_EQUAL(1, result.hits[0].match_weight);
-        EXPECT_EQUAL(20u, result.hits[1].docid);
-        EXPECT_EQUAL(1, result.hits[1].match_weight);
-        EXPECT_EQUAL(30u, result.hits[2].docid);
-        EXPECT_EQUAL(1, result.hits[2].match_weight);
-        EXPECT_EQUAL(40u, result.hits[3].docid);
-        EXPECT_EQUAL(1, result.hits[3].match_weight);
-        EXPECT_EQUAL(50u, result.hits[4].docid);
-        EXPECT_EQUAL(1, result.hits[4].match_weight);
+        EXPECT_EQ(10u, result.hits[0].docid);
+        EXPECT_EQ(1, result.hits[0].match_weight);
+        EXPECT_EQ(20u, result.hits[1].docid);
+        EXPECT_EQ(1, result.hits[1].match_weight);
+        EXPECT_EQ(30u, result.hits[2].docid);
+        EXPECT_EQ(1, result.hits[2].match_weight);
+        EXPECT_EQ(40u, result.hits[3].docid);
+        EXPECT_EQ(1, result.hits[3].match_weight);
+        EXPECT_EQ(50u, result.hits[4].docid);
+        EXPECT_EQ(1, result.hits[4].match_weight);
     }
 }
 
-TEST("require that predicate query in non-predicate field yields empty.") {
+TEST(AttributeSearchableAdapterTest, require_that_predicate_query_in_non_predicate_field_yields_empty) {
     MyAttributeManager attribute_manager = makeAttributeManager("foo");
 
-    auto term = std::make_unique<PredicateQueryTerm>();
+    auto                 term = std::make_unique<PredicateQueryTerm>();
     SimplePredicateQuery node(std::move(term), field, 0, Weight(1));
-    Result result = do_search(attribute_manager, node, true);
+    Result               result = do_search(attribute_manager, node, true);
     EXPECT_TRUE(result.est_empty);
-    EXPECT_EQUAL(0u, result.hits.size());
+    EXPECT_EQ(0u, result.hits.size());
 }
 
-TEST("require that predicate query in predicate field yields results.") {
-    PredicateAttribute *attr = new PredicateAttribute(field, Config(BasicType::PREDICATE, CollectionType::SINGLE));
+TEST(AttributeSearchableAdapterTest, require_that_predicate_query_in_predicate_field_yields_results) {
+    PredicateAttribute* attr = new PredicateAttribute(field, Config(BasicType::PREDICATE, CollectionType::SINGLE));
     add_docs(attr, num_docs);
-    attr->getIndex().indexEmptyDocument(2);  // matches anything
+    attr->getIndex().indexEmptyDocument(2); // matches anything
     attr->getIndex().commit();
-    const_cast<PredicateAttribute::IntervalRange *>(attr->getIntervalRangeVector())[2] = 1u;
+    const_cast<PredicateAttribute::IntervalRange*>(attr->getIntervalRangeVector())[2] = 1u;
     MyAttributeManager attribute_manager(attr);
 
-    auto term = std::make_unique<PredicateQueryTerm>();
+    auto                 term = std::make_unique<PredicateQueryTerm>();
     SimplePredicateQuery node(std::move(term), field, 0, Weight(1));
-    Result result = do_search(attribute_manager, node, true);
+    Result               result = do_search(attribute_manager, node, true);
     EXPECT_FALSE(result.est_empty);
-    EXPECT_EQUAL(1u, result.hits.size());
+    EXPECT_EQ(1u, result.hits.size());
 }
 
-TEST("require that substring terms work") {
-    MyAttributeManager attribute_manager = make_weighted_string_attribute_manager(true);
+TEST(AttributeSearchableAdapterTest, require_that_substring_terms_work) {
+    MyAttributeManager  attribute_manager = make_weighted_string_attribute_manager(true);
     SimpleSubstringTerm node("a", "", 0, Weight(1));
-    Result result = do_search(attribute_manager, node, true);
-    ASSERT_EQUAL(4u, result.hits.size());
-    EXPECT_EQUAL(10u, result.hits[0].docid);
-    EXPECT_EQUAL(20u, result.hits[1].docid);
-    EXPECT_EQUAL(30u, result.hits[2].docid);
-    EXPECT_EQUAL(50u, result.hits[3].docid);
+    Result              result = do_search(attribute_manager, node, true);
+    ASSERT_EQ(4u, result.hits.size());
+    EXPECT_EQ(10u, result.hits[0].docid);
+    EXPECT_EQ(20u, result.hits[1].docid);
+    EXPECT_EQ(30u, result.hits[2].docid);
+    EXPECT_EQ(50u, result.hits[3].docid);
 }
 
-TEST("require that suffix terms work") {
+TEST(AttributeSearchableAdapterTest, require_that_suffix_terms_work) {
     MyAttributeManager attribute_manager = make_weighted_string_attribute_manager(true);
-    SimpleSuffixTerm node("oo", "", 0, Weight(1));
-    Result result = do_search(attribute_manager, node, true);
-    ASSERT_EQUAL(3u, result.hits.size());
-    EXPECT_EQUAL(20u, result.hits[0].docid);
-    EXPECT_EQUAL(40u, result.hits[1].docid);
-    EXPECT_EQUAL(50u, result.hits[2].docid);
+    SimpleSuffixTerm   node("oo", "", 0, Weight(1));
+    Result             result = do_search(attribute_manager, node, true);
+    ASSERT_EQ(3u, result.hits.size());
+    EXPECT_EQ(20u, result.hits[0].docid);
+    EXPECT_EQ(40u, result.hits[1].docid);
+    EXPECT_EQ(50u, result.hits[2].docid);
 }
 
-void set_attr_value(AttributeVector &attr, uint32_t docid, size_t value) {
-    IntegerAttribute *int_attr = dynamic_cast<IntegerAttribute *>(&attr);
-    FloatingPointAttribute *float_attr = dynamic_cast<FloatingPointAttribute *>(&attr);
-    StringAttribute *string_attr = dynamic_cast<StringAttribute *>(&attr);
+void set_attr_value(AttributeVector& attr, uint32_t docid, size_t value) {
+    IntegerAttribute*       int_attr = dynamic_cast<IntegerAttribute*>(&attr);
+    FloatingPointAttribute* float_attr = dynamic_cast<FloatingPointAttribute*>(&attr);
+    StringAttribute*        string_attr = dynamic_cast<StringAttribute*>(&attr);
     if (int_attr != nullptr) {
         int_attr->update(docid, value);
         int_attr->commit();
@@ -650,24 +654,23 @@ void set_attr_value(AttributeVector &attr, uint32_t docid, size_t value) {
         float_attr->update(docid, value);
         float_attr->commit();
     } else if (string_attr != nullptr) {
-        ASSERT_LESS(value, size_t(27*26 + 26));
+        ASSERT_LT(value, size_t(27 * 26 + 26));
         std::string str;
         str.push_back('a' + value / 27);
         str.push_back('a' + value % 27);
         string_attr->update(docid, str);
-        string_attr->commit();    
+        string_attr->commit();
     } else {
         ASSERT_TRUE(false);
     }
 }
 
 MyAttributeManager make_diversity_setup(BasicType::Type field_type, bool field_fast_search,
-                                        BasicType::Type other_type, bool other_fast_search)
-{
+                                        BasicType::Type other_type, bool other_fast_search) {
     Config field_cfg(field_type, CollectionType::SINGLE);
     field_cfg.setFastSearch(field_fast_search);
     AttributeVector::SP field_attr = AttributeFactory::createAttribute(field, field_cfg);
-    Config other_cfg(other_type, CollectionType::SINGLE);
+    Config              other_cfg(other_type, CollectionType::SINGLE);
     other_cfg.setFastSearch(other_fast_search);
     AttributeVector::SP other_attr = AttributeFactory::createAttribute(other, other_cfg);
     add_docs(&*field_attr, num_docs);
@@ -681,87 +684,92 @@ MyAttributeManager make_diversity_setup(BasicType::Type field_type, bool field_f
     return attribute_manager;
 }
 
-size_t diversity_hits(IAttributeManager &manager, const std::string &term, bool strict) {
+size_t diversity_hits(IAttributeManager& manager, const std::string& term, bool strict) {
     SimpleRangeTerm node(term, "", 0, Weight(1));
-    Result result = do_search(manager, node, strict);
+    Result          result = do_search(manager, node, strict);
     return result.hits.size();
 }
 
-std::pair<size_t,size_t> diversity_docid_range(IAttributeManager &manager, const std::string &term, bool strict) {
-    SimpleRangeTerm node(term, "", 0, Weight(1));
-    Result result = do_search(manager, node, strict);
+std::pair<size_t, size_t> diversity_docid_range(IAttributeManager& manager, const std::string& term, bool strict) {
+    SimpleRangeTerm           node(term, "", 0, Weight(1));
+    Result                    result = do_search(manager, node, strict);
     std::pair<size_t, size_t> range(0, 0);
-    for (const Result::Hit &hit: result.hits) {
+    for (const Result::Hit& hit : result.hits) {
         if (range.first == 0) {
             range.first = hit.docid;
             range.second = hit.docid;
         } else {
-            EXPECT_GREATER(size_t(hit.docid), range.second);
+            EXPECT_GT(size_t(hit.docid), range.second);
             range.second = hit.docid;
         }
     }
     return range;
 }
 
-TEST("require that diversity range searches work for various types") {
-    for (auto field_type: std::vector<BasicType::Type>({BasicType::INT32, BasicType::DOUBLE})) {
-        for (auto other_type: std::vector<BasicType::Type>({BasicType::INT16, BasicType::INT32, BasicType::INT64,
-                            BasicType::FLOAT, BasicType::DOUBLE, BasicType::STRING}))
+TEST(AttributeSearchableAdapterTest, require_that_diversity_range_searches_work_for_various_types) {
+    for (auto field_type : std::vector<BasicType::Type>({BasicType::INT32, BasicType::DOUBLE})) {
+        for (auto other_type : std::vector<BasicType::Type>({BasicType::INT16, BasicType::INT32, BasicType::INT64,
+                                                             BasicType::FLOAT, BasicType::DOUBLE, BasicType::STRING}))
         {
-            for (bool other_fast_search: std::vector<bool>({true, false})) {
+            for (bool other_fast_search : std::vector<bool>({true, false})) {
                 MyAttributeManager manager = make_diversity_setup(field_type, true, other_type, other_fast_search);
-                for (bool strict: std::vector<bool>({true, false})) {
-                    TEST_STATE(make_string("field_type: %s, other_type: %s, other_fast_search: %s, strict: %s",
-                                           BasicType(field_type).asString(), BasicType(other_type).asString(),
-                                           other_fast_search ? "true" : "false", strict ? "true" : "false").c_str());
-                    EXPECT_EQUAL(999u, diversity_hits(manager, "[;;1000;other;10]", strict));
-                    EXPECT_EQUAL(999u, diversity_hits(manager, "[;;-1000;other;10]", strict));
-                    EXPECT_EQUAL(100u, diversity_hits(manager, "[;;1000;other;1]", strict));
-                    EXPECT_EQUAL(100u, diversity_hits(manager, "[;;-1000;other;1]", strict));
-                    EXPECT_EQUAL(300u, diversity_hits(manager, "[;;1000;other;3]", strict));
-                    EXPECT_EQUAL(300u, diversity_hits(manager, "[;;-1000;other;3]", strict));
-                    EXPECT_EQUAL(10u, diversity_hits(manager, "[;;10;other;3]", strict));
-                    EXPECT_EQUAL(10u, diversity_hits(manager, "[;;-10;other;3]", strict));
-                    EXPECT_EQUAL(1u, diversity_docid_range(manager, "[;;10;other;3]", strict).first);
-                    EXPECT_EQUAL(30u, diversity_docid_range(manager, "[;;10;other;3]", strict).second);
-                    EXPECT_EQUAL(965u, diversity_docid_range(manager, "[;;-10;other;3]", strict).first);
-                    EXPECT_EQUAL(997u, diversity_docid_range(manager, "[;;-10;other;3]", strict).second);
+                for (bool strict : std::vector<bool>({true, false})) {
+                    SCOPED_TRACE(make_string("field_type: %s, other_type: %s, other_fast_search: %s, strict: %s",
+                                             BasicType(field_type).asString(), BasicType(other_type).asString(),
+                                             other_fast_search ? "true" : "false", strict ? "true" : "false")
+                                     .c_str());
+                    EXPECT_EQ(999u, diversity_hits(manager, "[;;1000;other;10]", strict));
+                    EXPECT_EQ(999u, diversity_hits(manager, "[;;-1000;other;10]", strict));
+                    EXPECT_EQ(100u, diversity_hits(manager, "[;;1000;other;1]", strict));
+                    EXPECT_EQ(100u, diversity_hits(manager, "[;;-1000;other;1]", strict));
+                    EXPECT_EQ(300u, diversity_hits(manager, "[;;1000;other;3]", strict));
+                    EXPECT_EQ(300u, diversity_hits(manager, "[;;-1000;other;3]", strict));
+                    EXPECT_EQ(10u, diversity_hits(manager, "[;;10;other;3]", strict));
+                    EXPECT_EQ(10u, diversity_hits(manager, "[;;-10;other;3]", strict));
+                    EXPECT_EQ(1u, diversity_docid_range(manager, "[;;10;other;3]", strict).first);
+                    EXPECT_EQ(30u, diversity_docid_range(manager, "[;;10;other;3]", strict).second);
+                    EXPECT_EQ(965u, diversity_docid_range(manager, "[;;-10;other;3]", strict).first);
+                    EXPECT_EQ(997u, diversity_docid_range(manager, "[;;-10;other;3]", strict).second);
                 }
             }
         }
     }
 }
 
-TEST("require that diversity also works for a single unique value") {
+TEST(AttributeSearchableAdapterTest, require_that_diversity_also_works_for_a_single_unique_value) {
     MyAttributeManager manager = make_diversity_setup(BasicType::INT32, true, BasicType::INT32, true);
-    EXPECT_EQUAL(2u, diversity_hits(manager, "[2;2;100;other;2]", true));
-    EXPECT_EQUAL(2u, diversity_hits(manager, "[2;2;-100;other;2]", true));
-    EXPECT_EQUAL(2u, diversity_hits(manager, "[2;2;100;other;2]", false));
-    EXPECT_EQUAL(2u, diversity_hits(manager, "[2;2;-100;other;2]", false));
+    EXPECT_EQ(2u, diversity_hits(manager, "[2;2;100;other;2]", true));
+    EXPECT_EQ(2u, diversity_hits(manager, "[2;2;-100;other;2]", true));
+    EXPECT_EQ(2u, diversity_hits(manager, "[2;2;100;other;2]", false));
+    EXPECT_EQ(2u, diversity_hits(manager, "[2;2;-100;other;2]", false));
 }
 
-TEST("require that diversity range searches gives empty results for non-existing diversity attributes") {
+TEST(AttributeSearchableAdapterTest,
+     require_that_diversity_range_searches_gives_empty_results_for_non_existing_diversity_attributes) {
     MyAttributeManager manager = make_diversity_setup(BasicType::INT32, true, BasicType::INT32, true);
-    EXPECT_EQUAL(0u, diversity_hits(manager, "[;;1000;bogus;10]", true));
-    EXPECT_EQUAL(0u, diversity_hits(manager, "[;;-1000;bogus;10]", true));
-    EXPECT_EQUAL(0u, diversity_hits(manager, "[;;1000;;10]", true));
-    EXPECT_EQUAL(0u, diversity_hits(manager, "[;;-1000;;10]", true));
+    EXPECT_EQ(0u, diversity_hits(manager, "[;;1000;bogus;10]", true));
+    EXPECT_EQ(0u, diversity_hits(manager, "[;;-1000;bogus;10]", true));
+    EXPECT_EQ(0u, diversity_hits(manager, "[;;1000;;10]", true));
+    EXPECT_EQ(0u, diversity_hits(manager, "[;;-1000;;10]", true));
 }
 
-TEST("require that loose diversity gives enough diversity and hits while doing less work") {
+TEST(AttributeSearchableAdapterTest,
+     require_that_loose_diversity_gives_enough_diversity_and_hits_while_doing_less_work) {
     MyAttributeManager manager = make_diversity_setup(BasicType::INT32, true, BasicType::INT32, true);
-    EXPECT_EQUAL(999u, diversity_hits(manager, "[;;1000;other;10;4;loose]", true));
-    EXPECT_EQUAL(1u, diversity_docid_range(manager, "[;;10;other;3;2;loose]", true).first);
-    EXPECT_EQUAL(16u, diversity_docid_range(manager, "[;;10;other;3;2;loose]", true).second);
+    EXPECT_EQ(999u, diversity_hits(manager, "[;;1000;other;10;4;loose]", true));
+    EXPECT_EQ(1u, diversity_docid_range(manager, "[;;10;other;3;2;loose]", true).first);
+    EXPECT_EQ(16u, diversity_docid_range(manager, "[;;10;other;3;2;loose]", true).second);
 }
 
-TEST("require that strict diversity gives enough diversity and hits while doing less work, even though more than loose, but more correct than loose") {
+TEST(
+    AttributeSearchableAdapterTest,
+    require_that_strict_diversity_gives_enough_diversity_and_hits_while_doing_less_work_even_though_more_than_loose_but_more_correct_than_loose) {
     MyAttributeManager manager = make_diversity_setup(BasicType::INT32, true, BasicType::INT32, true);
-    EXPECT_EQUAL(999u, diversity_hits(manager, "[;;-1000;other;10;4;strict]", true));
-    EXPECT_EQUAL(1u, diversity_docid_range(manager, "[;;10;other;3;2;strict]", true).first);
-    EXPECT_EQUAL(23u, diversity_docid_range(manager, "[;;10;other;3;2;strict]", true).second);
+    EXPECT_EQ(999u, diversity_hits(manager, "[;;-1000;other;10;4;strict]", true));
+    EXPECT_EQ(1u, diversity_docid_range(manager, "[;;10;other;3;2;strict]", true).first);
+    EXPECT_EQ(23u, diversity_docid_range(manager, "[;;10;other;3;2;strict]", true).second);
 }
 
-}  // namespace
+} // namespace
 
-TEST_MAIN() { TEST_RUN_ALL(); }
+GTEST_MAIN_RUN_ALL_TESTS()

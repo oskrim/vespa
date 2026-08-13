@@ -1,10 +1,12 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
+#include <vespa/searchlib/common/serialized_query_tree.h>
 #include <vespa/searchlib/query/tree/querybuilder.h>
 #include <vespa/searchlib/query/tree/simplequery.h>
 #include <vespa/searchlib/query/tree/stackdumpcreator.h>
 #include <vespa/searchvisitor/querywrapper.h>
 #include <vespa/vespalib/gtest/gtest.h>
+
 #include <iostream>
 
 using namespace search;
@@ -13,8 +15,7 @@ using namespace search::streaming;
 
 namespace streaming {
 
-TEST(QueryWrapperTest, test_query_wrapper)
-{
+TEST(QueryWrapperTest, test_query_wrapper) {
     QueryNodeResultFactory empty;
     {
         QueryBuilder<SimpleQueryNodeTypes> builder;
@@ -29,11 +30,11 @@ TEST(QueryWrapperTest, test_query_wrapper)
             }
             builder.addStringTerm("e", "", 0, Weight(0));
         }
-        Node::UP node = builder.build();
-        std::string stackDump = StackDumpCreator::create(*node);
-        Query q(empty, stackDump);
-        QueryWrapper wrap(q);
-        QueryWrapper::TermList & tl = wrap.getTermList();
+        Node::UP                node = builder.build();
+        auto                    serializedQueryTree = StackDumpCreator::createSerializedQueryTree(*node);
+        Query                   q(empty, *serializedQueryTree);
+        QueryWrapper            wrap(q);
+        QueryWrapper::TermList& tl = wrap.getTermList();
 
         QueryTermList terms;
         q.getLeaves(terms);
@@ -50,6 +51,6 @@ TEST(QueryWrapperTest, test_query_wrapper)
     }
 }
 
-}
+} // namespace streaming
 
 GTEST_MAIN_RUN_ALL_TESTS()

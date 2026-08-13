@@ -10,17 +10,15 @@ namespace proton {
  * Interface for a reprocessor that rewrites a set of documents
  * based on the content of other underlying components.
  */
-struct IReprocessingRewriter
-{
+struct IReprocessingRewriter {
     using SP = std::shared_ptr<IReprocessingRewriter>;
 
-    virtual ~IReprocessingRewriter() {}
+    virtual ~IReprocessingRewriter() = default;
 
     /**
      * Handle and rewrite the given existing document.
      */
-    virtual void handleExisting(uint32_t lid, const std::shared_ptr<document::Document> &doc) = 0;
+    virtual void handleExisting(uint32_t lid, const std::shared_ptr<document::Document>& doc) = 0;
 };
 
 } // namespace proton
-

@@ -9,6 +9,7 @@ import com.yahoo.prelude.Index;
 import com.yahoo.prelude.IndexFacts;
 import com.yahoo.prelude.IndexModel;
 import com.yahoo.prelude.SearchDefinition;
+import com.yahoo.processing.IllegalInputException;
 import com.yahoo.search.Query;
 import com.yahoo.search.searchchain.Execution;
 import org.junit.jupiter.api.Disabled;
@@ -16,7 +17,14 @@ import org.junit.jupiter.api.Test;
 
 import java.util.Arrays;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 /**
  * @author baldersheim
@@ -34,7 +42,8 @@ public class SortingTestCase {
             assertNotNull(Sorting.fromString("-1"));
             fail("'-1' should not be allowed as attribute name.");
         } catch (IllegalArgumentException e) {
-            assertEquals(e.getMessage(), "Illegal attribute name '1' for sorting. Requires '[\\[]*[a-zA-Z_][\\.a-zA-Z0-9_-]*[\\]]*'");
+            assertEquals("Illegal attribute name '1' for sorting. Requires '[\\[]*[a-zA-Z_][\\.a-zA-Z0-9_-]*[\\]]*'",
+                         e.getMessage());
         } catch (Exception e) {
             fail("I only expect 'IllegalArgumentException', not: + " + e.toString());
         }
@@ -57,7 +66,7 @@ public class SortingTestCase {
         Sorting ch = Sorting.fromString("uca(a,zh)");
         assertEquals(1, ch.fieldOrders().size());
         Sorting.FieldOrder fo = ch.fieldOrders().get(0);
-        assertTrue(fo.getSorter() instanceof Sorting.UcaSorter);
+        assertInstanceOf(Sorting.UcaSorter.class, fo.getSorter());
         Sorting.UcaSorter uca = (Sorting.UcaSorter) fo.getSorter();
         requireThatChineseHasCorrectRules(uca.getCollator());
         Sorting.AttributeSorter sorter = fo.getSorter();
@@ -67,7 +76,7 @@ public class SortingTestCase {
     }
 
     private void requireThatArabicHasCorrectRules(Collator col) {
-        final int reorderCodes [] = {UScript.ARABIC};
+        final int[] reorderCodes = {UScript.ARABIC};
         assertEquals("6.2.0.0", col.getUCAVersion().toString());
         assertEquals("58.0.0.6", col.getVersion().toString());
         assertEquals(Arrays.toString(reorderCodes), Arrays.toString(col.getReorderCodes()));
@@ -80,9 +89,9 @@ public class SortingTestCase {
     }
 
     private void requireThatChineseHasCorrectRules(Collator col) {
-        final int reorderCodes [] = {UScript.HAN};
-        assertEquals("15.1.0.0", col.getUCAVersion().toString());
-        assertEquals("153.121.45.0", col.getVersion().toString());
+        final int[] reorderCodes = {UScript.HAN};
+        assertEquals("17.0.0.0", col.getUCAVersion().toString());
+        assertEquals("153.136.48.0", col.getVersion().toString());
         assertEquals(Arrays.toString(reorderCodes), Arrays.toString(col.getReorderCodes()));
 
         assertNotEquals("", ((RuleBasedCollator) col).getRules());
@@ -95,13 +104,72 @@ public class SortingTestCase {
         Sorting ar = Sorting.fromString("uca(a,ar)");
         assertEquals(1, ar.fieldOrders().size());
         Sorting.FieldOrder fo = ar.fieldOrders().get(0);
-        assertTrue(fo.getSorter() instanceof Sorting.UcaSorter);
+        assertInstanceOf(Sorting.UcaSorter.class, fo.getSorter());
         Sorting.UcaSorter uca = (Sorting.UcaSorter) fo.getSorter();
         requireThatArabicHasCorrectRules(uca.getCollator());
         Sorting.AttributeSorter sorter = fo.getSorter();
         assertTrue(sorter.compare("a", "b") < 0);
         assertTrue(sorter.compare("a", "aس") < 0);
         assertTrue(sorter.compare("س", "a") < 0);
+    }
+
+    private static String encodedSpec(String spec) {
+        return Sorting.fromString(spec).toSerialForm();
+    }
+
+    private static String failedSpec(String spec) {
+        var e = assertThrows(IllegalInputException.class, () -> { Sorting.fromString(spec); });
+        return e.getMessage();
+    }
+
+    @Test
+    void requireExpectedEncodedSortSpec() {
+        /*
+         * If ValidateSortingSearcher doesn't update the Sorting instance with info from attribute config, e.g.
+         * when using streaming search, then the default sort order is descending.
+         */
+        assertEquals("-a", encodedSpec("a"));
+        assertEquals("-a", encodedSpec("-a"));
+        assertEquals("+a", encodedSpec("+a"));
+        assertEquals("-lowercase(a)", encodedSpec("lowercase(a)"));
+        assertEquals("-lowercase(a)", encodedSpec("-lowercase(a)"));
+        assertEquals("+lowercase(a)", encodedSpec("+lowercase(a)"));
+        assertEquals("+lowercase(a)", encodedSpec("+LOWERCASE(a)"));
+        assertEquals("-a", encodedSpec("raw(a)"));
+        assertEquals("-a", encodedSpec("-raw(a)"));
+        assertEquals("+a", encodedSpec("+raw(a)"));
+        assertEquals("-a +b", encodedSpec("-a +b"));
+        assertEquals("-a +lowercase(b)", encodedSpec("-a +lowercase(b)"));
+    }
+
+    @Test
+    void requireMissingFunctionIsHandled() {
+        assertEquals("-a", encodedSpec("missing(a,default)"));
+        assertEquals("-missing(a,first)", encodedSpec("missing(a,first)"));
+        assertEquals("-missing(a,first)", encodedSpec("-missing(a,first)"));
+        assertEquals("-missing(lowercase(a),first)", encodedSpec("-missing(lowercase(a),first)"));
+        assertEquals("+missing(a,first)", encodedSpec("+missing(a,first)"));
+        assertEquals("+missing(a,first)", encodedSpec("+MISSING(a,FIRST)"));
+        assertEquals("-missing(a,last)", encodedSpec("missing(a,last)"));
+        assertEquals("-missing(a,as,default)", encodedSpec("missing(a,as,default)"));
+        assertEquals("-missing(a,as,default)", encodedSpec("missing(a,as,\"default\")"));
+        assertEquals("-missing(a,as,\"\")", encodedSpec("missing(a,as,)"));
+        assertEquals("-missing(a,as,\"quoted \\\\ \\\" default\")",
+                     encodedSpec("missing(a,as,\"quoted \\\\ \\\" default\")"));
+    }
+
+    @Test
+    void requireDetectBadSortSpec() {
+        assertEquals("Expected ' ', got 'b' at [lowercase(a)][b]", failedSpec("lowercase(a)b"));
+        assertEquals("Expected ')', end of spec reached at [lowercase(a][]", failedSpec("lowercase(a"));
+        assertEquals("No sort function specified in '(a)'", failedSpec("(a)"));
+        assertEquals("Unknown sort function 'casefold' in 'casefold(a)'", failedSpec("casefold(a)"));
+        assertEquals("Expected '\"', end of spec reached at [missing(a,as,\"default)][]",
+                     failedSpec("missing(a,as,\"default)"));
+        assertEquals("Expected '\\' or '\"', got 'n' at [missing(a,as,\"bad \\][n default\")]",
+                     failedSpec("missing(a,as,\"bad \\n default\")"));
+        assertEquals("Unknown missing policy 'before' at [missing(a,before][,default)]",
+                     failedSpec("missing(a,before,default)"));
     }
 
 }

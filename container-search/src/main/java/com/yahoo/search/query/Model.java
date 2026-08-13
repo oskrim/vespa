@@ -6,10 +6,12 @@ import com.yahoo.language.Linguistics;
 import com.yahoo.language.LocaleFactory;
 import com.yahoo.prelude.query.CompositeItem;
 import com.yahoo.prelude.query.Item;
+import com.yahoo.prelude.query.NullItem;
 import com.yahoo.prelude.query.TaggableItem;
 import com.yahoo.processing.IllegalInputException;
 import com.yahoo.processing.request.CompoundName;
 import com.yahoo.search.Query;
+import com.yahoo.search.query.profile.types.QueryProfileFieldType;
 import com.yahoo.search.schema.SchemaInfo;
 import com.yahoo.search.query.parser.Parsable;
 import com.yahoo.search.query.parser.Parser;
@@ -52,6 +54,7 @@ public class Model implements Cloneable {
     public static final String LOCALE = "locale";
     public static final String ENCODING = "encoding";
     public static final String SOURCES = "sources";
+    public static final String SEARCH_GROUP = "searchGroup";
     public static final String SEARCH_PATH = "searchPath";
     public static final String RESTRICT = "restrict";
 
@@ -61,15 +64,16 @@ public class Model implements Cloneable {
         argumentType.setBuiltin(true);
         //argumentType.addField(new FieldDescription(PROGRAM, "string", "yql")); // TODO: Custom type
         argumentType.addField(new FieldDescription(QUERY_STRING, "string", "query"));
-        argumentType.addField(new FieldDescription(TYPE, "string", "type"));
         argumentType.addField(new FieldDescription(FILTER, "string","filter"));
         argumentType.addField(new FieldDescription(DEFAULT_INDEX, "string", "default-index"));
         argumentType.addField(new FieldDescription(LANGUAGE, "string", "language lang"));
         argumentType.addField(new FieldDescription(LOCALE, "string", "locale"));
         argumentType.addField(new FieldDescription(ENCODING, "string", "encoding"));
         argumentType.addField(new FieldDescription(SOURCES, "string", "sources search"));
+        argumentType.addField(new FieldDescription(SEARCH_GROUP, "integer", "searchgroup"));
         argumentType.addField(new FieldDescription(SEARCH_PATH, "string", "searchpath"));
         argumentType.addField(new FieldDescription(RESTRICT, "string", "restrict"));
+        argumentType.addField(new FieldDescription(TYPE, new QueryProfileFieldType(QueryType.getArgumentType()), "type"));
         argumentType.freeze();
         argumentTypeName = CompoundName.from(argumentType.getId().getName());
     }
@@ -86,10 +90,11 @@ public class Model implements Cloneable {
     private Locale locale = null;
     private QueryTree queryTree = null; // The query tree to execute. This is lazily created from the program
     private String defaultIndex = null;
-    private Query.Type type = Query.Type.WEAKAND;
+    private QueryType type = QueryType.from(Query.Type.WEAKAND);
     private Query parent;
     private Set<String> sources = new LinkedHashSet<>();
     private Set<String> restrict = new LinkedHashSet<>();
+    private Integer searchGroup;
     private String searchPath;
     private String documentDbName = null;
     private Execution execution = new Execution(new Execution.Context(null,
@@ -117,9 +122,9 @@ public class Model implements Cloneable {
      *
      * @return the language determined, never null
      */
-    // TODO: We can support multiple languages per query by changing searchers which call this
-    //       to look up the query to use at each point from item.getLanguage
-    //       with this as fallback for query branches where no parent item specifies language
+    // Per-clause language is supported: searchers (StemmingSearcher, NormalizingSearcher,
+    // CJKSearcher, SignificanceSearcher) check item.getLanguage() at each node,
+    // using this as fallback for query branches where no item specifies a language.
     public Language getParsingLanguage(String languageDetectionText) {
         Language language = getLanguage();
         if (language != null) return language;
@@ -212,7 +217,23 @@ public class Model implements Cloneable {
         this.encoding = toLowerCase(encoding);
     }
 
-    /** Set the path for which content nodes this query should go to - see  */
+    /**
+     * Sets the number of the content group this query should prefer when possible.
+     * This is useful to pin subsequent queries in pagination to the same group.
+     * The value of this parameter is then obtained from the searchGroup value in the
+     * fields of the top level result.
+     * <p>
+     * This is a soft preference: When the preferred group is out of rotation,
+     * fully loaded, or non-existent, another group
+     * will be used by this query such that results are still returned.
+     *
+     * @param searchGroup the index of the group to use, or null for no preference
+     */
+    public void setSearchGroup(Integer searchGroup) { this.searchGroup = searchGroup; }
+
+    public Integer getSearchGroup() { return searchGroup; }
+
+    /** Sets the path for which content nodes this query should go to - see  */
     public void setSearchPath(String searchPath) { this.searchPath = searchPath; }
 
     public String getSearchPath() { return searchPath; }
@@ -241,26 +262,48 @@ public class Model implements Cloneable {
     /**
      * Returns the query as an object structure. Remember to have the correct Query.Type set.
      * This causes parsing of the query string if it has changed since this was last called
-     * (i.e query parsing is lazy)
+     * (i.e. query parsing is lazy).
      */
     public QueryTree getQueryTree() {
+        return getQueryTree(true);
+    }
+
+    /**
+     * Returns the query as an object structure.
+     *
+     * @param parse if true, the query string is parsed into a query tree if it is currently null,
+     *              if false, the query string is ignored and the query tree is initialized to
+     *              an empty root if it's currently null.
+     */
+    public QueryTree getQueryTree(boolean parse) {
         if (queryTree == null) {
-            try {
-                Parser parser = ParserFactory.newInstance(type, ParserEnvironment.fromExecutionContext(execution.context()));
-                queryTree = parser.parse(Parsable.fromQueryModel(this));
-                if (parent.getTrace().getLevel() >= 2)
-                    parent.trace("Query parsed to: " + parent.yqlRepresentation(), 2);
-            }
-            catch (IllegalArgumentException e) {
-                throw new IllegalInputException("Failed parsing query", e);
-            }
+            queryTree = parse ? parse() : new QueryTree();
+            if (parse)
+                traceParsing();
         }
         return queryTree;
     }
 
+    private QueryTree parse() {
+        try {
+            Parser parser = ParserFactory.newInstance(type, ParserEnvironment.fromExecutionContext(execution.context()));
+            return parser.parse(Parsable.fromQueryModel(this));
+        }
+        catch (IllegalArgumentException e) {
+            throw new IllegalInputException("Failed parsing query", e);
+        }
+    }
+
+    private void traceParsing() {
+        if (queryTree.getRoot() == null || queryTree.getRoot() instanceof NullItem)
+            parent.trace("Query parsing deferred", 5);
+        else if (parent.getTrace().getLevel() >= 2)
+            parent.trace("Query parsed to: " + parent.yqlRepresentation(), 2);
+    }
+
     /**
-     * Clears the parsed query such that it will be created anew from the textual representation (a query string or
-     * select.where expression) on the next access.
+     * Clears the parsed query such that it will be created anew from the textual representation
+     * (a query string or 'select where' expression) on the next access.
      */
     public void clearQueryTree() {
         queryTree = null;
@@ -293,50 +336,63 @@ public class Model implements Cloneable {
     public void setDefaultIndex(String defaultIndex) { this.defaultIndex = defaultIndex; }
 
     /**
-     * Sets the query type of for this query.
+     * Returns the query type of for this query.
      * The type is taken into account at the time the query tree is parsed.
      */
-    public Query.Type getType() { return type; }
+    public Query.Type getType() { return type.getType(); }
 
     /**
-     * Sets the query type of for this query.
+     * Returns the detailed query type of for this query.
+     * The type is taken into account at the time the query tree is parsed.
+     */
+    public QueryType getQueryType() { return type; }
+
+    /**
+     * Sets the query type of this query to the QueryType of the given type
+     * (such that any QueryType settings are deplaced by this).
      * The type is taken into account at the time the query tree is parsed.
      * Setting this does <i>not</i> cause the query to be reparsed.
      */
-    public void setType(Query.Type type) { this.type = type; }
+    public void setType(Query.Type type) { this.type = QueryType.from(type); }
 
     /**
-     * Sets the query type of for this query.
+     * Sets the query type of this query.
      * The type is taken into account at the time the query tree is parsed.
      * Setting this does <i>not</i> cause the query to be reparsed.
      */
-    public void setType(String typeString) { this.type = Query.Type.getType(typeString); }
+    public void setType(QueryType type) { this.type = type; }
 
+    /**
+     * Sets the query type of this query.
+     * The type is taken into account at the time the query tree is parsed.
+     * Setting this does <i>not</i> cause the query to be reparsed.
+     */
+    public void setType(String typeString) { this.type = QueryType.from(Query.Type.getType(typeString)); }
+
+    @Override
     public boolean equals(Object o) {
-        if ( ! (o instanceof Model)) return false;
+        if ( ! (o instanceof Model other)) return false;
 
-        Model other = (Model) o;
-        if ( ! (
-                QueryHelper.equals(other.encoding, this.encoding) &&
-                QueryHelper.equals(other.language, this.language) &&
-                QueryHelper.equals(other.searchPath, this.searchPath) &&
-                QueryHelper.equals(other.sources, this.sources) &&
-                QueryHelper.equals(other.restrict, this.restrict) &&
-                QueryHelper.equals(other.defaultIndex, this.defaultIndex) &&
-                QueryHelper.equals(other.type, this.type) ))
-            return false;
+        if ( ! Objects.equals(other.encoding, this.encoding)) return false;
+        if ( ! Objects.equals(other.language, this.language)) return false;
+        if ( ! Objects.equals(other.searchGroup, this.searchGroup)) return false;
+        if ( ! Objects.equals(other.searchPath, this.searchPath)) return false;
+        if ( ! Objects.equals(other.sources, this.sources)) return false;
+        if ( ! Objects.equals(other.restrict, this.restrict)) return false;
+        if ( ! Objects.equals(other.defaultIndex, this.defaultIndex)) return false;
+        if ( ! Objects.equals(other.type, this.type)) return false;
 
         if (other.queryTree == null && this.queryTree == null) // don't cause query parsing
-            return QueryHelper.equals(other.queryString, this.queryString) &&
-                   QueryHelper.equals(other.filter, this.filter);
+            return Objects.equals(other.queryString, this.queryString) &&
+                   Objects.equals(other.filter, this.filter);
         else // make sure we compare a parsed variant of both
-            return QueryHelper.equals(other.getQueryTree(), this.getQueryTree());
+            return Objects.equals(other.getQueryTree(), this.getQueryTree());
     }
 
     @Override
     public int hashCode() {
-        return getClass().hashCode() +
-               QueryHelper.combineHash(encoding,filter,language,getQueryTree(),sources,restrict,defaultIndex,type,searchPath);
+        return Objects.hash(this.getClass(), encoding, filter, language, getQueryTree(),
+                            sources, restrict, defaultIndex, type, searchGroup, searchPath);
     }
 
     @Override
@@ -372,7 +428,7 @@ public class Model implements Cloneable {
 
     /** Sets the set of sources this query will search from a comma-separated string of source names */
     public void setSources(String sourceString) {
-        setFromString(sourceString,sources);
+        setFromString(sourceString, sources);
     }
 
     /**
@@ -505,7 +561,7 @@ public class Model implements Cloneable {
         for (Item  candidate : candidates) {
             TaggableItem t = (TaggableItem) candidate;
             var documentFrequency = t.getDocumentFrequency();
-            if ( ! documentFrequency.isPresent()) continue;
+            if (documentFrequency.isEmpty()) continue;
             String name = "vespa.term." + t.getUniqueID() + ".docfreq";
             ranking.getProperties().put(name, String.valueOf(documentFrequency.get().frequency()));
             ranking.getProperties().put(name, String.valueOf(documentFrequency.get().count()));
@@ -519,8 +575,7 @@ public class Model implements Cloneable {
             // This is tested before descending, as phrases are viewed
             // as leaf nodes in the ranking code in the backend
             terms.add(root);
-        } else if (root instanceof CompositeItem) {
-            CompositeItem c = (CompositeItem) root;
+        } else if (root instanceof CompositeItem c) {
             for (Iterator<Item> i = c.getItemIterator(); i.hasNext();) {
                 collectTaggableItems(i.next(), terms);
             }

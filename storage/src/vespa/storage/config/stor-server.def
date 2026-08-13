@@ -55,8 +55,8 @@ merge_throttling_memory_limit.max_usage_bytes long default=0
 ## content node. Note that the result of this multiplication is capped at both
 ## ends by the auto_(lower|upper)_bound_bytes config values.
 ##
-## Default: 3% of physical memory
-merge_throttling_memory_limit.auto_phys_mem_scale_factor double default=0.03
+## Default: 1.5% of physical memory
+merge_throttling_memory_limit.auto_phys_mem_scale_factor double default=0.015
 
 ## The absolute minimum memory limit that can be set when automatically
 ## deducing the limit from physical memory on the node.
@@ -67,8 +67,8 @@ merge_throttling_memory_limit.auto_lower_bound_bytes long default=134217728
 ## The absolute maximum memory limit that can be set when automatically
 ## deducing the limit from physical memory on the node.
 ##
-## Default: 2GiB
-merge_throttling_memory_limit.auto_upper_bound_bytes long default=2147483648
+## Default: 1GiB
+merge_throttling_memory_limit.auto_upper_bound_bytes long default=1073741824
 
 ## If the persistence provider indicates that it has exhausted one or more
 ## of its internal resources during a mutating operation, new merges will
@@ -125,4 +125,4 @@ write_pid_file_on_startup bool default=true
 ## are the leader during overlapping time intervals, as only the most recent leader
 ## is able to increment the current state version in ZooKeeper, but the old controller
 ## may still attempt to publish its old state.
-require_strictly_increasing_cluster_state_versions bool default=false
+require_strictly_increasing_cluster_state_versions bool default=true

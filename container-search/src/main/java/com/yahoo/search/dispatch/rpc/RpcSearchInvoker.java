@@ -2,6 +2,7 @@
 package com.yahoo.search.dispatch.rpc;
 
 import com.yahoo.compress.Compressor;
+import com.yahoo.container.QrSearchersConfig;
 import com.yahoo.prelude.fastsearch.VespaBackend;
 import com.yahoo.search.Query;
 import com.yahoo.search.dispatch.InvokerResult;
@@ -31,10 +32,11 @@ public class RpcSearchInvoker extends SearchInvoker implements Client.ResponseRe
     private final BlockingQueue<Client.ResponseOrError<ProtobufResponse>> responses;
     private final int maxHits;
     private final CompressPayload compressor;
+    private final QrSearchersConfig qrSearchersConfig;
 
     private Query query;
 
-    RpcSearchInvoker(VespaBackend searcher, CompressPayload compressor, Node node, RpcConnectionPool resourcePool, int maxHits) {
+    RpcSearchInvoker(VespaBackend searcher, CompressPayload compressor, Node node, RpcConnectionPool resourcePool, int maxHits, QrSearchersConfig qrSearchersConfig) {
         super(Optional.of(node));
         this.searcher = searcher;
         this.node = node;
@@ -42,10 +44,11 @@ public class RpcSearchInvoker extends SearchInvoker implements Client.ResponseRe
         this.responses = new LinkedBlockingQueue<>(1);
         this.maxHits = maxHits;
         this.compressor = compressor;
+        this.qrSearchersConfig = qrSearchersConfig;
     }
 
     @Override
-    protected Object sendSearchRequest(Query query, Object incomingContext) {
+    protected Object sendSearchRequest(Query query, double contentShare, Object incomingContext) {
         this.query = query;
 
         Client.NodeConnection nodeConnection = resourcePool.getConnection(node.key());
@@ -64,24 +67,14 @@ public class RpcSearchInvoker extends SearchInvoker implements Client.ResponseRe
             responseAvailable();
             return incomingContext;
         }
-        RpcContext context = getContext(incomingContext, timeout.request());
+        SerializedQuery serializedQuery = getSerializedQuery(incomingContext, contentShare, timeout.request());
         nodeConnection.request(RPC_METHOD,
-                               context.compressedPayload.type(),
-                               context.compressedPayload.uncompressedSize(),
-                               context.compressedPayload.data(),
+                               serializedQuery.compressedPayload.type(),
+                               serializedQuery.compressedPayload.uncompressedSize(),
+                               serializedQuery.compressedPayload.data(),
                                this,
                                timeout.client());
-        return context;
-    }
-
-    private RpcContext getContext(Object incomingContext, double requestTimeout) {
-        if (incomingContext instanceof RpcContext)
-            return (RpcContext)incomingContext;
-
-        return new RpcContext(compressor, query,
-                              ProtobufSerialization.serializeSearchRequest(query,
-                                                                           Math.min(query.getHits(), maxHits),
-                                                                           searcher.getServerId(), requestTimeout));
+        return serializedQuery;
     }
 
     @Override
@@ -111,7 +104,7 @@ public class RpcSearchInvoker extends SearchInvoker implements Client.ResponseRe
 
         ProtobufResponse protobufResponse = response.response().get();
         byte[] payload = compressor.decompress(protobufResponse);
-        return ProtobufSerialization.deserializeToSearchResult(payload, query, searcher, node.pathIndex(), node.key());
+        return ProtobufSerialization.deserializeToSearchResult(payload, query, searcher, node);
     }
 
     @Override
@@ -128,11 +121,30 @@ public class RpcSearchInvoker extends SearchInvoker implements Client.ResponseRe
         return searcher.getName();
     }
 
-    static class RpcContext {
+    private SerializedQuery getSerializedQuery(Object incomingContext, double contentShare, double requestTimeout) {
+        if (incomingContext instanceof SerializedQuery serializedQuery
+            && newSerializationWillBeSimilar(contentShare, serializedQuery))
+            return serializedQuery;
+        return new SerializedQuery(compressor, query, contentShare,
+                                   ProtobufSerialization.serializeSearchRequest(query,
+                                                                                Math.min(query.getHits(), maxHits),
+                                                                                searcher.getServerId(), contentShare,
+                                                                                requestTimeout, qrSearchersConfig));
+    }
 
+    private boolean newSerializationWillBeSimilar(double newContentShare, SerializedQuery serializedQuery) {
+        double maxContentShare = Math.max(newContentShare, serializedQuery.contentShare);
+        if (maxContentShare == 0) return true;
+        return Math.abs(newContentShare - serializedQuery.contentShare) / maxContentShare < 0.05;
+    }
+
+    static class SerializedQuery {
+
+        final double contentShare;
         final Compressor.Compression compressedPayload;
 
-        RpcContext(CompressPayload compressor, Query query, byte[] payload) {
+        SerializedQuery(CompressPayload compressor, Query query, double contentShare, byte[] payload) {
+            this.contentShare = contentShare;
             compressedPayload = compressor.compress(query, payload);
         }
 

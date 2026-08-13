@@ -5,7 +5,7 @@ ContainerCluster = element container {
     Include* &
     ContainerServices &    
     DocumentBinding* &
-    NodesOfContainerCluster? &
+    ContainerNodes? &
     ClientAuthorize?
 }
 
@@ -25,7 +25,9 @@ ContainerServices =
     Secrets? &
     ZooKeeper? &
     GenericConfig* &
-    Clients?
+    Clients? &
+    Inference? &
+    Threadpool?
 
 # TODO(ogronnesby): Change this configuration syntax
 ClientAuthorize = element client-authorize { empty }
@@ -75,7 +77,12 @@ AccessLog = element accesslog {
     attribute compressionType { string "gzip" | string "zstd" }? &
     attribute queueSize { xsd:nonNegativeInteger }? &
     attribute bufferSize { xsd:nonNegativeInteger }? &
-    attribute rotationInterval { string }?
+    attribute rotationInterval { string }? &
+    element request-content {
+        element samples-per-second { xsd:double { minInclusive = "0.0" maxInclusive = "100000" } } &
+        element path-prefix { string } &
+        element max-bytes { xsd:nonNegativeInteger }
+    }*
 }
 
 SecretStore = element secret-store {
@@ -112,6 +119,7 @@ ModelEvaluation = element model-evaluation {
                 element intraop-threads { xsd:nonNegativeInteger }? &
                 element interop-threads { xsd:nonNegativeInteger }? &
                 element execution-mode { string "sequential" | string "parallel" }? &
+                element optimize-model { xsd:boolean }? &
                 element gpu-device {
                   xsd:nonNegativeInteger
                 }?
@@ -140,7 +148,12 @@ Threadpool = element threadpool {
         element min-threads { xsd:nonNegativeInteger } &
         element queue-size { xsd:nonNegativeInteger }
     )|(
-        element threads { xsd:double { minExclusive = "0.0" } & attribute boost { xsd:double { minExclusive = "0.0" } }? }? &
+        element threads {
+            xsd:double { minExclusive = "0.0" } &
+            ( attribute max { xsd:double { minExclusive = "0.0" } }
+            | attribute boost { xsd:double { minExclusive = "0.0" } }
+            | empty )
+        }? &
         element queue { xsd:double { minInclusive = "0.0" } }?
     ))
 }
@@ -205,7 +218,10 @@ DocprocInContainer = element document-processing {
     DocprocClusterAttributes? &
     DocumentProcessorV3* &
     ChainInDocprocInContainerCluster* &
-    GenericConfig*
+    GenericConfig*  &
+    element threadpool {
+        element threads { xsd:double { minExclusive = "0.0" } }?
+    }?
 }
 ChainInDocprocInContainerCluster = element chain {
     DocprocChainV3Contents
@@ -280,6 +296,7 @@ DocumentApi = element document-api {
    element route { text }? &
    element maxpendingdocs { xsd:positiveInteger }? &
    element maxpendingbytes { xsd:positiveInteger }? &
+   element max-document-size { xsd:string }? &
    element retrydelay { xsd:double { minInclusive = "0.0" } }? &
    element timeout { xsd:double { minInclusive = "0.0" } }? &
    element tracelevel { xsd:positiveInteger }? &
@@ -296,7 +313,7 @@ HttpClientApi = element http-client-api {
 
 # NODES:
 
-NodesOfContainerCluster = element nodes {
+ContainerNodes = element nodes {
     attribute jvm-options { text }? & # Remove in Vespa 9
     attribute jvm-gc-options { text }? & # Remove in Vespa 9
     attribute preload { text }? &
@@ -313,7 +330,6 @@ NodesOfContainerCluster = element nodes {
     } ? &
     (
       (
-        attribute of { xsd:string } &
         attribute required { xsd:boolean }?
       )
       |
@@ -321,6 +337,7 @@ NodesOfContainerCluster = element nodes {
       |
       (
         attribute count { xsd:positiveInteger | xsd:string  }? &
+        attribute profile { xsd:string }? &
         attribute flavor { xsd:string }? &
         attribute required { xsd:boolean }? &
         attribute exclusive { xsd:boolean }? &
@@ -341,4 +358,9 @@ DocumentBinding = element document {
     attribute type { xsd:NCName } &
     attribute class { xsd:NCName } &
     attribute bundle { xsd:NCName }
+}
+
+# Inference runtime configuration in container 
+Inference = element inference {
+    element memory { xsd:string }?
 }

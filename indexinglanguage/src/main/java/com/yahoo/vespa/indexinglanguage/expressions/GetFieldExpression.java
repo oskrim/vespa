@@ -22,31 +22,25 @@ public final class GetFieldExpression extends Expression {
     private final String structFieldName;
 
     public GetFieldExpression(String structFieldName) {
-        super(UnresolvedDataType.INSTANCE);
         this.structFieldName = structFieldName;
     }
 
     public String getFieldName() { return structFieldName; }
 
     @Override
-    public DataType setInputType(DataType inputType, VerificationContext context) {
+    public DataType setInputType(DataType inputType, TypeContext context) {
         super.setInputType(inputType, context);
-        return getFieldType(context);
+        if (inputType == null) return null;
+        return getFieldType(inputType, context);
     }
 
     @Override
-    public DataType setOutputType(DataType outputType, VerificationContext context) {
-        super.setOutputType(getFieldType(context), outputType, context);
-        return AnyDataType.instance;
+    public DataType setOutputType(DataType outputType, TypeContext context) {
+        super.setOutputType(outputType, context);
+        return getInputType(context);
     }
 
-    @Override
-    protected void doVerify(VerificationContext context) {
-        context.setCurrentType(getFieldType(context));
-    }
-
-    private DataType getFieldType(VerificationContext context) {
-        DataType input = context.getCurrentType();
+    private DataType getFieldType(DataType input, TypeContext context) {
         if (input instanceof MapDataType entryInput) {
             if (structFieldName.equals(keyName))
                 return entryInput.getKeyType();
@@ -58,7 +52,7 @@ public final class GetFieldExpression extends Expression {
         else if (input instanceof StructuredDataType structInput) {
             return getStructFieldType(structInput);
         }
-        throw new VerificationException(this, "Expected a struct or map, bit got an " + input.getName());
+        throw new VerificationException(this, "Expected a struct or map, but got " + (input == null ? "no value": input.getName()));
     }
 
     private DataType getStructFieldType(StructuredDataType structInput) {
@@ -98,11 +92,6 @@ public final class GetFieldExpression extends Expression {
             throw new IllegalArgumentException("In " + this +": Field '" + structFieldName + "' not found in struct type '" +
                                                struct.getDataType().getName() + "'");
         context.setCurrentValue(struct.getFieldValue(field));
-    }
-
-    @Override
-    public DataType createdOutputType() {
-        return UnresolvedDataType.INSTANCE;
     }
 
     @Override

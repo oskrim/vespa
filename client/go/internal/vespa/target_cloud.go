@@ -3,10 +3,14 @@ package vespa
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/vespa-engine/vespa/client/go/internal/httputil"
@@ -49,11 +53,30 @@ type deploymentResponse struct {
 	Endpoints []deploymentEndpoint `json:"endpoints"`
 }
 
+type privateService struct {
+	Cluster string `json:"cluster"`
+	PrivateServiceInfo
+}
+
+type privateServicesResponse struct {
+	PrivateServices []privateService `json:"privateServices"`
+}
+
+type clusterTarget struct {
+	URL        string
+	AuthMethod string
+}
+
 type runResponse struct {
 	Active bool                    `json:"active"`
 	Status string                  `json:"status"`
 	Log    map[string][]logMessage `json:"log"`
+	Steps  map[string]stepStatus   `json:"steps"`
 	LastID int64                   `json:"lastId"`
+}
+
+type stepStatus struct {
+	Status string `json:"status"`
 }
 
 type jobResponse struct {
@@ -70,10 +93,27 @@ type logMessage struct {
 	Message string `json:"message"`
 }
 
+type buildStatusResponse struct {
+	Deployed          bool             `json:"deployed"`
+	Status            string           `json:"status"`
+	SkipReason        string           `json:"skipReason,omitempty"`
+	AbsorbedIntoBuild int64            `json:"absorbedIntoBuild,omitempty"`
+	Jobs              []buildStatusJob `json:"jobs"`
+	HasFailed         bool             `json:"hasFailed"`
+}
+
+type buildStatusJob struct {
+	JobName   string `json:"jobName"`
+	RunStatus string `json:"runStatus"`
+	RunID     int64  `json:"runId"`
+	Instance  string `json:"instance"`
+}
+
 // CloudTarget creates a Target for the Vespa Cloud or hosted Vespa platform.
 func CloudTarget(httpClient httputil.Client, apiAuth Authenticator, deploymentAuth Authenticator,
 	apiOptions APIOptions, deploymentOptions CloudDeploymentOptions,
-	logOptions LogOptions, retryInterval time.Duration) (Target, error) {
+	logOptions LogOptions, retryInterval time.Duration,
+) (Target, error) {
 	return &cloudTarget{
 		httpClient:        httpClient,
 		apiOptions:        apiOptions,
@@ -109,37 +149,61 @@ func (t *cloudTarget) DeployService() (*Service, error) {
 }
 
 func (t *cloudTarget) ContainerServices(timeout time.Duration) ([]*Service, error) {
-	var clusterUrls map[string]string
-	if t.deploymentOptions.CustomURL != "" {
+	var clusterTargets map[string][]clusterTarget
+	var privateServices map[string]*PrivateServiceInfo
+	switch {
+	case t.deploymentOptions.CustomURL != "":
 		// Custom URL is always preferred
-		clusterUrls = map[string]string{"": t.deploymentOptions.CustomURL}
-	} else if t.deploymentOptions.ClusterURLs != nil {
+		clusterTargets = map[string][]clusterTarget{
+			"": {
+				clusterTarget{URL: t.deploymentOptions.CustomURL, AuthMethod: "mtls"},
+				clusterTarget{URL: t.deploymentOptions.CustomURL, AuthMethod: "token"},
+			},
+		}
+	case t.deploymentOptions.ClusterURLs != nil:
 		// ... then endpoints specified through environment
-		clusterUrls = t.deploymentOptions.ClusterURLs
-	} else {
+		clusterTargets = make(map[string][]clusterTarget)
+		for cluster, url := range t.deploymentOptions.ClusterURLs {
+			clusterTargets[cluster] = []clusterTarget{
+				{URL: url, AuthMethod: "mtls"},
+				{URL: url, AuthMethod: "token"},
+			}
+		}
+	default:
 		// ... then discovered endpoints
 		endpoints, err := t.discoverEndpoints(timeout)
 		if err != nil {
 			return nil, err
 		}
-		clusterUrls = endpoints
+		clusterTargets = endpoints
+		// Fetch private services information
+		privateServices, _ = t.discoverPrivateServices(timeout)
 	}
-	services := make([]*Service, 0, len(clusterUrls))
-	for name, url := range clusterUrls {
-		service := &Service{
-			Name:          name,
-			BaseURL:       url,
-			TLSOptions:    t.deploymentOptions.TLSOptions,
-			httpClient:    t.httpClient,
-			auth:          t.deploymentAuth,
-			retryInterval: t.retryInterval,
-		}
-		if timeout > 0 {
-			if err := service.Wait(timeout); err != nil {
-				return nil, err
+	services := make([]*Service, 0, len(clusterTargets))
+	for name, targets := range clusterTargets {
+		for _, target := range targets {
+			service := &Service{
+				Name:          name,
+				BaseURL:       target.URL,
+				AuthMethod:    target.AuthMethod,
+				TLSOptions:    t.deploymentOptions.TLSOptions,
+				httpClient:    t.httpClient,
+				auth:          t.deploymentAuth,
+				retryInterval: t.retryInterval,
 			}
+			// Attach private service info if available for this cluster
+			if privateServices != nil {
+				if psInfo, exists := privateServices[name]; exists {
+					service.PrivateService = psInfo
+				}
+			}
+			if timeout > 0 {
+				if err := service.Wait(timeout); err != nil {
+					return nil, err
+				}
+			}
+			services = append(services, service)
 		}
-		services = append(services, service)
 	}
 	sort.Slice(services, func(i, j int) bool { return services[i].Name < services[j].Name })
 	return services, nil
@@ -180,10 +244,7 @@ func (t *cloudTarget) CompatibleWith(clientVersion version.Version) error {
 }
 
 func (t *cloudTarget) logsURL() string {
-	return fmt.Sprintf("%s/application/v4/tenant/%s/application/%s/instance/%s/environment/%s/region/%s/logs",
-		t.apiOptions.System.URL,
-		t.deploymentOptions.Deployment.Application.Tenant, t.deploymentOptions.Deployment.Application.Application, t.deploymentOptions.Deployment.Application.Instance,
-		t.deploymentOptions.Deployment.Zone.Environment, t.deploymentOptions.Deployment.Zone.Region)
+	return t.apiOptions.System.LogsURL(t.deploymentOptions.Deployment).String()
 }
 
 func (t *cloudTarget) PrintLog(options LogOptions) error {
@@ -212,7 +273,7 @@ func (t *cloudTarget) discoverLatestRun(timeout time.Duration) (int64, error) {
 		}
 		return false, nil
 	}
-	_, err = deployServiceWait(t, jobsSuccessFunc, requestFunc, timeout, t.retryInterval)
+	_, err = deployRequest(t, jobsSuccessFunc, requestFunc, timeout, t.retryInterval)
 	return lastRunID, err
 }
 
@@ -237,6 +298,7 @@ func (t *cloudTarget) AwaitDeployment(runID int64, timeout time.Duration) (int64
 		return req
 	}
 	success := false
+	failureMsgs := make(map[string][]string)
 	jobSuccessFunc := func(status int, response []byte) (bool, error) {
 		if ok, err := isOK(status); !ok {
 			return ok, err
@@ -245,21 +307,36 @@ func (t *cloudTarget) AwaitDeployment(runID int64, timeout time.Duration) (int64
 		if err := json.Unmarshal(response, &resp); err != nil {
 			return false, err
 		}
+		for step, msgs := range resp.Log {
+			for _, msg := range msgs {
+				if msg.Type == "warning" || msg.Type == "error" {
+					failureMsgs[step] = append(failureMsgs[step], msg.Message)
+				}
+			}
+		}
+		if !resp.Active && resp.Status != "success" {
+			failed := failedStep(resp.Steps)
+			if t.logOptions.Writer != nil {
+				t.printLog(resp, lastID, failed)
+			}
+			if msgs := failureMsgs[failed]; len(msgs) > 0 {
+				combined := strings.Join(msgs, "\n")
+				return false, fmt.Errorf("%w: %s", ErrDeployment, strings.TrimPrefix(combined, "Deployment failed: "))
+			}
+			return false, fmt.Errorf("%w: run %d ended with unsuccessful status: %s", ErrDeployment, runID, resp.Status)
+		}
 		if t.logOptions.Writer != nil {
-			lastID = t.printLog(resp, lastID)
+			lastID = t.printLog(resp, lastID, "")
 		}
 		if resp.Active {
 			return false, nil
 		}
-		if resp.Status != "success" {
-			return false, fmt.Errorf("%w: run %d ended with unsuccessful status: %s", ErrDeployment, runID, resp.Status)
-		}
 		success = true
 		return success, nil
 	}
-	_, err = deployServiceWait(t, jobSuccessFunc, requestFunc, timeout, t.retryInterval)
+	_, err = deployRequest(t, jobSuccessFunc, requestFunc, timeout, t.retryInterval)
 	if err != nil {
-		return runID, fmt.Errorf("deployment run %d not yet complete%s: %w", runID, waitDescription(timeout), err)
+		return runID, err
 	}
 	if !success {
 		return runID, fmt.Errorf("deployment run %d not yet complete%s", runID, waitDescription(timeout))
@@ -267,13 +344,25 @@ func (t *cloudTarget) AwaitDeployment(runID int64, timeout time.Duration) (int64
 	return runID, nil
 }
 
-func (t *cloudTarget) printLog(response runResponse, last int64) int64 {
+func failedStep(steps map[string]stepStatus) string {
+	for name, s := range steps {
+		if s.Status == "failed" {
+			return name
+		}
+	}
+	return ""
+}
+
+func (t *cloudTarget) printLog(response runResponse, last int64, muteStep string) int64 {
 	if response.LastID == 0 {
 		return last
 	}
 	var msgs []logMessage
 	for step, stepMsgs := range response.Log {
 		for _, msg := range stepMsgs {
+			if step == muteStep && (msg.Type == "warning" || msg.Type == "error") {
+				continue
+			}
 			if (step == "copyVespaLogs" && LogLevel(msg.Type) > t.logOptions.Level) || LogLevel(msg.Type) == 3 {
 				continue
 			}
@@ -289,16 +378,187 @@ func (t *cloudTarget) printLog(response runResponse, last int64) int64 {
 	return response.LastID
 }
 
-func (t *cloudTarget) discoverEndpoints(timeout time.Duration) (map[string]string, error) {
-	deploymentURL := fmt.Sprintf("%s/application/v4/tenant/%s/application/%s/instance/%s/environment/%s/region/%s",
-		t.apiOptions.System.URL,
-		t.deploymentOptions.Deployment.Application.Tenant, t.deploymentOptions.Deployment.Application.Application, t.deploymentOptions.Deployment.Application.Instance,
-		t.deploymentOptions.Deployment.Zone.Environment, t.deploymentOptions.Deployment.Zone.Region)
+func printBuildJobLog(response runResponse, last int64, writer io.Writer, prefix string) int64 {
+	if response.LastID == 0 {
+		return last
+	}
+	var msgs []logMessage
+	for _, stepMsgs := range response.Log {
+		for _, msg := range stepMsgs {
+			if LogLevel(msg.Type) == 3 { // skip debug
+				continue
+			}
+			msgs = append(msgs, msg)
+		}
+	}
+	sort.Slice(msgs, func(i, j int) bool { return msgs[i].At < msgs[j].At })
+	for _, msg := range msgs {
+		tm := time.UnixMilli(msg.At)
+		fmt.Fprintf(writer, "%s[%s] %-7s %s\n", prefix, tm.Format("15:04:05"), msg.Type, msg.Message)
+	}
+	return response.LastID
+}
+
+type syncWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (s *syncWriter) Write(p []byte) (n int, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.w.Write(p)
+}
+
+func streamBuildJobLogs(target Target, job buildStatusJob, timeout time.Duration, writer io.Writer, retryInterval time.Duration) error {
+	d := target.Deployment()
+	runURL := fmt.Sprintf("%s/application/v4/tenant/%s/application/%s/instance/%s/job/%s/run/%d",
+		d.System.URL, d.Application.Tenant, d.Application.Application,
+		job.Instance, job.JobName, job.RunID)
+	req, err := http.NewRequest("GET", runURL, nil)
+	if err != nil {
+		return err
+	}
+	prefix := fmt.Sprintf("[%s] ", job.JobName)
+	lastID := int64(-1)
+	logFunc := func(status int, response []byte) (bool, error) {
+		if ok, err := isOK(status); !ok {
+			return ok, err
+		}
+		var resp runResponse
+		if err := json.Unmarshal(response, &resp); err != nil {
+			return false, err
+		}
+		lastID = printBuildJobLog(resp, lastID, writer, prefix)
+		if resp.Active {
+			return false, nil
+		}
+		if resp.Status != "success" && resp.Status != "noTests" {
+			return false, fmt.Errorf("%w: %s failed with status %s", ErrDeployment, job.JobName, resp.Status)
+		}
+		return true, nil
+	}
+	requestFunc := func() *http.Request {
+		q := req.URL.Query()
+		q.Set("after", strconv.FormatInt(lastID, 10))
+		req.URL.RawQuery = q.Encode()
+		return req
+	}
+	_, err = deployRequest(target, logFunc, requestFunc, timeout, retryInterval)
+	return err
+}
+
+// AwaitBuild waits for a production build to deploy by polling the build-status endpoint
+// and streaming per-job run logs. Returns skipped=true if the build was skipped due to no
+// changes or being manually cancelled. logWriter may be nil to suppress log output.
+func AwaitBuild(target Target, buildID int64, timeout time.Duration, logWriter io.Writer) (skipped bool, skipReason string, _ error) {
+	if !target.IsCloud() {
+		return false, "", fmt.Errorf("AwaitBuild is only supported for cloud targets")
+	}
+	d := target.Deployment()
+	buildStatusURL := d.System.BuildStatusURL(d, buildID)
+	req, err := http.NewRequest("GET", buildStatusURL, nil)
+	if err != nil {
+		return false, "", err
+	}
+	sw := io.Writer(&syncWriter{w: logWriter})
+	var isSkipped bool
+	var observedSkipReason string
+	retryInterval := 2 * time.Second
+	lastStatus := map[string]string{}
+	statusFunc := func(status int, response []byte) (bool, error) {
+		if ok, err := isOK(status); !ok {
+			return ok, err
+		}
+		var resp buildStatusResponse
+		if err := json.Unmarshal(response, &resp); err != nil {
+			return false, err
+		}
+		if resp.AbsorbedIntoBuild != 0 {
+			return true, fmt.Errorf("build was batched with another deployment, check build %d instead", resp.AbsorbedIntoBuild)
+		}
+		for _, job := range resp.Jobs {
+			if lastStatus[job.JobName] != job.RunStatus {
+				lastStatus[job.JobName] = job.RunStatus
+				if logWriter != nil {
+					fmt.Fprintf(sw, "[%s] %s: %s\n", time.Now().Format("15:04:05"), job.JobName, job.RunStatus)
+				}
+			}
+		}
+		if resp.SkipReason != "" {
+			isSkipped = true
+			observedSkipReason = resp.SkipReason
+			return true, nil
+		}
+		if !resp.HasFailed {
+			return resp.Deployed, nil
+		}
+		var (
+			wg      sync.WaitGroup
+			mu      sync.Mutex
+			jobErrs []error
+		)
+		for _, job := range resp.Jobs {
+			if job.RunID > 0 {
+				wg.Add(1)
+				go func(j buildStatusJob) {
+					defer wg.Done()
+					if err := streamBuildJobLogs(target, j, timeout, sw, retryInterval); err != nil && !errors.Is(err, ErrWaitTimeout) {
+						mu.Lock()
+						jobErrs = append(jobErrs, err)
+						mu.Unlock()
+					}
+				}(job)
+			}
+		}
+		wg.Wait()
+		if len(jobErrs) > 0 {
+			return false, jobErrs[0]
+		}
+		return false, fmt.Errorf("%w: build %d failed", ErrDeployment, buildID)
+	}
+	_, mainErr := deployRequest(target, statusFunc, func() *http.Request { return req }, timeout, retryInterval)
+	if mainErr != nil {
+		return false, "", mainErr
+	}
+	return isSkipped, observedSkipReason, nil
+}
+
+func (t *cloudTarget) discoverPrivateServices(timeout time.Duration) (map[string]*PrivateServiceInfo, error) {
+	deploymentURL := t.apiOptions.System.PrivateServicesURL(t.deploymentOptions.Deployment)
+	req, err := http.NewRequest("GET", deploymentURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	privateServices := make(map[string]*PrivateServiceInfo)
+	privateServiceFunc := func(status int, response []byte) (bool, error) {
+		if ok, err := isOK(status); !ok {
+			return ok, err
+		}
+		var resp privateServicesResponse
+		if err := json.Unmarshal(response, &resp); err != nil {
+			return false, nil
+		}
+		for _, ps := range resp.PrivateServices {
+			// Only include if it has actual configuration (not just cluster name)
+			if ps.ServiceID != "" {
+				privateServices[ps.Cluster] = &ps.PrivateServiceInfo
+			}
+		}
+		return true, nil
+	}
+	// Ignore errors from private-services endpoint - it's optional
+	_, _ = deployRequest(t, privateServiceFunc, func() *http.Request { return req }, timeout, t.retryInterval)
+	return privateServices, nil
+}
+
+func (t *cloudTarget) discoverEndpoints(timeout time.Duration) (map[string][]clusterTarget, error) {
+	deploymentURL := t.apiOptions.System.DeploymentURL(t.deploymentOptions.Deployment)
 	req, err := http.NewRequest("GET", deploymentURL, nil)
 	if err != nil {
 		return nil, err
 	}
-	urlsByCluster := make(map[string]string)
+	clusterTargets := make(map[string][]clusterTarget)
 	endpointFunc := func(status int, response []byte) (bool, error) {
 		if ok, err := isOK(status); !ok {
 			return ok, err
@@ -314,18 +574,93 @@ func (t *cloudTarget) discoverEndpoints(timeout time.Duration) (map[string]strin
 			if endpoint.Scope != "zone" {
 				continue
 			}
-			if endpoint.AuthMethod == "token" {
-				continue
+			if _, exists := clusterTargets[endpoint.Cluster]; !exists {
+				clusterTargets[endpoint.Cluster] = []clusterTarget{}
 			}
-			urlsByCluster[endpoint.Cluster] = endpoint.URL
+			target := clusterTarget{URL: endpoint.URL, AuthMethod: endpoint.AuthMethod}
+			clusterTargets[endpoint.Cluster] = append(clusterTargets[endpoint.Cluster], target)
 		}
 		return true, nil
 	}
-	if _, err := deployServiceWait(t, endpointFunc, func() *http.Request { return req }, timeout, t.retryInterval); err != nil {
+	if _, err := deployRequest(t, endpointFunc, func() *http.Request { return req }, timeout, t.retryInterval); err != nil {
 		return nil, fmt.Errorf("no endpoints found in zone %s%s: %w", t.deploymentOptions.Deployment.Zone, waitDescription(timeout), err)
 	}
-	if len(urlsByCluster) == 0 {
+	if len(clusterTargets) == 0 {
 		return nil, fmt.Errorf("no endpoints found in zone %s%s", t.deploymentOptions.Deployment.Zone, waitDescription(timeout))
 	}
-	return urlsByCluster, nil
+	return clusterTargets, nil
+}
+
+func (t *cloudTarget) tenantUrl(tenant string) string {
+	return t.apiOptions.System.TenantURL(tenant).String()
+}
+
+func (t *cloudTarget) applicationInstanceUrl(id ApplicationID) string {
+	return t.apiOptions.System.ApplicationURL(id).String()
+}
+
+type CloudTenantResponse struct {
+	Tenant       string
+	Applications []struct {
+		Tenant      string
+		Application string
+		Instance    string
+		Url         string
+	}
+}
+
+type CloudInstanceResponse struct {
+	Instances []struct {
+		Instance    string
+		Deployments []struct {
+			Environment      string
+			Region           string
+			AvailabilityZone string
+		}
+	}
+}
+
+func (t *cloudTarget) ListApplications(tenant string, timeout time.Duration) (*CloudTenantResponse, error) {
+	tenantUrl := t.tenantUrl(tenant)
+	req, err := http.NewRequest("GET", tenantUrl, nil)
+	if err != nil {
+		return nil, err
+	}
+	var resp CloudTenantResponse
+	resultFn := func(status int, response []byte) (bool, error) {
+		if ok, err := isOK(status); !ok {
+			return ok, err
+		}
+		if err := json.Unmarshal(response, &resp); err != nil {
+			return false, nil
+		}
+		return true, nil
+	}
+	if _, err := deployRequest(t, resultFn, func() *http.Request { return req }, timeout, t.retryInterval); err != nil {
+		return nil, fmt.Errorf("no tenant found: %w", err)
+	}
+
+	return &resp, nil
+}
+
+func (t *cloudTarget) ShowApplicationInstance(id ApplicationID, timeout time.Duration) (*CloudInstanceResponse, error) {
+	tenantUrl := t.applicationInstanceUrl(id)
+	req, err := http.NewRequest("GET", tenantUrl, nil)
+	if err != nil {
+		return nil, err
+	}
+	var resp CloudInstanceResponse
+	resultFn := func(status int, response []byte) (bool, error) {
+		if ok, err := isOK(status); !ok {
+			return ok, err
+		}
+		if err := json.Unmarshal(response, &resp); err != nil {
+			return false, nil
+		}
+		return true, nil
+	}
+	if _, err := deployRequest(t, resultFn, func() *http.Request { return req }, timeout, t.retryInterval); err != nil {
+		return nil, fmt.Errorf("no application instance found: %w", err)
+	}
+	return &resp, nil
 }

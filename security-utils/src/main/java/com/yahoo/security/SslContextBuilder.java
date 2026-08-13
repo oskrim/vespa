@@ -12,6 +12,7 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 import java.security.KeyStore;
 import java.security.PrivateKey;
@@ -57,7 +58,7 @@ public class SslContextBuilder {
     public SslContextBuilder withTrustStore(Path pemEncodedCaCertificates) {
         this.trustStoreSupplier = () -> {
             List<X509Certificate> caCertificates =
-                    X509CertificateUtils.certificateListFromPem(new String(Files.readAllBytes(pemEncodedCaCertificates)));
+                    X509CertificateUtils.certificateListFromPem(new String(Files.readAllBytes(pemEncodedCaCertificates), StandardCharsets.UTF_8));
             return createTrustStore(caCertificates);
         };
         return this;
@@ -68,9 +69,22 @@ public class SslContextBuilder {
     }
 
     public SslContextBuilder withKeyStore(PrivateKey privateKey, List<X509Certificate> certificates) {
-        char[] pwd = new char[0];
-        this.keyStoreSupplier = () -> KeyStoreBuilder.withType(KeyStoreType.JKS).withKeyEntry("default", privateKey, certificates).build();
-        this.keyStorePassword = pwd;
+        return withKeyStore(List.of(new X509CertificateWithKey(certificates, privateKey)));
+    }
+
+    public SslContextBuilder withKeyStore(List<X509CertificateWithKey> clientCertificatesAndKeys) {
+        if (clientCertificatesAndKeys.isEmpty()) {
+            throw new IllegalArgumentException("clientCertificatesAndKeys cannot be empty");
+        }
+        this.keyStoreSupplier = () -> {
+            KeyStoreBuilder keyStore = KeyStoreBuilder.withType(KeyStoreType.JKS);
+            for (int i = 0; i < clientCertificatesAndKeys.size(); i++) {
+                X509CertificateWithKey certWithKey = clientCertificatesAndKeys.get(i);
+                keyStore = keyStore.withKeyEntry("key"+i, certWithKey.privateKey(), certWithKey.certificateWithIntermediates());
+            }
+            return keyStore.build();
+        };
+        this.keyStorePassword = new char[0];
         return this;
     }
 
@@ -89,8 +103,8 @@ public class SslContextBuilder {
     public SslContextBuilder withKeyStore(Path privateKeyPemFile, Path certificatesPemFile) {
         this.keyStoreSupplier =
                 () ->  {
-                    PrivateKey privateKey = KeyUtils.fromPemEncodedPrivateKey(new String(Files.readAllBytes(privateKeyPemFile)));
-                    List<X509Certificate> certificates = X509CertificateUtils.certificateListFromPem(new String(Files.readAllBytes(certificatesPemFile)));
+                    PrivateKey privateKey = KeyUtils.fromPemEncodedPrivateKey(new String(Files.readAllBytes(privateKeyPemFile), StandardCharsets.UTF_8));
+                    List<X509Certificate> certificates = X509CertificateUtils.certificateListFromPem(new String(Files.readAllBytes(certificatesPemFile), StandardCharsets.UTF_8));
                     return KeyStoreBuilder.withType(KeyStoreType.JKS)
                             .withKeyEntry("default", privateKey, certificates)
                             .build();

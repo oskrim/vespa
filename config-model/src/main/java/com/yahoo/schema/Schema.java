@@ -33,7 +33,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.TreeMap;
 import java.util.logging.Level;
 import java.util.stream.Stream;
 
@@ -64,9 +63,10 @@ public class Schema implements ImmutableSchema {
     /** True if this doesn't define a search, just a document type */
     private final boolean documentsOnly;
 
+    private Boolean documentIdAttribute = null;
+
     private Boolean rawAsBase64 = null;
 
-    /** The stemming setting of this schema. Default is BEST. */
     private Stemming stemming = null;
 
     private final FieldSets fieldSets = new FieldSets(Optional.of(this));
@@ -179,6 +179,19 @@ public class Schema implements ImmutableSchema {
     }
 
     /**
+     * Returns true if document ids should be stored in an implicit attribute
+     *
+     * @return true if document ids should be stored in an implicit attribute
+     */
+    public boolean documentIdAttributeEnabled() {
+        if (documentIdAttribute != null) return documentIdAttribute;
+        if (inherited.isEmpty()) return false;
+        return requireInherited().documentIdAttributeEnabled();
+    }
+
+    public void enableDocumentIdAttribute(boolean value) { documentIdAttribute = value; }
+
+    /**
      * Returns true if 'raw' fields shall be presented as base64 in summary
      * Note that this is temporary and will disappear on Vespa 8 as it will become default, and only option.
      *
@@ -205,7 +218,7 @@ public class Schema implements ImmutableSchema {
     /** Returns whether fields should be stemmed by default or not. Default is BEST. This is never null. */
     public Stemming getStemming() {
         if (stemming != null) return stemming;
-        if (inherited.isEmpty()) return Stemming.BEST;
+        if (inherited.isEmpty()) return Stemming.BEST; // TODO Vespa 9: Change default to multiple
         return requireInherited().getStemming();
     }
 
@@ -290,6 +303,14 @@ public class Schema implements ImmutableSchema {
                 .orElse(null);
     }
 
+    /**
+     * Returns a map of the fields defined explicitly in this schema
+     * (that is, not including inherited fields).
+     */
+    public Map<String, SDField> fieldsOfThis() {
+        return Collections.unmodifiableMap(fields);
+    }
+
     @Override
     public List<ImmutableSDField> allFieldsList() {
         List<ImmutableSDField> all = new ArrayList<>(extraFieldList());
@@ -329,9 +350,9 @@ public class Schema implements ImmutableSchema {
     }
 
     /**
-     * Returns a list of all the fields of this search definition, that is all fields in all documents, in the documents
+     * Returns a list of all the fields of this schema, that is all fields in all documents, in the documents
      * they inherit, and all extra fields. The caller receives ownership to the list - subsequent changes to it will not
-     * impact this
+     * impact this.
      */
     @Override
     public List<SDField> allConcreteFields() {
@@ -340,6 +361,19 @@ public class Schema implements ImmutableSchema {
         for (Field field : documentType.fieldSet()) {
             allFields.add((SDField)field);
         }
+        return allFields;
+    }
+
+    /**
+     * as allConcreteFields, but includes sub-fields for arrays of structs etc.
+     */
+    public List<SDField> allConcreteFieldsWithSubFields() {
+        var allFields = allConcreteFields();
+        List<SDField> subFields = new ArrayList<>();
+        for (SDField f : allFields) {
+            subFields.addAll(f.getStructFields());
+        }
+        allFields.addAll(subFields);
         return allFields;
     }
 
@@ -411,17 +445,17 @@ public class Schema implements ImmutableSchema {
     }
 
     public Collection<SDField> allExtraFields() {
-        Map<String, SDField> extraFields = new TreeMap<>();
+        Map<String, SDField> extraFields = new LinkedHashMap<>();
         if (inherited.isPresent())
             requireInherited().allExtraFields().forEach(field -> extraFields.put(field.getName(), field));
-        for (Field field : documentType.fieldSet()) {
-            SDField sdField = (SDField) field;
-            if (sdField.isExtraField()) {
-                extraFields.put(sdField.getName(), sdField);
-            }
-        }
         for (SDField field : extraFieldList()) {
             extraFields.put(field.getName(), field);
+        }
+        for (Field field : documentType.fieldSet()) {
+            SDField sdField = (SDField) field;
+            if (sdField.isExtraField() && !extraFields.containsKey(sdField.getName())) {
+                extraFields.put(sdField.getName(), sdField);
+            }
         }
         return extraFields.values();
     }
@@ -545,7 +579,7 @@ public class Schema implements ImmutableSchema {
 
     /** Adds an explicitly defined summary to this search definition */
     public void addSummary(DocumentSummary summary) {
-        summaries.put(summary.getName(), summary);
+        summaries.put(summary.name(), summary);
     }
 
     /**

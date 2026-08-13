@@ -11,6 +11,7 @@ import java.util.HashMap;
 import java.util.List;
 
 import com.yahoo.net.URI;
+import com.yahoo.prelude.fastsearch.PartialSummaryHandler;
 import com.yahoo.search.Query;
 import com.yahoo.search.Result;
 import com.yahoo.search.Searcher;
@@ -76,7 +77,7 @@ public class DocumentSourceSearcher extends Searcher {
     }
 
     public void addSummaryClass(String name, Set<String> fields) {
-        summaryClasses.put(name,fields);
+        summaryClasses.put(name, fields);
     }
 
     public void addSummaryClassByCopy(String name, Collection<String> fields) {
@@ -110,13 +111,14 @@ public class DocumentSourceSearcher extends Searcher {
     }
 
     /**
-     * Returns a query clone which has sourcr, offset and hits set to null. This is used by access to
+     * Returns a query clone which has source, offset, hits, and summary fields set to null. This is used by access to
      * the maps using the query as key to achieve lookup independent of offset/hits value
      */
     private Query getQueryKeyClone(Query query) {
         Query key = query.clone();
-        key.setWindow(0,0);
+        key.setWindow(0, 0);
         key.getModel().setSources("");
+        key.getPresentation().setSummaryFields("");
         return key;
     }
 
@@ -128,7 +130,7 @@ public class DocumentSourceSearcher extends Searcher {
         if (filledResult == null) {
             filledResult = defaultFilledResult;
         }
-        fillHits(filledResult,result,summaryClass);
+        fillHits(filledResult, result, summaryClass);
     }
 
     private void fillHits(Result filledHits, Result hitsToFill, String summaryClass) {
@@ -137,13 +139,20 @@ public class DocumentSourceSearcher extends Searcher {
         if (fieldsToFill == null ) {
             fieldsToFill = summaryClasses.get(DEFAULT_SUMMARY_CLASS);
         }
+        // logic replicated from RpcProtobufFillInvoker
+        var partialSummaryHandler = new PartialSummaryHandler(summaryClasses);
+        partialSummaryHandler.wantToFill(hitsToFill, summaryClass);
+        var onlyFields = partialSummaryHandler.askForFields();
+        if (onlyFields != null) {
+            fieldsToFill = onlyFields;
+        }
 
         for (Hit hitToFill : hitsToFill.hits()) {
             Hit filledHit = getMatchingFilledHit(hitToFill.getId(), filledHits);
 
             if (filledHit != null) {
                 if (fieldsToFill != null) {
-                    copyFieldValuesThatExist(filledHit,hitToFill,fieldsToFill);
+                    copyFieldValuesThatExist(filledHit, hitToFill, fieldsToFill);
                 } else {
                     // TODO: remove this block and update fieldsToFill above to throw an exception if no appropriate summary class is found
                     for (var iter = filledHit.fieldIterator(); iter.hasNext();) {
@@ -151,7 +160,8 @@ public class DocumentSourceSearcher extends Searcher {
                         hitToFill.setField(propertyEntry.getKey(), propertyEntry.getValue());
                     }
                 }
-                hitToFill.setFilled(summaryClass == null ? DEFAULT_SUMMARY_CLASS : summaryClass);
+                // logic replicated from RpcProtobufFillInvoker
+                partialSummaryHandler.markFilled(hitToFill);
             }
         }
         hitsToFill.analyzeHits();
@@ -160,7 +170,7 @@ public class DocumentSourceSearcher extends Searcher {
     private Hit getMatchingFilledHit(URI hitToFillId, Result filledHits) {
         Hit filledHit = null;
 
-        for ( Hit filledHitCandidate : filledHits.hits()) {
+        for (Hit filledHitCandidate : filledHits.hits()) {
             if ( hitToFillId == filledHitCandidate.getId() ) {
                 filledHit = filledHitCandidate;
                 break;

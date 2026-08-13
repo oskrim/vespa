@@ -13,6 +13,7 @@ import com.yahoo.documentapi.messagebus.protocol.GetDocumentReply;
 import com.yahoo.messagebus.Message;
 import com.yahoo.messagebus.Reply;
 import com.yahoo.messagebus.Trace;
+import com.yahoo.text.Text;
 import com.yahoo.text.Utf8;
 import com.yahoo.vespaclient.ClusterDef;
 import com.yahoo.vespaclient.ClusterList;
@@ -106,7 +107,7 @@ public class DocumentRetriever {
         }
         if (clusterDef == null) {
             String names = createClusterNamesString();
-            throw new DocumentRetrieverException(String.format(
+            throw new DocumentRetrieverException(Text.format(
                     "The Vespa cluster contains the content clusters %s, not %s. Please select a valid vespa cluster.",
                     names, clusterName));
         }
@@ -130,6 +131,7 @@ public class DocumentRetriever {
         GetDocumentMessage msg = new GetDocumentMessage(new DocumentId(docid), params.fieldSet);
         msg.setPriority(params.priority); // TODO: Remove on Vespa 9
         msg.setRetryEnabled(!params.noRetry);
+        msg.setDebugReplicaNodeId(params.debugReplicaNodeId);
         return msg;
     }
 
@@ -143,14 +145,14 @@ public class DocumentRetriever {
         if (reply.hasErrors()) {
             System.err.print("Request failed: ");
             for (int i = 0; i < reply.getNumErrors(); i++) {
-                System.err.printf("\n  %s", reply.getError(i));
+                System.err.print(Text.format("\n  %s", reply.getError(i)));
             }
             System.err.println();
             return;
         }
 
         if (!(reply instanceof GetDocumentReply)) {
-            System.err.printf("Unexpected reply %s: '%s'\n", reply.getType(), reply.toString());
+            System.err.print(Text.format("Unexpected reply %s: '%s'\n", reply.getType(), reply.toString()));
             return;
         }
 
@@ -163,7 +165,7 @@ public class DocumentRetriever {
         }
 
         if (params.showDocSize) {
-            System.out.printf("Document size: %d bytes.\n", document.getSerializedSize());
+            System.out.print(Text.format("Document size: %d bytes.\n", document.getSerializedSize()));
         }
         if (params.printIdsOnly) {
             System.out.println(document.getId());

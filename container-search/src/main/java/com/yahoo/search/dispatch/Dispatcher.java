@@ -1,6 +1,7 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.search.dispatch;
 
+import ai.vespa.cloud.SystemInfo;
 import com.yahoo.component.AbstractComponent;
 import com.yahoo.component.ComponentId;
 import com.yahoo.component.annotation.Inject;
@@ -12,10 +13,13 @@ import com.yahoo.search.Query;
 import com.yahoo.search.Result;
 import com.yahoo.search.cluster.ClusterMonitor;
 import com.yahoo.search.dispatch.SearchPath.InvalidSearchPathException;
+import com.yahoo.search.dispatch.lb.LoadBalancer;
 import com.yahoo.search.dispatch.rpc.RpcConnectionPool;
 import com.yahoo.search.dispatch.rpc.RpcInvokerFactory;
 import com.yahoo.search.dispatch.rpc.RpcPingFactory;
 import com.yahoo.search.dispatch.rpc.RpcResourcePool;
+import com.yahoo.container.QrSearchersConfig;
+import com.yahoo.search.dispatch.searchcluster.AvailabilityPolicy;
 import com.yahoo.search.dispatch.searchcluster.Group;
 import com.yahoo.search.dispatch.searchcluster.Node;
 import com.yahoo.search.dispatch.searchcluster.SearchCluster;
@@ -51,21 +55,27 @@ public class Dispatcher extends AbstractComponent {
 
     public static final String DISPATCH = "dispatch";
     private static final String TOP_K_PROBABILITY = "topKProbability";
+    private static final String DOCSUM_RETRY_LIMIT = "docsumRetryLimit";
+    private static final String DOCSUM_RETRY_FACTOR  = "docsumRetryFactor";
     private static final int MAX_GROUP_SELECTION_ATTEMPTS = 3;
 
     /** If set will control computation of how many hits will be fetched from each partition.*/
     public static final CompoundName topKProbability = CompoundName.from(DISPATCH + "." + TOP_K_PROBABILITY);
+    public static final CompoundName docsumRetryLimit = CompoundName.from(DISPATCH + "." + DOCSUM_RETRY_LIMIT);
+    public static final CompoundName docsumRetryFactor  = CompoundName.from(DISPATCH + "." + DOCSUM_RETRY_FACTOR);
 
     private final InvokerFactoryFactory invokerFactories;
     private final DispatchConfig dispatchConfig;
     private final RpcConnectionPool rpcResourcePool;
     private final SearchCluster searchCluster;
     private final ClusterMonitor<Node> clusterMonitor;
+    private final QrSearchersConfig qrSearchersConfig;
+    private final String localAvailabilityZone;
     private volatile VolatileItems volatileItems;
 
     private static class VolatileItems {
 
-        final LoadBalancer loadBalancer;
+        final LoadBalancer   loadBalancer;
         final InvokerFactory invokerFactory;
         final AtomicInteger inflight = new AtomicInteger(1); // Initial reference.
         Runnable cleanup = () -> { };
@@ -101,50 +111,103 @@ public class Dispatcher extends AbstractComponent {
         argumentType.setStrict(true);
         argumentType.setBuiltin(true);
         argumentType.addField(new FieldDescription(TOP_K_PROBABILITY, FieldType.doubleType));
+        argumentType.addField(new FieldDescription(DOCSUM_RETRY_LIMIT, FieldType.integerType));
+        argumentType.addField(new FieldDescription(DOCSUM_RETRY_FACTOR, FieldType.doubleType));
         argumentType.freeze();
     }
 
     public static QueryProfileType getArgumentType() { return argumentType; }
 
     interface InvokerFactoryFactory {
-        InvokerFactory create(RpcConnectionPool rpcConnectionPool, SearchGroups searchGroups, DispatchConfig dispatchConfig);
+        InvokerFactory create(RpcConnectionPool rpcConnectionPool, SearchGroups searchGroups, DispatchConfig dispatchConfig, QrSearchersConfig qrSearchersConfig);
     }
 
     @Inject
-    public Dispatcher(ComponentId clusterId, DispatchConfig dispatchConfig, DispatchNodesConfig nodesConfig, VipStatus vipStatus) {
-        this(clusterId, dispatchConfig, new RpcResourcePool(dispatchConfig, nodesConfig), nodesConfig, vipStatus, RpcInvokerFactory::new);
+    public Dispatcher(ComponentId clusterId,
+                      DispatchConfig dispatchConfig,
+                      QrSearchersConfig qrSearchersConfig,
+                      DispatchNodesConfig nodesConfig,
+                      SystemInfo systemInfo,
+                      VipStatus vipStatus) {
+        this(clusterId,
+             dispatchConfig,
+             qrSearchersConfig,
+             new RpcResourcePool(dispatchConfig, nodesConfig),
+             nodesConfig,
+             systemInfo,
+             vipStatus,
+             RpcInvokerFactory::new);
         initialWarmup(dispatchConfig.warmuptime());
     }
 
-    Dispatcher(ComponentId clusterId, DispatchConfig dispatchConfig, RpcConnectionPool rpcConnectionPool,
-               DispatchNodesConfig nodesConfig, VipStatus vipStatus, InvokerFactoryFactory invokerFactories) {
-        this(dispatchConfig, rpcConnectionPool,
-             new SearchCluster(clusterId.stringValue(), dispatchConfig.minActivedocsPercentage(),
-                               toNodes(clusterId.stringValue(), nodesConfig), vipStatus, new RpcPingFactory(rpcConnectionPool)),
+    Dispatcher(ComponentId clusterId,
+               DispatchConfig dispatchConfig,
+               QrSearchersConfig qrSearchersConfig,
+               RpcConnectionPool rpcConnectionPool,
+               DispatchNodesConfig nodesConfig,
+               SystemInfo systemInfo,
+               VipStatus vipStatus,
+               InvokerFactoryFactory invokerFactories) {
+        this(dispatchConfig,
+             qrSearchersConfig,
+             rpcConnectionPool,
+             new SearchCluster(clusterId.stringValue(),
+                               AvailabilityPolicy.from(dispatchConfig),
+                               toNodes(clusterId.stringValue(), nodesConfig),
+                               vipStatus,
+                               new RpcPingFactory(rpcConnectionPool)),
+             systemInfo,
              invokerFactories);
     }
 
-    Dispatcher(DispatchConfig dispatchConfig, RpcConnectionPool rpcConnectionPool,
-               SearchCluster searchCluster, InvokerFactoryFactory invokerFactories) {
-        this(dispatchConfig, rpcConnectionPool, searchCluster, new ClusterMonitor<>(searchCluster, false), invokerFactories);
+    Dispatcher(DispatchConfig dispatchConfig,
+               QrSearchersConfig qrSearchersConfig,
+               RpcConnectionPool rpcConnectionPool,
+               SearchCluster searchCluster,
+               SystemInfo systemInfo,
+               InvokerFactoryFactory invokerFactories) {
+        this(dispatchConfig,
+             qrSearchersConfig,
+             rpcConnectionPool,
+             searchCluster,
+             new ClusterMonitor<>(searchCluster, false),
+             systemInfo,
+             invokerFactories);
         this.clusterMonitor.start(); // Populate nodes to monitor before starting it.
     }
 
-    Dispatcher(DispatchConfig dispatchConfig, RpcConnectionPool rpcConnectionPool,
-               SearchCluster searchCluster, ClusterMonitor<Node> clusterMonitor, InvokerFactoryFactory invokerFactories) {
+    Dispatcher(DispatchConfig dispatchConfig,
+               QrSearchersConfig qrSearchersConfig,
+               RpcConnectionPool rpcConnectionPool,
+               SearchCluster searchCluster,
+               ClusterMonitor<Node> clusterMonitor,
+               SystemInfo systemInfo,
+               InvokerFactoryFactory invokerFactories) {
         this.dispatchConfig = dispatchConfig;
+        this.qrSearchersConfig = qrSearchersConfig;
         this.rpcResourcePool = rpcConnectionPool;
         this.searchCluster = searchCluster;
-        this.invokerFactories = invokerFactories;
         this.clusterMonitor = clusterMonitor;
+        this.invokerFactories = invokerFactories;
+        this.localAvailabilityZone = systemInfo.node().availabilityZone();
         this.volatileItems = update();
         searchCluster.addMonitoring(clusterMonitor);
     }
 
     /* For simple mocking in tests. Beware that searchCluster is shutdown in deconstruct() */
-    Dispatcher(ClusterMonitor<Node> clusterMonitor, SearchCluster searchCluster,
-               DispatchConfig dispatchConfig, InvokerFactory invokerFactory) {
-        this(dispatchConfig, null, searchCluster, clusterMonitor, (__, ___, ____) -> invokerFactory);
+    Dispatcher(ClusterMonitor<Node> clusterMonitor,
+               SearchCluster searchCluster,
+               DispatchConfig dispatchConfig,
+               QrSearchersConfig qrSearchersConfig,
+               SystemInfo systemInfo,
+               InvokerFactory invokerFactory) {
+        this(dispatchConfig,
+             qrSearchersConfig,
+             null,
+             searchCluster,
+             clusterMonitor,
+             systemInfo,
+             (__, ___, ____, _____) -> invokerFactory);
     }
 
     /** Returns the snapshot of volatile items that need to be kept together, incrementing its reference counter. */
@@ -192,7 +255,7 @@ public class Dispatcher extends AbstractComponent {
             };
 
             // Update the nodes the search cluster keeps track of, and what nodes are monitored.
-            searchCluster.updateNodes(toNodes(searchCluster.name(), nodesConfig), clusterMonitor, dispatchConfig.minActivedocsPercentage());
+            searchCluster.updateNodes(AvailabilityPolicy.from(dispatchConfig), toNodes(searchCluster.name(), nodesConfig), clusterMonitor);
 
             // Update the snapshot to use the new nodes set in the search cluster; the RPC pool is ready for this.
             this.volatileItems = update();
@@ -200,8 +263,10 @@ public class Dispatcher extends AbstractComponent {
     }
 
     private VolatileItems update() {
-        return new VolatileItems(new LoadBalancer(searchCluster.groupList().groups(), toLoadBalancerPolicy(dispatchConfig.distributionPolicy())),
-                                 invokerFactories.create(rpcResourcePool, searchCluster.groupList(), dispatchConfig));
+        return new VolatileItems(new LoadBalancer(searchCluster.groupList().groups(),
+                                                  toLoadBalancerPolicy(dispatchConfig.distributionPolicy()),
+                                                  localAvailabilityZone),
+                                 invokerFactories.create(rpcResourcePool, searchCluster.groupList(), dispatchConfig, qrSearchersConfig));
     }
 
     private void initialWarmup(double warmupTime) {
@@ -225,13 +290,14 @@ public class Dispatcher extends AbstractComponent {
         return switch (policy) {
             case ROUNDROBIN -> LoadBalancer.Policy.ROUNDROBIN;
             case BEST_OF_RANDOM_2 -> LoadBalancer.Policy.BEST_OF_RANDOM_2;
-            case ADAPTIVE,LATENCY_AMORTIZED_OVER_REQUESTS -> LoadBalancer.Policy.LATENCY_AMORTIZED_OVER_REQUESTS;
+            case ADAPTIVE,LATENCY_AMORTIZED_OVER_REQUESTS -> LoadBalancer.Policy.ADAPTIVE;
             case LATENCY_AMORTIZED_OVER_TIME -> LoadBalancer.Policy.LATENCY_AMORTIZED_OVER_TIME;
         };
     }
     private static List<Node> toNodes(String clusterName, DispatchNodesConfig nodesConfig) {
+        boolean multipleGroups = nodesConfig.node().stream().map(node -> node.group()).distinct().count() > 1;
         return nodesConfig.node().stream()
-                .map(n -> new Node(clusterName, n.key(), n.host(), n.group()))
+                .map(n -> new Node(clusterName, n.key(), n.host(), n.group(), multipleGroups, n.availabilityZone()))
                 .toList();
     }
 
@@ -249,7 +315,7 @@ public class Dispatcher extends AbstractComponent {
 
     @Override
     public void deconstruct() {
-        // The clustermonitor must be shutdown first as it uses the invokerfactory through the searchCluster.
+        // The cluster monitor must be shutdown first as it uses the invoker factory through the searchCluster
         clusterMonitor.shutdown();
         if (rpcResourcePool != null) {
             rpcResourcePool.close();
@@ -310,21 +376,25 @@ public class Dispatcher extends AbstractComponent {
                                                       maxHitsPerNode)
                                  .orElseThrow(() -> new IllegalStateException("Could not dispatch directly to " + node));
         }
-
         int covered = cluster.groupsWithSufficientCoverage();
-        int groups = cluster.groupList().size();
-        int max = Integer.min(Integer.min(covered + 1, groups), MAX_GROUP_SELECTION_ATTEMPTS);
-        Set<Integer> rejected = rejectGroupBlockingFeed(cluster.groupList().groups());
+        SearchGroups groups = cluster.groupList();
+        int max = Integer.min(Integer.min(covered + 1, groups.size()), MAX_GROUP_SELECTION_ATTEMPTS);
+        Set<Integer> rejected = new HashSet<>();
         for (int i = 0; i < max; i++) {
-            Optional<Group> groupInCluster = loadBalancer.takeGroup(rejected);
-            if (groupInCluster.isEmpty()) break; // No groups available
+            boolean acceptInsufficientCoverage = (i == max - 1);
+            Optional<Group> groupInCluster = preferredGroup(query, groups, acceptInsufficientCoverage, rejected);
+            if (groupInCluster.isPresent())
+                groupInCluster = loadBalancer.takeGroup(groupInCluster.get());
+            if (groupInCluster.isEmpty()) // No valid query preference
+                groupInCluster = loadBalancer.takeAnyGroupNotIn(rejected);
+            if (groupInCluster.isEmpty()) // No groups available
+                break;
 
             Group group = groupInCluster.get();
-            boolean acceptIncompleteCoverage = (i == max - 1);
             Optional<SearchInvoker> invoker = invokerFactory.createSearchInvoker(searcher,
                                                                                  query,
                                                                                  group.nodes(),
-                                                                                 acceptIncompleteCoverage,
+                                                                                 acceptInsufficientCoverage,
                                                                                  maxHitsPerNode);
             if (invoker.isPresent()) {
                 query.trace(false, 2, "Dispatching to group ", group.id(), " after retries = ", i);
@@ -333,30 +403,21 @@ public class Dispatcher extends AbstractComponent {
                 return invoker.get();
             } else {
                 loadBalancer.releaseGroup(group, false, RequestDuration.of(Duration.ZERO));
-                if (rejected == null) {
-                    rejected = new HashSet<>();
-                }
                 rejected.add(group.id());
             }
         }
         throw new IllegalStateException("No suitable groups to dispatch query. Rejected: " + rejected);
     }
 
-    /**
-     * We want to avoid groups blocking feed because their data may be out of date.
-     * If there is a single group blocking feed, we want to reject it.
-     * If multiple groups are blocking feed we should use them anyway as we may not have remaining
-     * capacity otherwise. Same if there are no other groups.
-     *
-     * @return a modifiable set containing the single group to reject, or null otherwise
-     */
-    private static Set<Integer> rejectGroupBlockingFeed(Collection<Group> groups) {
-        if (groups.size() == 1) return null;
-        List<Group> groupsRejectingFeed = groups.stream().filter(Group::isBlockingWrites).toList();
-        if (groupsRejectingFeed.size() != 1) return null;
-        Set<Integer> rejected = new HashSet<>();
-        rejected.add(groupsRejectingFeed.get(0).id());
-        return rejected;
+    private static Optional<Group> preferredGroup(Query query, SearchGroups groups, boolean acceptInsufficientCoverage,
+                                                  Set<Integer> rejectedGroups) {
+        Integer preference = query.getModel().getSearchGroup();
+        if (preference == null) return Optional.empty();
+        Group group = groups.get(preference);
+        if (group == null) return Optional.empty();
+        if (! acceptInsufficientCoverage && ! group.hasSufficientCoverage()) return Optional.empty();
+        if (rejectedGroups.contains(preference)) return Optional.empty();
+        return Optional.of(group);
     }
 
 }

@@ -8,12 +8,18 @@ import com.yahoo.document.StructDataType;
 import com.yahoo.document.datatypes.IntegerFieldValue;
 import com.yahoo.document.datatypes.StringFieldValue;
 import com.yahoo.document.datatypes.Struct;
-import com.yahoo.document.serialization.*;
+import com.yahoo.document.serialization.DocumentDeserializer;
+import com.yahoo.document.serialization.DocumentDeserializerFactory;
+import com.yahoo.document.serialization.DocumentSerializer;
+import com.yahoo.document.serialization.DocumentSerializerFactory;
 import com.yahoo.io.GrowableByteBuffer;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Iterator;
+import java.util.List;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -25,6 +31,7 @@ import static org.junit.Assert.assertTrue;
 /**
  * @author <a href="mailto:einarmr@yahoo-inc.com">Einar M R Rosenvinge</a>
  */
+@SuppressWarnings({"deprecation", "removal"})
 public class SpanTreeTestCase extends AbstractTypesTest {
     SpanTree tree;
     SpanList root;
@@ -865,12 +872,12 @@ public class SpanTreeTestCase extends AbstractTypesTest {
 
 
         GrowableByteBuffer buffer = new GrowableByteBuffer(1024);
-        DocumentSerializer serializer = DocumentSerializerFactory.create6(buffer);
+        DocumentSerializer serializer = DocumentSerializerFactory.createHead(buffer);
 
         serializer.write(new Field("stringfield", DataType.STRING), strfval);
         buffer.flip();
 
-        DocumentDeserializer deserializer = DocumentDeserializerFactory.create6(docMan, buffer);
+        DocumentDeserializer deserializer = DocumentDeserializerFactory.createHead(docMan, buffer);
         StringFieldValue stringFieldValue2 = new StringFieldValue();
         deserializer.read(new Field("stringfield", DataType.STRING), stringFieldValue2);
 

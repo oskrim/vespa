@@ -1,20 +1,21 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
-#include <tests/common/dummystoragelink.h>
-#include <tests/common/testhelper.h>
-#include <tests/persistence/common/filestortestfixture.h>
-#include <tests/persistence/filestorage/forwardingmessagesender.h>
 #include <vespa/document/test/make_document_bucket.h>
 #include <vespa/document/update/documentupdate.h>
 #include <vespa/storage/persistence/filestorage/filestorhandlerimpl.h>
 #include <vespa/storage/persistence/filestorage/filestormanager.h>
 #include <vespa/storage/persistence/filestorage/filestormetrics.h>
 #include <vespa/vespalib/util/stringfmt.h>
-#include <gtest/gtest.h>
 
-using document::test::makeDocumentBucket;
+#include <gtest/gtest.h>
+#include <tests/common/dummystoragelink.h>
+#include <tests/common/testhelper.h>
+#include <tests/persistence/common/filestortestfixture.h>
+#include <tests/persistence/filestorage/forwardingmessagesender.h>
+
 using document::BucketId;
 using document::DocumentId;
+using document::test::makeDocumentBucket;
 using namespace ::testing;
 
 namespace storage {
@@ -69,9 +70,7 @@ struct FeedOperationBatchingTest : FileStorTestFixture {
         schedule_msg(cmd);
     }
 
-    void send_put(uint32_t bucket_idx, uint32_t doc_idx) {
-        send_put(bucket_idx, doc_idx, next_timestamp(), 60s);
-    }
+    void send_put(uint32_t bucket_idx, uint32_t doc_idx) { send_put(bucket_idx, doc_idx, next_timestamp(), 60s); }
 
     void send_puts(std::initializer_list<std::pair<uint32_t, uint32_t>> bucket_docs) {
         for (const auto& bd : bucket_docs) {
@@ -79,9 +78,13 @@ struct FeedOperationBatchingTest : FileStorTestFixture {
         }
     }
 
-    void send_get(uint32_t bucket_idx, uint32_t doc_idx) {
+    constexpr static uint8_t default_message_priority = 127;
+
+    void send_get(uint32_t bucket_idx, uint32_t doc_idx, uint8_t pri = default_message_priority) {
         auto id = id_of(bucket_idx, doc_idx);
-        auto cmd = std::make_shared<api::GetCommand>(makeDocumentBucket({16, bucket_idx}), id, document::AllFields::NAME);
+        auto cmd =
+            std::make_shared<api::GetCommand>(makeDocumentBucket({16, bucket_idx}), id, document::AllFields::NAME);
+        cmd->setPriority(pri);
         schedule_msg(cmd);
     }
 
@@ -91,22 +94,18 @@ struct FeedOperationBatchingTest : FileStorTestFixture {
         schedule_msg(cmd);
     }
 
-    void send_remove(uint32_t bucket_idx, uint32_t doc_idx) {
-        send_remove(bucket_idx, doc_idx, next_timestamp());
-    }
+    void send_remove(uint32_t bucket_idx, uint32_t doc_idx) { send_remove(bucket_idx, doc_idx, next_timestamp()); }
 
     void send_update(uint32_t bucket_idx, uint32_t doc_idx, uint32_t timestamp) {
         auto id = id_of(bucket_idx, doc_idx);
         auto update = std::make_shared<document::DocumentUpdate>(
-                _node->getTestDocMan().getTypeRepo(),
-                _node->getTestDocMan().createRandomDocument()->getType(), id);
-        auto cmd = std::make_shared<api::UpdateCommand>(makeDocumentBucket({16, bucket_idx}), std::move(update), timestamp);
+            _node->getTestDocMan().getTypeRepo(), _node->getTestDocMan().createRandomDocument()->getType(), id);
+        auto cmd =
+            std::make_shared<api::UpdateCommand>(makeDocumentBucket({16, bucket_idx}), std::move(update), timestamp);
         schedule_msg(cmd);
     }
 
-    void send_update(uint32_t bucket_idx, uint32_t doc_idx) {
-        send_update(bucket_idx, doc_idx, next_timestamp());
-    }
+    void send_update(uint32_t bucket_idx, uint32_t doc_idx) { send_update(bucket_idx, doc_idx, next_timestamp()); }
 
     [[nodiscard]] api::Timestamp next_timestamp() {
         auto ret = _next_timestamp;
@@ -114,13 +113,9 @@ struct FeedOperationBatchingTest : FileStorTestFixture {
         return ret;
     }
 
-    [[nodiscard]] vespalib::steady_time fake_now() const {
-        return _node->getClock().getMonotonicTime();
-    }
+    [[nodiscard]] vespalib::steady_time fake_now() const { return _node->getClock().getMonotonicTime(); }
 
-    [[nodiscard]] vespalib::steady_time fake_deadline() const {
-        return _node->getClock().getMonotonicTime() + 60s;
-    }
+    [[nodiscard]] vespalib::steady_time fake_deadline() const { return _node->getClock().getMonotonicTime() + 60s; }
 
     [[nodiscard]] FileStorHandler::LockedMessageBatch next_batch() {
         return _handler->next_message_batch(0, fake_now(), fake_deadline());
@@ -128,10 +123,9 @@ struct FeedOperationBatchingTest : FileStorTestFixture {
 
     template <typename CmdType>
     static void assert_batch_msg_is(const FileStorHandler::LockedMessageBatch& batch, uint32_t msg_idx,
-                                    uint32_t expected_bucket_idx, uint32_t expected_doc_idx)
-    {
+                                    uint32_t expected_bucket_idx, uint32_t expected_doc_idx) {
         ASSERT_LT(msg_idx, batch.size());
-        auto msg = batch.messages[msg_idx].first;
+        auto  msg = batch.messages[msg_idx].first;
         auto* as_cmd = dynamic_cast<const CmdType*>(msg.get());
         ASSERT_TRUE(as_cmd) << msg->toString() << " does not have the expected type";
         EXPECT_EQ(as_cmd->getBucketId(), BucketId(16, expected_bucket_idx));
@@ -145,45 +139,34 @@ struct FeedOperationBatchingTest : FileStorTestFixture {
     }
 
     static void assert_batch_msg_is_put(const FileStorHandler::LockedMessageBatch& batch, uint32_t msg_idx,
-                                        uint32_t expected_bucket_idx, uint32_t expected_doc_idx)
-    {
+                                        uint32_t expected_bucket_idx, uint32_t expected_doc_idx) {
         assert_batch_msg_is<api::PutCommand>(batch, msg_idx, expected_bucket_idx, expected_doc_idx);
     }
 
     static void assert_batch_msg_is_remove(const FileStorHandler::LockedMessageBatch& batch, uint32_t msg_idx,
-                                           uint32_t expected_bucket_idx, uint32_t expected_doc_idx)
-    {
+                                           uint32_t expected_bucket_idx, uint32_t expected_doc_idx) {
         assert_batch_msg_is<api::RemoveCommand>(batch, msg_idx, expected_bucket_idx, expected_doc_idx);
     }
 
     static void assert_batch_msg_is_update(const FileStorHandler::LockedMessageBatch& batch, uint32_t msg_idx,
-                                           uint32_t expected_bucket_idx, uint32_t expected_doc_idx)
-    {
+                                           uint32_t expected_bucket_idx, uint32_t expected_doc_idx) {
         assert_batch_msg_is<api::UpdateCommand>(batch, msg_idx, expected_bucket_idx, expected_doc_idx);
     }
 
     static void assert_batch_msg_is_get(const FileStorHandler::LockedMessageBatch& batch, uint32_t msg_idx,
-                                        uint32_t expected_bucket_idx, uint32_t expected_doc_idx)
-    {
+                                        uint32_t expected_bucket_idx, uint32_t expected_doc_idx) {
         assert_batch_msg_is<api::GetCommand>(batch, msg_idx, expected_bucket_idx, expected_doc_idx);
     }
 
-    enum Type {
-        Put,
-        Update,
-        Remove,
-        Get
-    };
+    enum Type { Put, Update, Remove, Get };
 
     static void assert_empty_batch(const FileStorHandler::LockedMessageBatch& batch) {
         ASSERT_TRUE(batch.empty());
         ASSERT_FALSE(batch.lock);
     }
 
-    static void assert_batch(const FileStorHandler::LockedMessageBatch& batch,
-                             uint32_t expected_bucket_idx,
-                             std::initializer_list<std::pair<Type, uint32_t>> expected_msgs)
-    {
+    static void assert_batch(const FileStorHandler::LockedMessageBatch& batch, uint32_t expected_bucket_idx,
+                             std::initializer_list<std::pair<Type, uint32_t>> expected_msgs) {
         ASSERT_TRUE(batch.lock);
         ASSERT_EQ(batch.lock->getBucket().getBucketId(), BucketId(16, expected_bucket_idx));
         ASSERT_EQ(batch.size(), expected_msgs.size());
@@ -191,11 +174,20 @@ struct FeedOperationBatchingTest : FileStorTestFixture {
         uint32_t idx = 0;
         for (const auto& msg : expected_msgs) {
             switch (msg.first) {
-            case Type::Put:    assert_batch_msg_is_put(batch,    idx, expected_bucket_idx, msg.second); break;
-            case Type::Update: assert_batch_msg_is_update(batch, idx, expected_bucket_idx, msg.second); break;
-            case Type::Remove: assert_batch_msg_is_remove(batch, idx, expected_bucket_idx, msg.second); break;
-            case Type::Get:    assert_batch_msg_is_get(batch,    idx, expected_bucket_idx, msg.second); break;
-            default: FAIL();
+            case Type::Put:
+                assert_batch_msg_is_put(batch, idx, expected_bucket_idx, msg.second);
+                break;
+            case Type::Update:
+                assert_batch_msg_is_update(batch, idx, expected_bucket_idx, msg.second);
+                break;
+            case Type::Remove:
+                assert_batch_msg_is_remove(batch, idx, expected_bucket_idx, msg.second);
+                break;
+            case Type::Get:
+                assert_batch_msg_is_get(batch, idx, expected_bucket_idx, msg.second);
+                break;
+            default:
+                FAIL();
             }
             ++idx;
         }
@@ -203,13 +195,7 @@ struct FeedOperationBatchingTest : FileStorTestFixture {
 };
 
 FeedOperationBatchingTest::FeedOperationBatchingTest()
-    : FileStorTestFixture(),
-      _top(),
-      _message_sender(),
-      _metrics(),
-      _handler(),
-      _next_timestamp(1000)
-{
+    : FileStorTestFixture(), _top(), _message_sender(), _metrics(), _handler(), _next_timestamp(1000) {
 }
 
 FeedOperationBatchingTest::~FeedOperationBatchingTest() = default;
@@ -275,7 +261,7 @@ TEST_F(FeedOperationBatchingTest, non_feed_ops_are_not_batched) {
     assert_batch(next_batch(), 1, {{Get, 3}});
 }
 
-TEST_F(FeedOperationBatchingTest, pipeline_stalled_by_non_feed_op) {
+TEST_F(FeedOperationBatchingTest, pipeline_stalled_by_equal_pri_non_feed_op) {
     // It can reasonably be argued that we could batch _around_ a Get operation and still
     // have correct behavior, but the Get here is just a stand-in for an arbitrary operation such
     // as a Split (which changes the bucket set), which is rather more tricky to reason about.
@@ -289,6 +275,15 @@ TEST_F(FeedOperationBatchingTest, pipeline_stalled_by_non_feed_op) {
     assert_batch(next_batch(), 1, {{Put, 3}, {Put, 4}});
     assert_batch(next_batch(), 1, {{Get, 5}});
     assert_batch(next_batch(), 1, {{Put, 6}, {Put, 7}});
+}
+
+TEST_F(FeedOperationBatchingTest, lower_pri_messages_are_implicitly_skipped) {
+    send_puts({{1, 3}});
+    send_get(1, 2, default_message_priority + 1); // should not stall the pipeline
+    send_puts({{1, 4}, {1, 5}});
+
+    assert_batch(next_batch(), 1, {{Put, 3}, {Put, 4}, {Put, 5}});
+    assert_batch(next_batch(), 1, {{Get, 2}});
 }
 
 TEST_F(FeedOperationBatchingTest, pipeline_stalled_by_concurrent_ops_to_same_document) {
@@ -305,7 +300,7 @@ TEST_F(FeedOperationBatchingTest, batch_respects_persistence_throttling) {
     params.max_window_size = 3;
     params.window_size_increment = 1;
     _handler->use_dynamic_operation_throttling(true);
-    _handler->reconfigure_dynamic_throttler(params);
+    _handler->reconfigure_dynamic_operation_throttler(params);
     _handler->set_max_feed_op_batch_size(10); // > win size to make sure we test the right thing
 
     send_puts({{1, 1}, {1, 2}, {1, 3}, {1, 4}, {1, 5}});
@@ -315,4 +310,4 @@ TEST_F(FeedOperationBatchingTest, batch_respects_persistence_throttling) {
     assert_empty_batch(next_batch());
 }
 
-} // storage
+} // namespace storage

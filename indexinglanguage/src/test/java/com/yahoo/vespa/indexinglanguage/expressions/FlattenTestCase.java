@@ -2,7 +2,11 @@
 package com.yahoo.vespa.indexinglanguage.expressions;
 
 import com.yahoo.document.DataType;
-import com.yahoo.document.annotation.*;
+import com.yahoo.document.annotation.Annotation;
+import com.yahoo.document.annotation.AnnotationTypes;
+import com.yahoo.document.annotation.Span;
+import com.yahoo.document.annotation.SpanTree;
+import com.yahoo.document.annotation.SpanTrees;
 import com.yahoo.document.datatypes.StringFieldValue;
 import org.junit.Test;
 
@@ -14,6 +18,7 @@ import static org.junit.Assert.assertFalse;
 /**
  * @author Simon Thoresen Hult
  */
+@SuppressWarnings({"deprecation", "removal"})
 public class FlattenTestCase {
 
     @Test
@@ -87,7 +92,7 @@ public class FlattenTestCase {
     public void requireThatExpressionCanBeVerified() {
         Expression exp = new FlattenExpression();
         assertVerify(DataType.STRING, exp, DataType.STRING);
-        assertVerifyThrows(null, exp, "Expected string input, but no input is specified");
-        assertVerifyThrows(DataType.INT, exp, "Expected string input, got int");
+        assertVerifyThrows("Invalid expression 'flatten': Expected string input, but no input is provided", null, exp);
+        assertVerifyThrows("Invalid expression 'flatten': Expected string input, got int", DataType.INT, exp);
     }
 }

@@ -23,7 +23,7 @@ public:
     /**
      * Virtual destructor required for inheritance.
      */
-    virtual ~IThrottlePolicy() { /* empty */ }
+    virtual ~IThrottlePolicy() = default;
 
     /**
      * Returns whether or not the given message can be sent according to the current state of this policy.
@@ -32,22 +32,21 @@ public:
      * @param pendingCount The current number of pending messages.
      * @return True to send the message.
      */
-    virtual bool canSend(const Message &msg, uint32_t pendingCount) = 0;
+    virtual bool canSend(const Message& msg, uint32_t pendingCount) = 0;
 
     /**
      * This method is called once for every message that was accepted by {@link #canSend(Message, int)} and sent.
      *
      * @param msg The message beint sent.
      */
-    virtual void processMessage(Message &msg) = 0;
+    virtual void processMessage(Message& msg) = 0;
 
     /**
      * This method is called once for every reply that is received.
      *
      * @param reply The reply received.
      */
-    virtual void processReply(Reply &reply) = 0;
+    virtual void processReply(Reply& reply) = 0;
 };
 
 } // namespace mbus
-

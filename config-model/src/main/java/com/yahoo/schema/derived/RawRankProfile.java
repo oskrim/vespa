@@ -6,7 +6,8 @@ import com.yahoo.collections.Pair;
 import com.yahoo.compress.Compressor;
 import com.yahoo.config.model.api.ModelContext;
 import com.yahoo.search.query.profile.QueryProfileRegistry;
-import com.yahoo.schema.FeatureNames;
+import com.yahoo.searchlib.ranking.features.FeatureNames;
+import com.yahoo.search.query.ranking.ElementGap;
 import com.yahoo.schema.OnnxModel;
 import com.yahoo.schema.LargeRankingExpressions;
 import com.yahoo.schema.RankingExpressionBody;
@@ -20,6 +21,7 @@ import com.yahoo.searchlib.rankingexpression.parser.ParseException;
 import com.yahoo.searchlib.rankingexpression.rule.ReferenceNode;
 import com.yahoo.searchlib.rankingexpression.rule.SerializationContext;
 import com.yahoo.tensor.evaluation.TypeContext;
+import com.yahoo.text.Text;
 import com.yahoo.vespa.config.search.RankProfilesConfig;
 import static com.yahoo.searchlib.rankingexpression.Reference.wrapInRankingExpression;
 
@@ -34,6 +36,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.ListIterator;
 import java.util.Map;
+import java.util.Optional;
 import java.util.OptionalDouble;
 import java.util.Set;
 
@@ -160,7 +163,7 @@ public class RawRankProfile {
         private final boolean ignoreDefaultRankFeatures;
         private final RankProfile.MatchPhaseSettings matchPhaseSettings;
         private final RankProfile.DiversitySettings diversitySettings;
-        private final int rerankCount;
+        private final Optional<Integer> rerankCount;
         private final int keepRankCount;
         private final int numThreadsPerSearch;
         private final int minHitsPerThread;
@@ -168,11 +171,19 @@ public class RawRankProfile {
         private final double termwiseLimit;
         private final OptionalDouble postFilterThreshold;
         private final OptionalDouble approximateThreshold;
+        private final OptionalDouble filterFirstThreshold;
+        private final OptionalDouble filterFirstExploration;
+        private final OptionalDouble explorationSlack;
+        private final Boolean prefetchTensors;
         private final OptionalDouble targetHitsMaxAdjustmentFactor;
+        private final OptionalDouble weakandStopwordLimit;
+        private final Boolean weakandAllowDropAll;
+        private final OptionalDouble weakandAdjustTarget;
+        private final OptionalDouble filterThreshold;
         private final double rankScoreDropLimit;
         private final double secondPhaseRankScoreDropLimit;
+        private final double globalPhaseRankScoreDropLimit;
         private final boolean sortBlueprintsByCost;
-        private final boolean alwaysMarkPhraseExpensive;
 
         /**
          * The rank type definitions used to derive settings for the native rank features
@@ -181,6 +192,8 @@ public class RawRankProfile {
         private final Map<String, String> attributeTypes;
         private final Map<Reference, RankProfile.Input> inputs;
         private final Set<String> filterFields = new java.util.LinkedHashSet<>();
+        private final Map<String, Double> explicitFieldRankFilterThresholds = new LinkedHashMap<>();
+        private final Map<String, ElementGap> activeElementGapsPerField = new LinkedHashMap<>();
         private final String rankprofileName;
 
         private RankingExpression firstPhaseRanking;
@@ -214,15 +227,23 @@ public class RawRankProfile {
             numThreadsPerSearch = compiled.getNumThreadsPerSearch();
             minHitsPerThread = compiled.getMinHitsPerThread();
             numSearchPartitions = compiled.getNumSearchPartitions();
-            termwiseLimit = compiled.getTermwiseLimit().orElse(deployProperties.featureFlags().defaultTermwiseLimit());
+            termwiseLimit = compiled.getTermwiseLimit().orElse(1.0);
             sortBlueprintsByCost = deployProperties.featureFlags().sortBlueprintsByCost();
-            alwaysMarkPhraseExpensive = deployProperties.featureFlags().alwaysMarkPhraseExpensive();
             postFilterThreshold = compiled.getPostFilterThreshold();
             approximateThreshold = compiled.getApproximateThreshold();
+            filterFirstThreshold = compiled.getFilterFirstThreshold();
+            filterFirstExploration = compiled.getFilterFirstExploration();
+            explorationSlack = compiled.getExplorationSlack();
+            prefetchTensors = compiled.getPrefetchTensors();
             targetHitsMaxAdjustmentFactor = compiled.getTargetHitsMaxAdjustmentFactor();
-            keepRankCount = compiled.getKeepRankCount();
+            weakandStopwordLimit = compiled.getWeakandStopwordLimit();
+            weakandAdjustTarget = compiled.getWeakandAdjustTarget();
+            weakandAllowDropAll = compiled.getWeakandAllowDropAll();
+            filterThreshold = compiled.getFilterThreshold();
+            keepRankCount = compiled.getKeepRankCount().orElse(-1);
             rankScoreDropLimit = compiled.getRankScoreDropLimit();
             secondPhaseRankScoreDropLimit = compiled.getSecondPhaseRankScoreDropLimit();
+            globalPhaseRankScoreDropLimit = compiled.getGlobalPhaseRankScoreDropLimit();
             ignoreDefaultRankFeatures = compiled.getIgnoreDefaultRankFeatures();
             rankProperties = new ArrayList<>(compiled.getRankProperties());
 
@@ -247,6 +268,7 @@ public class RawRankProfile {
 
             deriveRankTypeSetting(compiled, attributeFields);
             deriveFilterFields(compiled);
+            deriveElementGaps(compiled);
             deriveWeightProperties(compiled);
         }
 
@@ -265,6 +287,11 @@ public class RawRankProfile {
 
         private void deriveFilterFields(RankProfile rp) {
             filterFields.addAll(rp.allFilterFields());
+            explicitFieldRankFilterThresholds.putAll(rp.explicitFieldRankFilterThresholds());
+        }
+
+        private void deriveElementGaps(RankProfile rp) {
+            activeElementGapsPerField.putAll(rp.getFieldRankElementGaps());
         }
 
         private void derivePropertiesAndFeaturesFromFunctions(Map<String, RankProfile.RankingExpressionFunction> functions,
@@ -471,22 +498,49 @@ public class RawRankProfile {
             if (sortBlueprintsByCost) {
                 properties.add(new Pair<>("vespa.matching.sort_blueprints_by_cost", String.valueOf(sortBlueprintsByCost)));
             }
-            if (alwaysMarkPhraseExpensive) {
-                properties.add(new Pair<>("vespa.matching.always_mark_phrase_expensive", String.valueOf(alwaysMarkPhraseExpensive)));
-            }
             if (postFilterThreshold.isPresent()) {
                 properties.add(new Pair<>("vespa.matching.global_filter.upper_limit", String.valueOf(postFilterThreshold.getAsDouble())));
             }
             if (approximateThreshold.isPresent()) {
                 properties.add(new Pair<>("vespa.matching.global_filter.lower_limit", String.valueOf(approximateThreshold.getAsDouble())));
             }
+            if (filterFirstThreshold.isPresent()) {
+                properties.add(new Pair<>("vespa.matching.nns.filter_first_upper_limit", String.valueOf(filterFirstThreshold.getAsDouble())));
+            }
+            if (filterFirstExploration.isPresent()) {
+                properties.add(new Pair<>("vespa.matching.nns.filter_first_exploration", String.valueOf(filterFirstExploration.getAsDouble())));
+            }
+            if (explorationSlack.isPresent()) {
+                properties.add(new Pair<>("vespa.matching.nns.exploration_slack", String.valueOf(explorationSlack.getAsDouble())));
+            }
+            if (prefetchTensors != null) {
+                properties.add(new Pair<>("vespa.matching.nns.prefetch_tensors", String.valueOf(prefetchTensors)));
+            }
             if (targetHitsMaxAdjustmentFactor.isPresent()) {
                 properties.add(new Pair<>("vespa.matching.nns.target_hits_max_adjustment_factor", String.valueOf(targetHitsMaxAdjustmentFactor.getAsDouble())));
+            }
+            if (weakandStopwordLimit.isPresent()) {
+                properties.add(new Pair<>("vespa.matching.weakand.stop_word_drop_limit", String.valueOf(weakandStopwordLimit.getAsDouble())));
+            }
+            if (weakandAllowDropAll != null) {
+                properties.add(new Pair<>("vespa.matching.weakand.allow_drop_all", String.valueOf(weakandAllowDropAll)));
+            }
+            if (weakandAdjustTarget.isPresent()) {
+                properties.add(new Pair<>("vespa.matching.weakand.stop_word_adjust_limit", String.valueOf(weakandAdjustTarget.getAsDouble())));
+            }
+            if (filterThreshold.isPresent()) {
+                properties.add(new Pair<>("vespa.matching.filter_threshold", String.valueOf(filterThreshold.getAsDouble())));
+            }
+            for (var fieldAndThreshold : explicitFieldRankFilterThresholds.entrySet()) {
+                properties.add(new Pair<>(Text.format("vespa.matching.filter_threshold.%s", fieldAndThreshold.getKey()), String.valueOf(fieldAndThreshold.getValue())));
+            }
+            for (var fieldAndElementGap : activeElementGapsPerField.entrySet()) {
+                properties.add(new Pair<>(Text.format("vespa.matching.element_gap.%s", fieldAndElementGap.getKey()), fieldAndElementGap.getValue().toString()));
             }
             if (matchPhaseSettings != null) {
                 properties.add(new Pair<>("vespa.matchphase.degradation.attribute", matchPhaseSettings.getAttribute()));
                 properties.add(new Pair<>("vespa.matchphase.degradation.ascendingorder", matchPhaseSettings.getAscending() + ""));
-                properties.add(new Pair<>("vespa.matchphase.degradation.maxhits", matchPhaseSettings.getMaxHits() + ""));
+                properties.add(new Pair<>("vespa.matchphase.degradation.maxhits", matchPhaseSettings.getMaxHits().orElse(0L) + ""));
                 properties.add(new Pair<>("vespa.matchphase.degradation.maxfiltercoverage", matchPhaseSettings.getMaxFilterCoverage() + ""));
                 properties.add(new Pair<>("vespa.matchphase.degradation.samplepercentage", matchPhaseSettings.getEvaluationPoint() + ""));
                 properties.add(new Pair<>("vespa.matchphase.degradation.postfiltermultiplier", matchPhaseSettings.getPrePostFilterTippingPoint() + ""));
@@ -497,14 +551,15 @@ public class RawRankProfile {
                 properties.add(new Pair<>("vespa.matchphase.diversity.cutoff.factor", String.valueOf(diversitySettings.getCutoffFactor())));
                 properties.add(new Pair<>("vespa.matchphase.diversity.cutoff.strategy", String.valueOf(diversitySettings.getCutoffStrategy())));
             }
-            if (rerankCount > -1) {
-                properties.add(new Pair<>("vespa.hitcollector.heapsize", rerankCount + ""));
-            }
+            rerankCount.ifPresent(count -> properties.add(new Pair<>("vespa.hitcollector.heapsize", count + "")));
             if (keepRankCount > -1) {
                 properties.add(new Pair<>("vespa.hitcollector.arraysize", keepRankCount + ""));
             }
             if (globalPhaseRerankCount > -1) {
                 properties.add(new Pair<>("vespa.globalphase.rerankcount", globalPhaseRerankCount + ""));
+            }
+            if (globalPhaseRankScoreDropLimit > -Double.MAX_VALUE) {
+                properties.add(new Pair<>("vespa.globalphase.rankscoredroplimit", globalPhaseRankScoreDropLimit + ""));
             }
             if (rankScoreDropLimit > -Double.MAX_VALUE) {
                 properties.add(new Pair<>("vespa.hitcollector.rankscoredroplimit", rankScoreDropLimit + ""));

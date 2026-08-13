@@ -3,14 +3,22 @@ package com.yahoo.vespa.indexinglanguage.expressions;
 
 import com.yahoo.document.DataType;
 import com.yahoo.document.Field;
-import com.yahoo.document.datatypes.*;
+import com.yahoo.document.datatypes.Array;
+import com.yahoo.document.datatypes.FieldValue;
+import com.yahoo.document.datatypes.IntegerFieldValue;
+import com.yahoo.document.datatypes.StringFieldValue;
+import com.yahoo.document.datatypes.WeightedSet;
 import com.yahoo.vespa.indexinglanguage.SimpleTestAdapter;
 import org.junit.Test;
 
-
 import java.util.List;
 
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotEquals;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertSame;
+import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 /**
  * @author Simon Thoresen Hult
@@ -44,23 +52,15 @@ public class CatTestCase {
     }
 
     @Test
-    public void requireThatExpressionCanBeVerified() {
+    public void expressionCanBeVerified() {
         assertVerify(new ConstantExpression(new StringFieldValue("foo")),
                      new ConstantExpression(new StringFieldValue("bar")), null);
-        assertVerify(new SimpleExpression(DataType.STRING),
-                     new SimpleExpression(DataType.STRING), DataType.STRING);
-        assertVerifyThrows(new SimpleExpression().setCreatedOutput(null),
-                           new SimpleExpression().setCreatedOutput(DataType.STRING), null,
-                           "In SimpleExpression: Attempting to concatenate a null value");
-        assertVerifyThrows(new SimpleExpression(DataType.STRING),
-                           new SimpleExpression(DataType.INT), null,
-                           "Operands require conflicting input types, string vs int");
         assertVerifyThrows(new SimpleExpression(DataType.STRING),
                            new SimpleExpression(DataType.STRING), null,
-                           "Expected string input, but no input is specified");
+                           "Invalid expression 'SimpleExpression': Expected string input, but no input is provided");
         assertVerifyThrows(new SimpleExpression(DataType.STRING),
                            new SimpleExpression(DataType.STRING), DataType.INT,
-                           "Expected string input, got int");
+                           "Invalid expression 'SimpleExpression': Expected string input, got int");
     }
 
     @Test
@@ -80,30 +80,23 @@ public class CatTestCase {
     }
 
     @Test
-    public void requireThatPrimitiveVerificationWorks() {
-        assertEquals(DataType.STRING, evaluate(DataType.getArray(DataType.STRING), DataType.STRING));
-        assertEquals(DataType.STRING, evaluate(DataType.STRING, DataType.getArray(DataType.STRING)));
-        assertEquals(DataType.STRING, evaluate(DataType.getWeightedSet(DataType.STRING), DataType.STRING));
-        assertEquals(DataType.STRING, evaluate(DataType.STRING, DataType.getWeightedSet(DataType.STRING)));
+    public void inputValueIsAvailableToAllInnerExpressions() {
+        var expression = new StatementExpression(new ConstantExpression(new StringFieldValue("foo")),
+                                                 new CatExpression(new ThisExpression(),
+                                                                   new ConstantExpression(new StringFieldValue("bar")),
+                                                                   new ThisExpression()));
+        expression.resolve(new SimpleTestAdapter());
+        assertEquals(new StringFieldValue("foobarfoo"), expression.execute());
     }
 
     @Test
-    public void requireThatInputValueIsAvailableToAllInnerExpressions() {
-        assertEquals(new StringFieldValue("foobarfoo"),
-                     new StatementExpression(new ConstantExpression(new StringFieldValue("foo")),
-                                             new CatExpression(new ThisExpression(),
-                                                               new ConstantExpression(new StringFieldValue("bar")),
-                                                               new ThisExpression())).execute());
-    }
-
-    @Test
-    public void requiredThatRequiredInputTypeAllowsNull() {
+    public void requiredInputTypeAllowsNull() {
          assertVerify(new ConstantExpression(new StringFieldValue("foo")), new TrimExpression(), DataType.STRING);
          assertVerify(new TrimExpression(), new ConstantExpression(new StringFieldValue("foo")), DataType.STRING);
     }
 
     @Test
-    public void requireThatArraysAreConcatenated() {
+    public void arraysAreConcatenated() {
         Array<StringFieldValue> lhs = new Array<>(DataType.getArray(DataType.STRING));
         lhs.add(new StringFieldValue("6"));
         Array<StringFieldValue> rhs = new Array<>(DataType.getArray(DataType.STRING));
@@ -169,22 +162,6 @@ public class CatTestCase {
     }
 
     @Test
-    public void requireThatCollectionTypesMustBeCompatible() {
-        assertEquals(DataType.getArray(DataType.STRING), evaluate(DataType.getArray(DataType.STRING),
-                                                                  DataType.getArray(DataType.STRING)));
-        assertEquals(DataType.STRING, evaluate(DataType.getArray(DataType.STRING), DataType.getArray(DataType.INT)));
-        assertEquals(DataType.STRING,
-                     evaluate(DataType.getArray(DataType.STRING), DataType.getWeightedSet(DataType.STRING)));
-
-        assertEquals(DataType.getWeightedSet(DataType.STRING), evaluate(DataType.getWeightedSet(DataType.STRING),
-                                                                        DataType.getWeightedSet(DataType.STRING)));
-        assertEquals(DataType.STRING,
-                     evaluate(DataType.getWeightedSet(DataType.STRING), DataType.getWeightedSet(DataType.INT)));
-        assertEquals(DataType.STRING,
-                     evaluate(DataType.getWeightedSet(DataType.STRING), DataType.getArray(DataType.STRING)));
-    }
-
-    @Test
     public void requireThatCollectionValuesMustBeCompatible() {
         {
             Array<StringFieldValue> arrA = new Array<>(DataType.getArray(DataType.STRING));
@@ -213,13 +190,16 @@ public class CatTestCase {
     }
 
     private static void assertVerify(Expression expA, Expression expB, DataType val) {
-        new CatExpression(expA, expB).verify(val);
+        new CatExpression(expA, expB).resolve(new TypeContext(new SimpleTestAdapter()));
     }
 
     private static void assertVerifyThrows(Expression expA, Expression expB, DataType val, String expectedException) {
         try {
-            new CatExpression(expA, expB).verify(val);
-            fail();
+            var expression = new CatExpression(expA, expB);
+            var context = new TypeContext(new SimpleTestAdapter());
+            expression.setInputType(val, context);
+            expression.resolve(context);
+            fail("Expected exception");
         } catch (VerificationException e) {
             if (!e.getMessage().startsWith(expectedException)) {
                 assertEquals(expectedException, e.getMessage());
@@ -232,18 +212,15 @@ public class CatTestCase {
     }
 
     private static FieldValue evaluate(DataType typeA, FieldValue valA, DataType typeB, FieldValue valB) {
-        ExecutionContext ctx = new ExecutionContext(new SimpleTestAdapter(new Field("a", typeA),
-                                                                          new Field("b", typeB)));
-        ctx.setFieldValue("a", valA, null);
-        ctx.setFieldValue("b", valB, null);
-        new CatExpression(new InputExpression("a"), new InputExpression("b")).execute(ctx);
-        return ctx.getCurrentValue();
+        var adapter = new SimpleTestAdapter(new Field("a", typeA),
+                                            new Field("b", typeB));
+        var expression = new CatExpression(new InputExpression("a"), new InputExpression("b"));
+        expression.setInputType(null, new TypeContext(adapter));
+        ExecutionContext context = new ExecutionContext(adapter);
+        context.setFieldValue("a", valA, null);
+        context.setFieldValue("b", valB, null);
+        expression.execute(context);
+        return context.getCurrentValue();
     }
 
-    private static DataType evaluate(DataType typeA, DataType typeB) {
-        SimpleTestAdapter adapter = new SimpleTestAdapter(new Field("a", typeA), new Field("b", typeB));
-        VerificationContext ctx = new VerificationContext(adapter);
-        new CatExpression(new InputExpression("a"), new InputExpression("b")).verify(ctx);
-        return ctx.getCurrentType();
-    }
 }

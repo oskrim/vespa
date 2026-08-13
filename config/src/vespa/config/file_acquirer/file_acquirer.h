@@ -14,22 +14,22 @@ namespace config {
  * references to concrete paths.
  **/
 struct FileAcquirer {
-    virtual std::string wait_for(const std::string &file_ref, double timeout_s) = 0;
-    virtual ~FileAcquirer() {}
+    virtual std::string wait_for(const std::string& file_ref, double timeout_s) = 0;
+    virtual ~FileAcquirer() = default;
 };
 
 /**
  * File acquirer implementation using rpc to talk to an external rpc
  * server to wait for files to be ready.
  **/
-class RpcFileAcquirer : public FileAcquirer
-{
+class RpcFileAcquirer : public FileAcquirer {
 private:
-    std::unique_ptr<FRT_Supervisor>   _orb;
-    std::string                  _spec;
+    std::unique_ptr<FRT_Supervisor> _orb;
+    std::string                     _spec;
+
 public:
-    RpcFileAcquirer(FNET_Transport & transport, const std::string &spec);
-    std::string wait_for(const std::string &file_ref, double timeout_s) override;
+    RpcFileAcquirer(FNET_Transport& transport, const std::string& spec);
+    std::string wait_for(const std::string& file_ref, double timeout_s) override;
     ~RpcFileAcquirer() override;
 };
 

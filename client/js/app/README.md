@@ -1,9 +1,9 @@
 <!-- Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root. -->
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://vespa.ai/assets/vespa-ai-logo-heather.svg">
-  <source media="(prefers-color-scheme: light)" srcset="https://vespa.ai/assets/vespa-ai-logo-rock.svg">
-  <img alt="#Vespa" width="200" src="https://vespa.ai/assets/vespa-ai-logo-rock.svg" style="margin-bottom: 25px;">
+  <source media="(prefers-color-scheme: dark)" srcset="https://assets.vespa.ai/logos/Vespa-logo-green-RGB.svg">
+  <source media="(prefers-color-scheme: light)" srcset="https://assets.vespa.ai/logos/Vespa-logo-dark-RGB.svg">
+  <img alt="#Vespa" width="200" src="https://assets.vespa.ai/logos/Vespa-logo-dark-RGB.svg" style="margin-bottom: 25px;">
 </picture>
 
 # Vespa client
@@ -12,13 +12,13 @@ This app contains the **Query Builder** and the **Trace Visualizer**.
 
 Install and start:
 
-    $ nvm install --lts node  # in case the installed node.js is too old
-    $ yarn install
-    $ yarn dev                # then open link, like http://127.0.0.1:3000/
+    nvm install --lts node  # in case the installed node.js is too old
+    yarn install
+    yarn dev                # then open link, like http://127.0.0.1:3000/
 
 Alternatively, use Docker to start it without installing node:
 
-    $ docker run -v `pwd`:/w -w /w --publish 3000:3000 node:18 sh -c 'yarn install && yarn dev --host'
+    docker run -v `pwd`:/w -w /w --publish 3000:3000 node:lts sh -c 'yarn install && yarn dev --host'
 
 When started, open [http://127.0.0.1:3000/](http://127.0.0.1:3000/).
 
@@ -44,8 +44,8 @@ To the query-serving container, add an `http` element in _services.xml_ like:
             <filtering strict-mode="false">
                 <request-chain id="request-chain">
                     <filter id="com.yahoo.jdisc.http.filter.security.cors.CorsPreflightRequestFilter"
-                            bundle="jdisc-security-filters">
-                        <config name="jdisc.http.filter.security.cors.cors-filter">
+                            bundle="container-disc">
+                        <config name="jdisc.http.filter.security.cors.config.cors-filter">
                             <allowedUrls>
                                 <item>*</item>
                             </allowedUrls>
@@ -56,8 +56,8 @@ To the query-serving container, add an `http` element in _services.xml_ like:
 
                 <response-chain id="response-chain">
                     <filter id="com.yahoo.jdisc.http.filter.security.cors.CorsResponseFilter"
-                            bundle="jdisc-security-filters">
-                        <config name="jdisc.http.filter.security.cors.cors-filter">
+                            bundle="container-disc">
+                        <config name="jdisc.http.filter.security.cors.config.cors-filter">
                             <allowedUrls>
                                 <item>*</item>
                             </allowedUrls>
@@ -91,7 +91,7 @@ To use the visualizer,
 paste the Vespa trace into the text box
 and press the button to convert the trace to a format supported by Jaeger and download it.
 Only traces using _trace.timestamps=true_ **and** _traceLevel_ between 3 and 5 (inclusive) will work correctly -
-see [query tracing](https://docs.vespa.ai/en/query-api.html#query-tracing):
+see [query tracing](https://docs.vespa.ai/en/api/query.html#query-tracing):
 
 ![Trace Converter](img/TraceConverter.png)
 

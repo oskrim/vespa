@@ -16,7 +16,6 @@ import ai.vespa.metrics.StorageMetrics;
 import java.util.EnumSet;
 import java.util.List;
 
-import static ai.vespa.metrics.Suffix.average;
 import static ai.vespa.metrics.Suffix.count;
 import static ai.vespa.metrics.Suffix.max;
 import static ai.vespa.metrics.Suffix.min;
@@ -57,12 +56,15 @@ public class Vespa9DefaultMetricSet {
 
     private static MetricSet getContainerMetrics() {
         return new MetricSet.Builder("default-container")
-                .metric(ContainerMetrics.JDISC_GC_MS, EnumSet.of(max, average))
+                .metric(MicrometerMetrics.JVM_GC_OVERHEAD, EnumSet.of(sum, count, max))
                 .metric(ContainerMetrics.MEM_HEAP_FREE.average())
+                .metric(ContainerMetrics.JDISC_HTTP_LATENCY, EnumSet.of(sum, count, max, ninety_five_percentile, ninety_nine_percentile))
                 .metric(ContainerMetrics.FEED_LATENCY, EnumSet.of(sum, count))
+                .metric(ContainerMetrics.HANDLED_LATENCY, EnumSet.of(sum, count, max))
                 .metric(ContainerMetrics.CPU.baseName())
                 .metric(ContainerMetrics.JDISC_THREAD_POOL_SIZE.max())
                 .metric(ContainerMetrics.JDISC_THREAD_POOL_ACTIVE_THREADS, EnumSet.of(sum, count, min, max))
+                .metric(ContainerMetrics.JDISC_THREAD_POOL_MAX_ALLOWED_SIZE.max())
                 .metric(ContainerMetrics.JDISC_THREAD_POOL_WORK_QUEUE_CAPACITY.max())
                 .metric(ContainerMetrics.JDISC_THREAD_POOL_WORK_QUEUE_SIZE, EnumSet.of(sum, count, min, max))
                 .metric(ContainerMetrics.SERVER_ACTIVE_THREADS.average())
@@ -149,6 +151,10 @@ public class Vespa9DefaultMetricSet {
                 .metric(ClusterControllerMetrics.MAINTENANCE_COUNT.max())
                 .metric(ClusterControllerMetrics.UP_COUNT.max())
                 .metric(ClusterControllerMetrics.IS_MASTER.max())
+                .metric(ClusterControllerMetrics.STORED_DOCUMENT_COUNT.max())
+                .metric(ClusterControllerMetrics.STORED_DOCUMENT_BYTES.max())
+                .metric(ClusterControllerMetrics.CLUSTER_BUCKETS_OUT_OF_SYNC_RATIO.max())
+                .metric(ClusterControllerMetrics.REINDEXING_PROGRESS.max())
                 .metric(ClusterControllerMetrics.RESOURCE_USAGE_NODES_ABOVE_LIMIT.max())
                 .metric(ClusterControllerMetrics.RESOURCE_USAGE_MAX_MEMORY_UTILIZATION.max())
                 .metric(ClusterControllerMetrics.RESOURCE_USAGE_MAX_DISK_UTILIZATION.max())

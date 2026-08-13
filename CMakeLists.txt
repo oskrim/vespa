@@ -2,7 +2,7 @@
 # @author Vegard Sjonfjell
 # @author Eirik Nygaard
 # @author Arnstein Ressem
-cmake_minimum_required(VERSION 3.18 FATAL_ERROR)
+cmake_minimum_required(VERSION 3.20 FATAL_ERROR)
 
 include(functions.cmake)
 list(APPEND CMAKE_MODULE_PATH
@@ -14,7 +14,10 @@ include(default_build_settings.cmake)
 vespa_detect_build_platform()
 message("-- Vespa build platform is ${VESPA_OS_DISTRO} ${VESPA_OS_DISTRO_VERSION}")
 vespa_use_default_cxx_compiler()
-vespa_use_default_java_home()
+
+# Emit compile_commands.json so editors/LSP servers (e.g. clangd) can find
+# per-file compile flags and include paths.
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 project(vespa CXX C)
 vespa_use_default_vespa_unprivileged()
@@ -46,14 +49,12 @@ if (${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
     set(CMAKE_THREAD_LIBS_INIT "-lpthread")
 endif()
 
-# TODO: Move this to where it's actually needed
-find_package(JNI REQUIRED)
-
 find_package(GTest REQUIRED)
 
 find_package(Protobuf REQUIRED CONFIG)
 
 include(build_settings.cmake)
+include(cxx_settings.cmake)
 
 # Enable CTest unit testing
 enable_testing()
@@ -83,6 +84,7 @@ vespa_configure_exported_configversion()
 install(FILES
   functions.cmake
   build_settings.cmake
+  cxx_settings.cmake
   default_build_settings.cmake
   ${CMAKE_CURRENT_BINARY_DIR}/vespaConfig.cmake
   ${CMAKE_CURRENT_BINARY_DIR}/vespaConfigVersion.cmake
@@ -92,13 +94,13 @@ install(FILES
 
 vespa_install_data(valgrind-suppressions.txt etc/vespa)
 vespa_install_data(tsan-suppressions.txt etc/vespa)
+vespa_install_data(ubsan-suppressions.txt etc/vespa)
 
 # Include vespa config definitions in every target
 include_directories(BEFORE ${CMAKE_BINARY_DIR}/configdefinitions/src)
 
-add_subdirectory(application-model)
 add_subdirectory(client)
-add_subdirectory(cloud-tenant-cd)
+add_subdirectory(cloud/cloud-tenant-cd)
 add_subdirectory(clustercontroller-apps)
 add_subdirectory(clustercontroller-core)
 add_subdirectory(clustercontroller-reindexer)
@@ -116,10 +118,10 @@ add_subdirectory(configserver)
 add_subdirectory(configserver-flags)
 add_subdirectory(configutil)
 add_subdirectory(container-apache-http-client-bundle)
-add_subdirectory(container-core)
 add_subdirectory(container-disc)
 add_subdirectory(container-messagebus)
 add_subdirectory(container-onnxruntime)
+add_subdirectory(container-opentelemetry)
 add_subdirectory(container-llama)
 add_subdirectory(container-search)
 add_subdirectory(container-search-and-docproc)
@@ -138,9 +140,7 @@ add_subdirectory(fnet)
 add_subdirectory(fsa)
 add_subdirectory(hosted-zone-api)
 add_subdirectory(http-client)
-add_subdirectory(jdisc-cloud-aws)
 add_subdirectory(jdisc_core)
-add_subdirectory(jdisc-security-filters)
 add_subdirectory(jrt_test)
 add_subdirectory(linguistics)
 add_subdirectory(linguistics-components)
@@ -155,27 +155,23 @@ add_subdirectory(metrics)
 add_subdirectory(metrics-proxy)
 add_subdirectory(model-evaluation)
 add_subdirectory(model-integration)
-add_subdirectory(node-repository)
 add_subdirectory(opennlp-linguistics)
-add_subdirectory(orchestrator)
 add_subdirectory(persistence)
 add_subdirectory(predicate-search)
 add_subdirectory(searchcore)
 add_subdirectory(searchlib)
 add_subdirectory(searchsummary)
 add_subdirectory(security-utils)
-add_subdirectory(service-monitor)
 add_subdirectory(slobrok)
 add_subdirectory(standalone-container)
 add_subdirectory(storage)
 add_subdirectory(storageserver)
 add_subdirectory(streamingvisitors)
-add_subdirectory(tenant-cd-api)
+add_subdirectory(cloud/tenant-cd-api)
 add_subdirectory(vbench)
 add_subdirectory(vdslib)
 add_subdirectory(vespa-3party-bundles)
 add_subdirectory(vespa-3party-jars)
-add_subdirectory(vespa-athenz)
 add_subdirectory(vespabase)
 add_subdirectory(vespaclient)
 add_subdirectory(vespaclient-container-plugin)
@@ -187,8 +183,6 @@ add_subdirectory(vespajlib)
 add_subdirectory(vespalib)
 add_subdirectory(vespalog)
 add_subdirectory(vespamalloc)
-add_subdirectory(vespa-osgi-testrunner)
-add_subdirectory(vespa-testrunner-components)
 add_subdirectory(zkfacade)
 add_subdirectory(zookeeper-command-line-client)
 add_subdirectory(zookeeper-server)

@@ -5,8 +5,6 @@
 #include <memory>
 #include <string>
 
-namespace search { class MatchingElementsFields; }
-
 namespace search::docsummary {
 
 class DocsumFieldWriter;
@@ -14,8 +12,7 @@ class DocsumFieldWriter;
 /*
  * Factory interface class for creating docsum field writers.
  */
-class IDocsumFieldWriterFactory
-{
+class IDocsumFieldWriterFactory {
 public:
     virtual ~IDocsumFieldWriterFactory() = default;
     /**
@@ -23,8 +20,7 @@ public:
      */
     virtual std::unique_ptr<DocsumFieldWriter> create_docsum_field_writer(const std::string& field_name,
                                                                           const std::string& command,
-                                                                          const std::string& source,
-                                                                          std::shared_ptr<MatchingElementsFields> matching_elems_fields) = 0;
+                                                                          const std::string& source) = 0;
 };
 
-}
+} // namespace search::docsummary

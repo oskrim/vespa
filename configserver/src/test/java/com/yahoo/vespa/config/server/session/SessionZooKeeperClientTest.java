@@ -6,7 +6,10 @@ import com.yahoo.component.Version;
 import com.yahoo.config.FileReference;
 import com.yahoo.config.model.api.Quota;
 import com.yahoo.config.model.api.TenantSecretStore;
+import com.yahoo.config.model.api.TenantVault;
 import com.yahoo.config.provision.ApplicationId;
+import com.yahoo.config.provision.CloudResourceTags;
+import com.yahoo.config.provision.TelemetryExporterConfiguration;
 import com.yahoo.config.provision.TenantName;
 import com.yahoo.path.Path;
 import com.yahoo.text.Utf8;
@@ -20,6 +23,8 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 
+import static com.yahoo.config.provision.TelemetryExporterConfiguration.Auth;
+import static com.yahoo.config.provision.TelemetryExporterConfiguration.Exporter.ExporterType;
 import static com.yahoo.vespa.config.server.session.SessionData.APPLICATION_ID_PATH;
 import static com.yahoo.vespa.config.server.session.SessionData.SESSION_DATA_PATH;
 import static com.yahoo.vespa.config.server.zookeeper.ZKApplication.SESSIONSTATE_ZK_SUBPATH;
@@ -147,6 +152,20 @@ public class SessionZooKeeperClientTest {
     }
 
     @Test
+    public void tenant_vaults_are_written_and_parsed() {
+        var vaults = List.of(
+                new TenantVault("id1", "name1", "extId1",
+                                List.of(new TenantVault.Secret("sId1", "sName1"))),
+                new TenantVault("id2", "name2", "extId2",
+                                List.of(new TenantVault.Secret("sId2", "sName2"))));
+
+        var zkc = createSessionZKClient(4);
+        zkc.writeTenantVaults(vaults);
+        List<TenantVault> actual = zkc.readTenantVaults();
+        assertEquals(vaults, actual);
+    }
+
+    @Test
     public void require_tenant_secret_stores_written_and_parsed() {
         var secretStores = List.of(
                 new TenantSecretStore("name1", "awsId1", "role1"),
@@ -165,21 +184,60 @@ public class SessionZooKeeperClientTest {
         zkc.writeSessionData(new SessionData(ApplicationId.defaultId(),
                                              Optional.of(new FileReference("foo")),
                                              Version.fromString("8.195.1"),
+                                             Optional.empty(),
                                              Instant.now(),
                                              Optional.empty(),
                                              Optional.empty(),
                                              Optional.empty(),
                                              List.of(),
                                              List.of(),
-                                             Optional.empty(),
                                              List.of(),
-                                             ActivationTriggers.empty()));
+                                             Optional.empty(),
+                                             CloudResourceTags.empty(),
+                                             List.of(),
+                                             ActivationTriggers.empty(),
+                                             TelemetryExporterConfiguration.empty()));
         Path path = sessionPath(sessionId).append(SESSION_DATA_PATH);
         assertTrue(curator.exists(path));
         String data = Utf8.toString(curator.getData(path).get());
         assertTrue(data.contains("{\"applicationId\":\"default:default:default\",\"applicationPackageReference\":\"foo\",\"version\":\"8.195.1\",\"createTime\":"));
-        assertTrue(data.contains(",\"tenantSecretStores\":[],\"operatorCertificates\":[],\"dataplaneTokens\":[]," +
-                                 "\"activationTriggers\":{\"nodeRestarts\":[],\"reindexings\":[]}"));
+        assertTrue(data.contains(",\"tenantVaults\":[],\"tenantSecretStores\":[],\"operatorCertificates\":[],\"dataplaneTokens\":[]," +
+                                 "\"activationTriggers\":{\"nodeRestarts\":[],\"reindexings\":[],\"deferredReconfigurations\":[]}"));
+    }
+
+    @Test
+    public void require_that_telemetry_export_config_is_written_to_and_read_from_zk() {
+        int sessionId = 3;
+        SessionZooKeeperClient zkc = createSessionZKClient(sessionId);
+
+        TelemetryExporterConfiguration config = new TelemetryExporterConfiguration(List.of(
+                new TelemetryExporterConfiguration.Exporter("my-exporter", ExporterType.otlphttp,
+                                                            Optional.of("https://otel.example.com/v1"), null,
+                                                            Optional.of(Auth.bearerToken("my-vault", "my-token")),
+                                                            List.of("default"), List.of(TelemetryExporterConfiguration.Exporter.LogType.CONTAINER_LOGS))));
+
+        zkc.writeTelemetryExportConfig(config);
+        TelemetryExporterConfiguration read = zkc.readTelemetryExporterConfiguration();
+
+        assertEquals(config, read);
+        assertEquals(1, read.exporters().size());
+        TelemetryExporterConfiguration.Exporter exporter = read.exporters().get(0);
+        assertEquals("my-exporter", exporter.id());
+        assertEquals(ExporterType.otlphttp, exporter.type());
+        assertEquals("https://otel.example.com/v1", exporter.endpoint().get());
+        assertTrue(exporter.auth().isPresent());
+        assertEquals("bearer", exporter.auth().get().type());
+        assertEquals("my-vault", exporter.auth().get().vault());
+        assertEquals("my-token", exporter.auth().get().secretName().get());
+        assertEquals(List.of("default"), exporter.metricSets());
+        assertEquals(List.of(TelemetryExporterConfiguration.Exporter.LogType.CONTAINER_LOGS), exporter.logTypes());
+    }
+
+    @Test
+    public void require_that_empty_telemetry_export_config_is_returned_when_not_written() {
+        int sessionId = 4;
+        SessionZooKeeperClient zkc = createSessionZKClient(sessionId);
+        assertEquals(TelemetryExporterConfiguration.empty(), zkc.readTelemetryExporterConfiguration());
     }
 
     private void assertApplicationIdParse(long sessionId, String idString, String expectedIdString) {

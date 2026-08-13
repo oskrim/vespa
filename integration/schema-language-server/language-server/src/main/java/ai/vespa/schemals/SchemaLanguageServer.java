@@ -10,6 +10,7 @@ import java.io.InputStreamReader;
 import java.io.PrintStream;
 import java.net.URL;
 import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -63,6 +64,7 @@ public class SchemaLanguageServer implements LanguageServer, LanguageClientAware
     private SchemaIndex schemaIndex;
     private SchemaDiagnosticsHandler schemaDiagnosticsHandler;
     private SchemaMessageHandler schemaMessageHandler;
+    private SchemaProgressHandler schemaProgressHandler;
 
     // Error code starts at 1 and turns into 0 if we receive shutdown request.
     private int errorCode = 1;
@@ -82,11 +84,17 @@ public class SchemaLanguageServer implements LanguageServer, LanguageClientAware
         this.logger = new ClientLogger(schemaMessageHandler);
         this.schemaIndex = new SchemaIndex(logger);
         this.schemaDiagnosticsHandler = new SchemaDiagnosticsHandler();
-        this.schemaDocumentScheduler = new SchemaDocumentScheduler(logger, schemaDiagnosticsHandler, schemaIndex, schemaMessageHandler);
+        this.schemaProgressHandler = new SchemaProgressHandler();
+        this.schemaDocumentScheduler = new SchemaDocumentScheduler(logger, schemaDiagnosticsHandler, schemaIndex, schemaMessageHandler, schemaProgressHandler);
 
         this.textDocumentService = new SchemaTextDocumentService(this.logger, schemaDocumentScheduler, schemaIndex, schemaMessageHandler);
         this.workspaceService = new SchemaWorkspaceService(this.logger, schemaDocumentScheduler, schemaIndex, schemaMessageHandler);
-        serverPath = Paths.get(SchemaLanguageServer.class.getProtectionDomain().getCodeSource().getLocation().getPath()).getParent();
+        try {
+            serverPath = Paths.get(new File(SchemaLanguageServer.class.getProtectionDomain().getCodeSource().getLocation().toURI()).getCanonicalPath()).getParent();
+        } catch(Exception ex) {
+            // This is the old way which crashed on Windows, but works on Unix systems.
+            serverPath = Paths.get(SchemaLanguageServer.class.getProtectionDomain().getCodeSource().getLocation().getPath()).getParent();
+        }
     }    
 
     @Override
@@ -108,6 +116,8 @@ public class SchemaLanguageServer implements LanguageServer, LanguageClientAware
         initializeResult.getCapabilities().setDocumentSymbolProvider(true);
         initializeResult.getCapabilities().setExecuteCommandProvider(new ExecuteCommandOptions(CommandRegistry.getSupportedCommandList()));
         initializeResult.getCapabilities().setCodeLensProvider(new CodeLensOptions());
+        initializeResult.getCapabilities().setDocumentFormattingProvider(true);
+        initializeResult.getCapabilities().setDocumentRangeFormattingProvider(true);
 
         var options = new CodeActionOptions(List.of( 
             CodeActionKind.QuickFix,
@@ -163,6 +173,7 @@ public class SchemaLanguageServer implements LanguageServer, LanguageClientAware
         this.client = languageClient;
         this.schemaDiagnosticsHandler.connectClient(languageClient);
         this.schemaMessageHandler.connectClient(languageClient);
+        this.schemaProgressHandler.connectClient(languageClient);
         this.client.logMessage(new MessageParams(MessageType.Log, "Language Server successfully connected to client."));
 
         if (serverPath == null) return;
@@ -174,9 +185,9 @@ public class SchemaLanguageServer implements LanguageServer, LanguageClientAware
             setupDocumentation(docPath);
         } catch (IOException ioex) {
             this.logger.error("Failed to set up documentation. Error: " + ioex.getMessage());
-            try (ByteArrayOutputStream os = new ByteArrayOutputStream(); PrintStream ps = new PrintStream(os)) {
+            try (ByteArrayOutputStream os = new ByteArrayOutputStream(); PrintStream ps = new PrintStream(os, true, StandardCharsets.UTF_8)) {
                 ioex.printStackTrace(ps);
-                logger.error(os.toString());
+                logger.error(os.toString(StandardCharsets.UTF_8));
             } catch (IOException bruh) {
                 logger.error("Error inside error " + bruh.getMessage());
             }
@@ -219,6 +230,13 @@ public class SchemaLanguageServer implements LanguageServer, LanguageClientAware
     }
 
     /**
+     * Assumes that serverPath is not null.
+     */
+    public static Path getDefaultDocumentationPath() {
+        return serverPath.resolve("hover");
+    }
+
+    /**
      * Assumes documentation is loaded if documentationPath/schema contains .md files.
      * If documentation is not loaded, unpacks markdown files from the current jar.
      */
@@ -254,12 +272,16 @@ public class SchemaLanguageServer implements LanguageServer, LanguageClientAware
             while (entries.hasMoreElements()) {
                 JarEntry entry = entries.nextElement();
                 if (!entry.isDirectory() && entry.getName().startsWith(documentationPath.getFileName().toString())) {
-                    Path destination = documentationPath.getParent().resolve(entry.getName());
+                    Path extractionDir = documentationPath.getParent();
+                    Path destination = extractionDir.resolve(entry.getName()).normalize();
+                    if (!destination.startsWith(extractionDir)) {
+                        throw new IOException("Zip entry is outside of the target dir: " + entry.getName());
+                    }
                     Files.createDirectories(destination.getParent());
                     try (InputStream inputStream = Thread.currentThread().getContextClassLoader().getResourceAsStream(entry.getName())) {
-                        BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream));
+                        BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream, StandardCharsets.UTF_8));
                         String content = reader.lines().collect(Collectors.joining(System.lineSeparator()));
-                        Files.write(destination, content.getBytes(), StandardOpenOption.CREATE);
+                        Files.write(destination, content.getBytes(StandardCharsets.UTF_8), StandardOpenOption.CREATE);
                     }
                 }
             }

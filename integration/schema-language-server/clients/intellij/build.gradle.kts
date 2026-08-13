@@ -1,17 +1,27 @@
 plugins {
   id("java")
   id("org.jetbrains.kotlin.jvm") version "1.9.24"
-  id("org.jetbrains.intellij.platform") version "2.1.0"
+  id("org.jetbrains.intellij.platform") version "2.13.0"
 }
 
 group = "ai.vespa.schemals"
 version = File("VERSION").inputStream().readBytes().toString(Charsets.UTF_8).trim()
+val changeNotesTxt = File("../../resources/CHANGENOTES.txt").inputStream().readBytes().toString(Charsets.UTF_8)
 val JAVA_VERSION = "17"
 
 repositories {
   mavenCentral()
 
   mavenLocal()
+
+  maven {
+    url = uri("https://repo.eclipse.org/content/repositories/lemminx")
+    metadataSources {
+      mavenPom()
+      artifact()
+    }
+  }
+
   maven {
     url = uri("file://${System.getProperty("user.home")}/.m2/repository")
     metadataSources {
@@ -32,12 +42,18 @@ dependencies {
   implementation("com.yahoo.vespa:config-model-api:8-SNAPSHOT")
   implementation("org.junit.jupiter:junit-jupiter-api:5.8.2")
   implementation("org.junit.jupiter:junit-jupiter-engine:5.8.2")
-  implementation("org.jsoup:jsoup:1.17.2")
+  implementation("org.jsoup:jsoup:1.23.1")
   implementation("com.vladsch.flexmark:flexmark-html2md-converter:0.64.8")
+
+  // Note: its quite important we ignore lsp4j, as the classes would collide
+  //       with the lsp4ij plugins classes.
+  implementation("org.eclipse.lemminx:org.eclipse.lemminx:0.31.1") {
+    exclude(group = "org.eclipse.lsp4j")
+    exclude(group = "com.google.code.gson")
+  }
 
   intellijPlatform {
     intellijIdeaCommunity("2024.2")
-    instrumentationTools()
     plugin("com.redhat.devtools.lsp4ij:0.7.0")
   }
 }
@@ -68,14 +84,16 @@ tasks {
   }
 
   prepareSandbox {
-    val fromPath = "../../language-server/target/schema-language-server-jar-with-dependencies.jar"
+    val fromPathSchema = "../../language-server/target/schema-language-server-jar-with-dependencies.jar"
+    val fromPathLemminx = "../../lemminx-vespa/target/lemminx-vespa-jar-with-dependencies.jar"
     val toPath = pluginDirectory.get()
 
     // see: https://docs.gradle.org/8.7/userguide/configuration_cache.html#config_cache:requirements:disallowed_types
     val injected = project.objects.newInstance<InjectFileSystem>()
     doLast {
       injected.fs.copy {
-        from(fromPath)
+        from(fromPathSchema)
+        from(fromPathLemminx)
         into(toPath)
       }
     }
@@ -84,6 +102,19 @@ tasks {
   patchPluginXml {
     sinceBuild.set("232")
     untilBuild.set(provider { null })
+
+    // Split changeNotesTxt into lines and wrap each line in <li></li>
+    changeNotes.set(
+      buildString {
+        append("<ul>")
+        changeNotesTxt
+          .lineSequence()
+          .filter { it.isNotBlank() }
+          .map { it.trim().removePrefix("-").trim() }
+          .forEach { append("<li>$it</li>") }
+        append("</ul>")
+      }
+    )
   }
 
   signPlugin {

@@ -12,14 +12,14 @@ class Reply;
  * to handle incoming replies received from either an
  * IntermediateSession or a SourceSession.
  **/
-class IReplyHandler
-{
+class IReplyHandler {
 protected:
     IReplyHandler() = default;
+
 public:
-    IReplyHandler(const IReplyHandler &) = delete;
-    IReplyHandler & operator = (const IReplyHandler &) = delete;
-    virtual ~IReplyHandler() {}
+    IReplyHandler(const IReplyHandler&) = delete;
+    IReplyHandler& operator=(const IReplyHandler&) = delete;
+    virtual ~IReplyHandler() = default;
 
     /**
      * This method is invoked by messagebus to deliver a Reply.
@@ -30,4 +30,3 @@ public:
 };
 
 } // namespace mbus
-

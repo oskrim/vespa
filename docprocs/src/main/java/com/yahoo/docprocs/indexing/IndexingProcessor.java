@@ -1,8 +1,6 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.docprocs.indexing;
 
-import java.util.ArrayList;
-import java.util.List;
 import com.yahoo.component.annotation.Inject;
 import com.yahoo.component.chain.dependencies.After;
 import com.yahoo.component.chain.dependencies.Before;
@@ -21,13 +19,24 @@ import com.yahoo.document.serialization.DocumentSerializer;
 import com.yahoo.document.serialization.DocumentSerializerFactory;
 import com.yahoo.io.GrowableByteBuffer;
 import com.yahoo.language.Linguistics;
+import com.yahoo.language.process.Chunker;
 import com.yahoo.language.process.Embedder;
+import com.yahoo.language.process.FieldGenerator;
 import com.yahoo.language.provider.DefaultEmbedderProvider;
+import com.yahoo.language.provider.DefaultGeneratorProvider;
+import com.yahoo.metrics.simple.MetricReceiver;
+import com.yahoo.text.Text;
 import com.yahoo.vespa.configdefinition.IlscriptsConfig;
-import com.yahoo.vespa.indexinglanguage.AdapterFactory;
-import com.yahoo.vespa.indexinglanguage.SimpleAdapterFactory;
+import com.yahoo.vespa.indexinglanguage.FieldValuesFactory;
 import com.yahoo.vespa.indexinglanguage.expressions.Expression;
+import com.yahoo.vespa.indexinglanguage.expressions.InvalidInputException;
+import com.yahoo.vespa.indexinglanguage.expressions.OverloadException;
+import com.yahoo.vespa.indexinglanguage.expressions.TimeoutException;
+import com.yahoo.yolean.Exceptions;
 
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
@@ -43,14 +52,17 @@ public class IndexingProcessor extends DocumentProcessor {
     public final static String INDEXING_START = "indexingStart";
     public final static String INDEXING_END = "indexingEnd";
 
-    private final DocumentTypeManager docTypeMgr;
-    private final ScriptManager scriptMgr;
-    private final AdapterFactory adapterFactory;
+    private final DocumentTypeManager documentTypeManager;
+    private final ScriptManager scriptManager;
+    private final FieldValuesFactory fieldValuesFactory;
 
-    private class ExpressionSelector extends SimpleAdapterFactory.SelectExpression {
+    private class ExpressionSelector extends FieldValuesFactory.SelectExpression {
         @Override
         public Expression selectExpression(DocumentType documentType, String fieldName) {
-            return scriptMgr.getScript(documentType, fieldName).getExpression();
+            DocumentScript script = scriptManager.getScript(documentType, fieldName);
+            if (script == null)
+                throw new IllegalArgumentException("No indexing statement taking only '" + fieldName + "' as input");
+            return scriptManager.getScript(documentType, fieldName).getExpression();
         }
     }
 
@@ -58,28 +70,71 @@ public class IndexingProcessor extends DocumentProcessor {
     public IndexingProcessor(DocumentTypeManager documentTypeManager,
                              IlscriptsConfig ilscriptsConfig,
                              Linguistics linguistics,
-                             ComponentRegistry<Embedder> embedders) {
-        docTypeMgr = documentTypeManager;
-        scriptMgr = new ScriptManager(docTypeMgr, ilscriptsConfig, linguistics, toMap(embedders));
-        adapterFactory = new SimpleAdapterFactory(new ExpressionSelector());
+                             ComponentRegistry<Chunker> chunkers,
+                             ComponentRegistry<Embedder> embedders,
+                             ComponentRegistry<FieldGenerator> generators,
+                             MetricReceiver metricReceiver) {
+        this(documentTypeManager,
+             new ScriptManager(documentTypeManager,
+                               ilscriptsConfig,
+                               linguistics,
+                               toMap(chunkers, null), // No failing default since we add pure Java default components
+                               toMap(embedders, DefaultEmbedderProvider.class),
+                               toMap(generators, DefaultGeneratorProvider.class),
+                               metricReceiver
+                )
+        );
+    }
+
+    public IndexingProcessor(DocumentTypeManager documentTypeManager,
+                             ScriptManager scriptManager) {
+        this.documentTypeManager = documentTypeManager;
+        this.scriptManager = scriptManager;
+        fieldValuesFactory = new FieldValuesFactory(new ExpressionSelector());
     }
 
     @Override
     public Progress process(Processing proc) {
         if (proc.getDocumentOperations().isEmpty()) return Progress.DONE;
 
+        Instant deadline = null;
+        var timeLeft = proc.timeLeft();
+        if (timeLeft != Processing.NO_TIMEOUT) {
+            deadline = Instant.now().plus(timeLeft);
+        }
+
         List<DocumentOperation> out = new ArrayList<>(proc.getDocumentOperations().size());
-        for (DocumentOperation documentOperation : proc.getDocumentOperations()) {
-            if (documentOperation instanceof DocumentPut) {
-                processDocument((DocumentPut)documentOperation, out);
-            } else if (documentOperation instanceof DocumentUpdate) {
-                processUpdate((DocumentUpdate)documentOperation, out);
-            } else if (documentOperation instanceof DocumentRemove) {
-                processRemove((DocumentRemove)documentOperation, out);
-            } else if (documentOperation != null) {
-                throw new IllegalArgumentException("Document class " + documentOperation.getClass().getName() + " not supported.");
-            } else {
-                throw new IllegalArgumentException("Expected document, got null.");
+        for (var op : proc.getDocumentOperations()) {
+            try {
+                if (op instanceof DocumentPut dp) {
+                    processDocument(dp, out, deadline);
+                } else if (op instanceof DocumentUpdate du) {
+                    processUpdate(du, out, deadline);
+                } else if (op instanceof DocumentRemove dr) {
+                    processRemove(dr, out);
+                } else if (op != null) {
+                    throw new IllegalArgumentException("Document class " + op.getClass().getName() + " not supported.");
+                } else {
+                    throw new IllegalArgumentException("Expected document, got null.");
+                }
+            } catch (InvalidInputException e) {
+                String message = Exceptions.toMessageString(e);
+                return Progress.INVALID_INPUT.withReason(
+                        op.getId() != null
+                        ? Text.format("Operation on '%s' contains invalid input: %s", op.getId().toString(), message)
+                        : Text.format("Operation contains invalid input: %s", message));
+            } catch (OverloadException e) {
+                String message = Exceptions.toMessageString(e);
+                return Progress.OVERLOAD.withReason(
+                        op.getId() != null
+                        ? Text.format("Operation on '%s' rejected due to overload: %s", op.getId().toString(), message)
+                        : Text.format("Operation rejected due to overload: %s", message));
+            } catch (TimeoutException e) {
+                String message = Exceptions.toMessageString(e);
+                return Progress.TIMEOUT.withReason(
+                        op.getId() != null
+                        ? Text.format("Operation on '%s' timed out: %s", op.getId().toString(), message)
+                        : Text.format("Operation timed out: %s", message));
             }
         }
         proc.getDocumentOperations().clear();
@@ -88,17 +143,17 @@ public class IndexingProcessor extends DocumentProcessor {
     }
 
     DocumentTypeManager getDocumentTypeManager() {
-        return docTypeMgr;
+        return documentTypeManager;
     }
 
-    private void processDocument(DocumentPut input, List<DocumentOperation> out) {
+    private void processDocument(DocumentPut input, List<DocumentOperation> out, Instant deadline) {
         DocumentType hadType = input.getDocument().getDataType();
-        DocumentScript script = scriptMgr.getScript(hadType);
+        DocumentScript script = scriptManager.getScript(hadType);
         if (script == null) {
             out.add(input);
             return;
         }
-        DocumentType wantType = docTypeMgr.getDocumentType(hadType.getName());
+        DocumentType wantType = documentTypeManager.getDocumentType(hadType.getName());
         Document inputDocument = input.getDocument();
         if (hadType != wantType) {
             // this happens when you have a concrete document; we need to
@@ -108,21 +163,21 @@ public class IndexingProcessor extends DocumentProcessor {
             DocumentSerializer serializer = DocumentSerializerFactory.createHead(buffer);
             serializer.write(inputDocument);
             buffer.flip();
-            inputDocument = docTypeMgr.createDocument(buffer);
+            inputDocument = documentTypeManager.createDocument(buffer);
         }
-        Document output = script.execute(adapterFactory, inputDocument);
+        Document output = script.execute(fieldValuesFactory, inputDocument, isReindexingOperation(input), deadline);
         if (output == null) return;
 
         out.add(new DocumentPut(input, output));
     }
 
-    private void processUpdate(DocumentUpdate input, List<DocumentOperation> out) {
-        DocumentScript script = scriptMgr.getScript(input.getType());
+    private void processUpdate(DocumentUpdate input, List<DocumentOperation> out, Instant deadline) {
+        DocumentScript script = scriptManager.getScript(input.getType());
         if (script == null) {
             out.add(input);
             return;
         }
-        DocumentUpdate output = script.execute(adapterFactory, input);
+        DocumentUpdate output = script.execute(fieldValuesFactory, input, deadline);
         if (output == null) return;
         output.setCondition(input.getCondition());
         out.add(output);
@@ -132,14 +187,20 @@ public class IndexingProcessor extends DocumentProcessor {
         out.add(input);
     }
 
-    private Map<String, Embedder> toMap(ComponentRegistry<Embedder> embedders) {
-        var map = embedders.allComponentsById().entrySet().stream()
-                    .collect(Collectors.toMap(e -> e.getKey().stringValue(), Map.Entry::getValue));
-        if (map.size() > 1) {
-            map.remove(DefaultEmbedderProvider.class.getName());
+    private static <T> Map<String, T> toMap(ComponentRegistry<T> registry, Class<?> defaultProviderClass) {
+        var map = registry.allComponentsById().entrySet().stream()
+                .collect(Collectors.toMap(e -> e.getKey().stringValue(), Map.Entry::getValue));
+        if (map.size() > 1 && defaultProviderClass != null) {
+            map.remove(defaultProviderClass.getName());
             // Ideally, this should be handled by dependency injection, however for now this workaround is necessary.
         }
         return map;
+    }
+
+    private static boolean isReindexingOperation(DocumentPut op) {
+        // All reindexing operation will have a special expression value in the test and set condition.
+        // Below value must match the constant in storage/src/vespa/storage/common/reindexing_constants.cpp.
+        return op.getCondition().getSelection().startsWith("@@__vespa_internal_allow_through_bucket_lock");
     }
 
 }

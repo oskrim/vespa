@@ -3,7 +3,14 @@ package com.yahoo.vespa.indexinglanguage.expressions;
 
 import com.yahoo.document.DataType;
 import com.yahoo.document.Field;
-import com.yahoo.document.datatypes.*;
+import com.yahoo.document.datatypes.ByteFieldValue;
+import com.yahoo.document.datatypes.DoubleFieldValue;
+import com.yahoo.document.datatypes.FieldValue;
+import com.yahoo.document.datatypes.FloatFieldValue;
+import com.yahoo.document.datatypes.IntegerFieldValue;
+import com.yahoo.document.datatypes.LongFieldValue;
+import com.yahoo.document.datatypes.NumericFieldValue;
+import com.yahoo.document.datatypes.StringFieldValue;
 import com.yahoo.document.serialization.FieldReader;
 import com.yahoo.document.serialization.FieldWriter;
 import com.yahoo.document.serialization.XmlStream;
@@ -15,7 +22,11 @@ import java.util.List;
 import static com.yahoo.vespa.indexinglanguage.expressions.ExpressionAssert.assertVerify;
 import static com.yahoo.vespa.indexinglanguage.expressions.ExpressionAssert.assertVerifyThrows;
 import static com.yahoo.vespa.indexinglanguage.expressions.IfThenExpression.Comparator;
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertSame;
+import static org.junit.Assert.assertTrue;
 
 /**
  * @author Simon Thoresen Hult
@@ -37,33 +48,12 @@ public class IfThenTestCase {
     }
 
     @Test
-    public void requireThatRequiredInputTypeCompatibilityIsVerified() {
-        Expression exp = newRequiredInput(DataType.STRING, Comparator.EQ, DataType.STRING,
-                                          DataType.STRING, DataType.STRING);
-        assertVerify(DataType.STRING, exp, DataType.STRING);
-        assertVerifyThrows(null, exp, "Expected string input, but no input is specified");
-        assertVerifyThrows(DataType.INT, exp, "Expected string input, got int");
-        assertVerifyThrows(null, () -> newRequiredInput(DataType.INT, Comparator.EQ, DataType.STRING,
-                                                  DataType.STRING, DataType.STRING),
-                           "Operands require conflicting input types, int vs string");
-        assertVerifyThrows(null, () -> newRequiredInput(DataType.STRING, Comparator.EQ, DataType.INT,
-                                                  DataType.STRING, DataType.STRING),
-                           "Operands require conflicting input types, string vs int");
-        assertVerifyThrows(null, () -> newRequiredInput(DataType.STRING, Comparator.EQ, DataType.STRING,
-                                                  DataType.INT, DataType.STRING),
-                           "Operands require conflicting input types, string vs int");
-        assertVerifyThrows(null, () -> newRequiredInput(DataType.STRING, Comparator.EQ, DataType.STRING,
-                                                  DataType.STRING, DataType.INT),
-                           "Operands require conflicting input types, string vs int");
-    }
-
-    @Test
     public void requireThatExpressionCanBeVerified() {
         assertVerify(DataType.STRING, new FlattenExpression(), DataType.STRING);
-        assertVerifyThrows(null, new FlattenExpression(),
-                           "Expected string input, but no input is specified");
-        assertVerifyThrows(DataType.INT, new FlattenExpression(),
-                           "Expected string input, got int");
+        assertVerifyThrows("Invalid expression 'flatten': Expected string input, but no input is provided", null, new FlattenExpression()
+                          );
+        assertVerifyThrows("Invalid expression 'flatten': Expected string input, got int", DataType.INT, new FlattenExpression()
+                          );
     }
 
     @Test
@@ -114,7 +104,7 @@ public class IfThenTestCase {
 
     @Test
     public void requireThatAllChildrenSeeInputValue() {
-        FieldValueAdapter adapter = createTestAdapter();
+        FieldValues adapter = createTestAdapter();
         new StatementExpression(new ConstantExpression(new IntegerFieldValue(69)),
                                 new IfThenExpression(new AttributeExpression("lhs"),
                                                      Comparator.EQ,
@@ -237,18 +227,24 @@ public class IfThenTestCase {
     }
 
     @Test
-    public void testRequiredInputType() {
-        var ifExpression = new IfThenExpression(new InputExpression("field1"),
+    public void testInputOutputTypes() {
+        var ifExpression = new IfThenExpression(new InputExpression("int1"),
                                                 Comparator.EQ,
                                                 new ConstantExpression(new IntegerFieldValue(0)),
                                                 wrapLikeTheParser(new ConstantExpression(new StringFieldValue("true"))),
                                                 wrapLikeTheParser(new ConstantExpression(new StringFieldValue("false"))));
-        assertNull(ifExpression.requiredInputType());
-        assertEquals(DataType.STRING, ifExpression.createdOutputType());
-
         var expression = new ScriptExpression(new StatementExpression(ifExpression,
-                                                                      new AttributeExpression(null)));
-        assertNull(expression.requiredInputType());
+                                                                      new AttributeExpression("string1")));
+        SimpleTestAdapter adapter = new SimpleTestAdapter();
+        adapter.createField(new Field("int1", DataType.INT));
+        adapter.createField(new Field("string1", DataType.STRING));
+
+        expression.resolve(adapter);
+        assertNull(expression.getInputType(new TypeContext(adapter)));
+        assertEquals(DataType.STRING, ifExpression.getOutputType());
+
+        expression.resolve(adapter);
+        assertNull(expression.getInputType(new TypeContext(adapter)));
     }
 
     private Expression wrapLikeTheParser(Expression expression) {
@@ -273,7 +269,7 @@ public class IfThenTestCase {
         return ctx.getVariable("true") != null;
     }
 
-    private static FieldValueAdapter createTestAdapter() {
+    private static FieldValues createTestAdapter() {
         return new SimpleTestAdapter(new Field("lhs", DataType.INT),
                                      new Field("rhs", DataType.INT),
                                      new Field("ifTrue", DataType.INT),

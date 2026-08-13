@@ -7,8 +7,10 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -28,7 +30,6 @@ type visitArgs struct {
 	makeFeed       bool
 	jsonLines      bool
 	pretty         bool
-	debugMode      bool
 	chunkCount     int
 	from           string
 	to             string
@@ -39,9 +40,11 @@ type visitArgs struct {
 	waitSecs       int
 	verbose        bool
 	headers        []string
+	stream         bool
 
-	cli    *CLI
-	header http.Header
+	cli         *CLI
+	header      http.Header
+	feedStarted bool
 }
 
 func (v *visitArgs) writeBytes(b []byte) {
@@ -53,35 +56,29 @@ func (v *visitArgs) writeString(s string) {
 }
 
 func (v *visitArgs) debugPrint(s string) {
-	if v.debugMode {
-		v.cli.printDebug(s)
-	}
+	v.cli.printDebug(s)
 }
 
 func (v *visitArgs) dumpDocuments(documents []DocumentBlob) {
-	comma := false
-	pretty := false
-	if v.makeFeed {
-		comma = true
-		pretty = v.pretty
-	} else if !v.jsonLines {
+	if !v.makeFeed && !v.jsonLines {
 		return
 	}
 	for _, value := range documents {
-		if pretty {
+		blob := value.blob
+		if v.makeFeed && v.pretty {
 			var prettyJSON bytes.Buffer
-			parseError := json.Indent(&prettyJSON, value.blob, "", "    ")
-			if parseError != nil {
-				v.writeBytes(value.blob)
-			} else {
-				v.writeBytes(prettyJSON.Bytes())
+			if err := json.Indent(&prettyJSON, value.blob, "", "    "); err == nil {
+				blob = prettyJSON.Bytes()
 			}
-		} else {
-			v.writeBytes(value.blob)
 		}
-		if comma {
-			v.writeString(",\n")
+		if v.makeFeed {
+			if v.feedStarted {
+				v.writeString(",\n")
+			}
+			v.feedStarted = true
+			v.writeBytes(blob)
 		} else {
+			v.writeBytes(blob)
 			v.writeString("\n")
 		}
 	}
@@ -90,15 +87,13 @@ func (v *visitArgs) dumpDocuments(documents []DocumentBlob) {
 var totalDocCount int
 
 func newVisitCmd(cli *CLI) *cobra.Command {
-	var (
-		vArgs visitArgs
-	)
+	var vArgs visitArgs
 	cmd := &cobra.Command{
 		Use:   "visit",
 		Short: "Retrieve and print all documents from Vespa",
 		Long: `Retrieve and print all documents from Vespa.
 
-By default prints each document received on its own line (JSONL format).
+By default, prints each document received on its own line (JSONL format).
 `,
 		Example: `$ vespa visit # get documents from any cluster
 $ vespa visit --content-cluster search # get documents from cluster named "search"
@@ -123,6 +118,14 @@ $ vespa visit --field-set "[id]" # list document IDs
 			if err != nil {
 				return err
 			}
+			if service.AuthMethod == "token" {
+				err = cli.addBearerToken(&header)
+				if err != nil {
+					return err
+				}
+				service.TLSOptions.CertificateFile = ""
+				service.TLSOptions.PrivateKeyFile = ""
+			}
 			if vArgs.verbose {
 				service.CurlWriter = vespa.CurlWriter{Writer: cli.Stderr}
 			}
@@ -140,7 +143,6 @@ $ vespa visit --field-set "[id]" # list document IDs
 	cmd.Flags().StringVar(&vArgs.contentCluster, "content-cluster", "*", `Which content cluster to visit documents from`)
 	cmd.Flags().StringVar(&vArgs.fieldSet, "field-set", "", `Which fieldset to ask for`)
 	cmd.Flags().StringVar(&vArgs.selection, "selection", "", `Select subset of cluster`)
-	cmd.Flags().BoolVar(&vArgs.debugMode, "debug-mode", false, `Print debugging output`)
 	cmd.Flags().BoolVar(&vArgs.jsonLines, "json-lines", true, `Output documents as JSON lines`)
 	cmd.Flags().BoolVar(&vArgs.makeFeed, "make-feed", false, `Output JSON array suitable for vespa-feeder`)
 	cmd.Flags().BoolVar(&vArgs.pretty, "pretty-json", false, `Format pretty JSON`)
@@ -152,6 +154,7 @@ $ vespa visit --field-set "[id]" # list document IDs
 	cmd.Flags().StringSliceVar(&vArgs.bucketSpaces, "bucket-space", []string{"global", "default"}, `The "default" or "global" bucket space`)
 	cmd.Flags().BoolVarP(&vArgs.verbose, "verbose", "v", false, `Print the equivalent curl command for the visit operation`)
 	cmd.Flags().StringSliceVarP(&vArgs.headers, "header", "", nil, "Add a header to the HTTP request, on the format 'Header: Value'. This can be specified multiple times")
+	cmd.Flags().BoolVar(&vArgs.stream, "stream", false, "Stream the HTTP responses")
 	cli.bindWaitFlag(cmd, 0, &vArgs.waitSecs)
 	return cmd
 }
@@ -192,9 +195,7 @@ func checkArguments(vArgs visitArgs) (res OperationResult) {
 	}
 	for _, b := range vArgs.bucketSpaces {
 		switch b {
-		case
-			"default",
-			"global":
+		case "default", "global":
 			// Do nothing
 		default:
 			return Failure("Invalid 'bucket-space' argument '" + b + "', must be 'default' or 'global'")
@@ -231,8 +232,32 @@ func probeHandler(vArgs *visitArgs, service *vespa.Service, cli *CLI) (res Opera
 		Header: vArgs.header,
 	}
 	timeout := time.Duration(90) * time.Second
-	response, err := service.Do(request, timeout)
-	if err != nil {
+	const maxRetrySeconds = 15
+	deadline := time.Now().Add(maxRetrySeconds * time.Second)
+	retryStart := time.Now()
+	var response *http.Response
+	var err error
+	inRetry := false
+	for {
+		response, err = service.Do(request, timeout)
+		if err == nil {
+			if inRetry {
+				fmt.Fprintf(cli.Stderr, "\r\033[K")
+			}
+			break
+		}
+		if (errors.Is(err, io.EOF) || strings.Contains(err.Error(), "EOF")) && time.Now().Before(deadline) {
+			inRetry = true
+			for i := 3; i > 0; i-- {
+				elapsed := int(time.Since(retryStart).Seconds())
+				fmt.Fprintf(cli.Stderr, "\r\033[K  Got EOF, retrying in %ds... [%ds / %ds]", i, elapsed, maxRetrySeconds)
+				time.Sleep(time.Second)
+			}
+			continue
+		}
+		if inRetry {
+			fmt.Fprintf(cli.Stderr, "\n")
+		}
 		return Failure("Request failed: " + err.Error())
 	}
 	defer response.Body.Close()
@@ -282,7 +307,7 @@ func visitClusters(vArgs *visitArgs, service *vespa.Service) (res OperationResul
 		}
 	}
 	if vArgs.makeFeed {
-		vArgs.writeString("{}\n]\n")
+		vArgs.writeString("\n]\n")
 	}
 	return res
 }
@@ -308,8 +333,12 @@ func probeVisit(vArgs *visitArgs, service *vespa.Service) []string {
 
 func runVisit(vArgs *visitArgs, service *vespa.Service) (res OperationResult) {
 	vArgs.debugPrint(fmt.Sprintf("trying to visit: '%s'", vArgs.contentCluster))
-	var totalDocuments = 0
+	totalDocuments := 0
+	const baseRetryBackoffMs = 200.0
+	const maxRetryBackoffMs = 10_000.0 // Actually up to 15s, see below
+	backoffBaselineMs := baseRetryBackoffMs
 	var continuationToken string
+	consecutiveTruncations := 0
 	for {
 		var vvo *VespaVisitOutput
 		vvo, res = runOneVisit(vArgs, service, continuationToken)
@@ -319,11 +348,34 @@ func runVisit(vArgs *visitArgs, service *vespa.Service) (res OperationResult) {
 			}
 			return res
 		}
+		if vvo == nil {
+			// Success without visit output implies transparent retry with randomized delay.
+			// Let randomized backoff be +/- 50% of the current backoff baseline, increasing
+			// by 1.5x for each subsequent failure up to a hard limit of 10s. Since the max
+			// real backoff is +50% this means we'll top out at 15 seconds of backoff.
+			randomizedBackoffMs := int64((backoffBaselineMs * 0.5) + (rand.Float64() * backoffBaselineMs))
+			vArgs.debugPrint(fmt.Sprintf("Transient overload; retrying in %d ms", randomizedBackoffMs))
+			backoffBaselineMs = min(backoffBaselineMs*1.5, maxRetryBackoffMs)
+			vArgs.cli.sleeper(time.Duration(randomizedBackoffMs) * time.Millisecond)
+			continue
+		}
+		backoffBaselineMs = baseRetryBackoffMs
 		vArgs.dumpDocuments(vvo.Documents)
 		vArgs.debugPrint(fmt.Sprintf("got %d documents", len(vvo.Documents)))
 		totalDocuments += len(vvo.Documents)
-		continuationToken = vvo.Continuation
-		if continuationToken == "" {
+		if vvo.Continuation != "" {
+			continuationToken = vvo.Continuation
+		}
+		if vvo.Truncated {
+			consecutiveTruncations++
+			if consecutiveTruncations >= 5 {
+				return Failure("Response truncated 5 times in a row: aborting visit")
+			}
+			vArgs.cli.printWarning("Response truncated: retrying from last continuation token (may produce duplicates)")
+			continue
+		}
+		consecutiveTruncations = 0
+		if vvo.Continuation == "" {
 			break
 		}
 	}
@@ -355,39 +407,49 @@ func quoteArgForUrl(arg string) string {
 func runOneVisit(vArgs *visitArgs, service *vespa.Service, contToken string) (*VespaVisitOutput, OperationResult) {
 	urlPath := service.BaseURL + "/document/v1/?cluster=" + quoteArgForUrl(vArgs.contentCluster)
 	if vArgs.fieldSet != "" {
-		urlPath = urlPath + "&fieldSet=" + quoteArgForUrl(vArgs.fieldSet)
+		urlPath += "&fieldSet=" + quoteArgForUrl(vArgs.fieldSet)
 	}
 	if vArgs.selection != "" {
-		urlPath = urlPath + "&selection=" + quoteArgForUrl(vArgs.selection)
+		urlPath += "&selection=" + quoteArgForUrl(vArgs.selection)
 	}
 	if contToken != "" {
-		urlPath = urlPath + "&continuation=" + contToken
+		urlPath += "&continuation=" + contToken
 	}
 	if vArgs.chunkCount > 0 {
-		urlPath = urlPath + fmt.Sprintf("&wantedDocumentCount=%d", vArgs.chunkCount)
+		urlPath += fmt.Sprintf("&wantedDocumentCount=%d", vArgs.chunkCount)
 	}
 	if vArgs.from != "" {
 		fromSeconds, _ := getEpoch(vArgs.from)
-		urlPath = urlPath + fmt.Sprintf("&fromTimestamp=%d", fromSeconds*1000000)
+		urlPath += fmt.Sprintf("&fromTimestamp=%d", fromSeconds*1000000)
 	}
 	if vArgs.to != "" {
 		toSeconds, _ := getEpoch(vArgs.to)
-		urlPath = urlPath + fmt.Sprintf("&toTimestamp=%d", toSeconds*1000000)
+		urlPath += fmt.Sprintf("&toTimestamp=%d", toSeconds*1000000)
 	}
 	if vArgs.slices > 0 {
-		urlPath = urlPath + fmt.Sprintf("&slices=%d&sliceId=%d", vArgs.slices, vArgs.sliceId)
+		urlPath += fmt.Sprintf("&slices=%d&sliceId=%d", vArgs.slices, vArgs.sliceId)
 	}
 	if vArgs.bucketSpace != "" {
-		urlPath = urlPath + "&bucketSpace=" + vArgs.bucketSpace
+		urlPath += "&bucketSpace=" + vArgs.bucketSpace
 	}
+	urlPath += fmt.Sprintf("&stream=%t", vArgs.stream)
 	url, urlParseError := url.Parse(urlPath)
 	if urlParseError != nil {
 		return nil, Failure("Invalid request path: '" + urlPath + "': " + urlParseError.Error())
 	}
+	reqHeader := vArgs.header
+	if vArgs.stream && vArgs.jsonLines && !vArgs.makeFeed && reqHeader.Get("Accept") == "" {
+		if vArgs.header != nil {
+			reqHeader = vArgs.header.Clone()
+		} else {
+			reqHeader = make(http.Header)
+		}
+		reqHeader.Set("Accept", "application/json, application/jsonl")
+	}
 	request := &http.Request{
 		URL:    url,
 		Method: "GET",
-		Header: vArgs.header,
+		Header: reqHeader,
 	}
 	timeout := time.Duration(900) * time.Second
 	response, err := service.Do(request, timeout)
@@ -395,8 +457,17 @@ func runOneVisit(vArgs *visitArgs, service *vespa.Service, contToken string) (*V
 		return nil, Failure("Request failed: " + err.Error())
 	}
 	defer response.Body.Close()
-	vvo, err := parseVisitOutput(response.Body)
+
 	if response.StatusCode == 200 {
+		if strings.Contains(response.Header.Get("Content-Type"), "application/jsonl") {
+			vvo, err := parseVisitOutputJSONL(response.Body, vArgs.cli.Stdout, vArgs.cli.Stderr)
+			if err != nil {
+				return nil, Failure("error reading JSONL response: " + err.Error())
+			}
+			totalDocCount += vvo.DocumentCount
+			return vvo, Success("visited " + vArgs.contentCluster)
+		}
+		vvo, err := parseVisitOutput(response.Body)
 		if err == nil {
 			totalDocCount += vvo.DocumentCount
 			if vvo.DocumentCount != len(vvo.Documents) {
@@ -406,12 +477,16 @@ func runOneVisit(vArgs *visitArgs, service *vespa.Service, contToken string) (*V
 				return nil, Failure("Inconsistent contents from document API")
 			}
 			return vvo, Success("visited " + vArgs.contentCluster)
-		} else {
-			return nil, Failure("error reading response: " + err.Error())
 		}
-	} else if response.StatusCode/100 == 4 {
+		return nil, Failure("error reading response: " + err.Error())
+	}
+	vvo, _ := parseVisitOutput(response.Body)
+	switch {
+	case response.StatusCode == 429:
+		return nil, Success("Transient overload")
+	case response.StatusCode/100 == 4:
 		return vvo, FailureWithPayload("Invalid document operation: "+response.Status, ioutil.ReaderToJSON(response.Body))
-	} else {
+	default:
 		return vvo, FailureWithPayload(service.Description()+" at "+request.URL.Host+": "+response.Status, ioutil.ReaderToJSON(response.Body))
 	}
 }
@@ -436,6 +511,21 @@ type VespaVisitOutput struct {
 	DocumentCount int            `json:"documentCount"`
 	Continuation  string         `json:"continuation"`
 	ErrorMsg      string         `json:"message"`
+	Truncated     bool           // true when JSONL response ended without a completion signal from the server
+}
+
+type jsonlLine struct {
+	Put          string          `json:"put,omitempty"`
+	Remove       string          `json:"remove,omitempty"`
+	Fields       json.RawMessage `json:"fields,omitempty"`
+	Continuation *struct {
+		Token           string  `json:"token,omitempty"`
+		PercentFinished float64 `json:"percentFinished"`
+	} `json:"continuation,omitempty"`
+	SessionStats *struct {
+		DocumentCount int `json:"documentCount"`
+	} `json:"sessionStats,omitempty"`
+	Message string `json:"message,omitempty"`
 }
 
 func parseVisitOutput(r io.Reader) (*VespaVisitOutput, error) {
@@ -446,4 +536,56 @@ func parseVisitOutput(r io.Reader) (*VespaVisitOutput, error) {
 		return nil, fmt.Errorf("could not decode JSON, error: %s", err.Error())
 	}
 	return &parsedJson, nil
+}
+
+func parseVisitOutputJSONL(r io.Reader, w io.Writer, warnWriter io.Writer) (*VespaVisitOutput, error) {
+	dec := json.NewDecoder(r)
+	var result VespaVisitOutput
+	done := false
+	for {
+		var line jsonlLine
+		err := dec.Decode(&line)
+		// Stops when at end of file or if json is truncated
+		if err == io.EOF {
+			break
+		}
+		if err == io.ErrUnexpectedEOF {
+			done = false
+			break
+		}
+		if err != nil {
+			return &result, fmt.Errorf("error reading JSONL response: %s", err)
+		}
+		switch {
+		case line.Put != "":
+			id := line.Put
+			type docOut struct {
+				ID     string          `json:"id"`
+				Fields json.RawMessage `json:"fields,omitempty"`
+			}
+			outBytes, err := json.Marshal(docOut{ID: id, Fields: line.Fields})
+			if err != nil {
+				return &result, err
+			}
+			if _, err := w.Write(outBytes); err != nil {
+				return &result, fmt.Errorf("error writing document: %s", err)
+			}
+			if _, err := w.Write([]byte("\n")); err != nil {
+				return &result, fmt.Errorf("error writing document: %s", err)
+			}
+			result.DocumentCount++
+		case line.Continuation != nil:
+			result.Continuation = line.Continuation.Token
+			done = line.Continuation.Token == ""
+		case line.SessionStats != nil:
+			if line.SessionStats.DocumentCount != result.DocumentCount {
+				fmt.Fprintf(warnWriter, "WARNING: server reported %d documents but %d were received\n", line.SessionStats.DocumentCount, result.DocumentCount)
+			}
+			result.DocumentCount = line.SessionStats.DocumentCount
+		case line.Message != "":
+			result.ErrorMsg = line.Message
+		}
+	}
+	result.Truncated = !done
+	return &result, nil
 }

@@ -7,6 +7,7 @@ import com.yahoo.jrt.Request;
 import com.yahoo.jrt.RequestWaiter;
 import com.yahoo.jrt.Spec;
 import com.yahoo.jrt.StringArray;
+import com.yahoo.jrt.StringValue;
 import com.yahoo.jrt.Supervisor;
 import com.yahoo.jrt.Target;
 
@@ -21,7 +22,7 @@ import java.util.logging.Logger;
 public class FileDistributionImpl implements FileDistribution, RequestWaiter {
 
     private final static Logger log = Logger.getLogger(FileDistributionImpl.class.getName());
-    private final static Duration rpcTimeout = Duration.ofSeconds(1);
+    private final static Duration rpcTimeout = Duration.ofSeconds(11);
 
     private final Supervisor supervisor;
 
@@ -40,10 +41,11 @@ public class FileDistributionImpl implements FileDistribution, RequestWaiter {
     @Override
     public void triggerDownload(String hostName, int port, Set<FileReference> fileReferences) {
         Target target = supervisor.connect(new Spec(hostName, port));
-        Request request = new Request("filedistribution.setFileReferencesToDownload");
+        Request request = new Request("filedistribution.triggerDownload");
         request.setContext(target);
         request.parameters().add(new StringArray(fileReferences.stream().map(FileReference::value).toArray(String[]::new)));
-        log.log(Level.FINE, () -> "Executing " + request.methodName() + " against " + target);
+        request.parameters().add(new StringValue(new Spec(com.yahoo.net.HostName.getLocalhost(), 19070).toString()));
+        log.log(Level.FINE, () -> "Executing " + request.methodName() + " against " + target + ": " + fileReferences);
         target.invokeAsync(request, rpcTimeout, this);
     }
 

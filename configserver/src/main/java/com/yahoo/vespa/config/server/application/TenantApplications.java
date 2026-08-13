@@ -9,6 +9,7 @@ import com.yahoo.config.FileReference;
 import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.TenantName;
 import com.yahoo.path.Path;
+import com.yahoo.text.Text;
 import com.yahoo.transaction.Transaction;
 import com.yahoo.vespa.config.ConfigKey;
 import com.yahoo.vespa.config.GetConfigRequest;
@@ -71,7 +72,7 @@ public class TenantApplications implements RequestHandler, HostValidator {
     private final TenantName tenant;
     private final ConfigActivationListener configActivationListener;
     private final ConfigResponseFactory responseFactory;
-    private final HostRegistry hostRegistry;
+    private final HostRegistry hostRegistry; // global host registry, hosts for all apps for all tenants
     private final ApplicationMapper applicationMapper = new ApplicationMapper();
     private final MetricUpdater tenantMetricUpdater;
     private final Clock clock;
@@ -84,7 +85,7 @@ public class TenantApplications implements RequestHandler, HostValidator {
                               ConfigserverConfig configserverConfig, HostRegistry hostRegistry,
                               TenantFileSystemDirs tenantFileSystemDirs, Clock clock, FlagSource flagSource) {
         this.curator = curator;
-        this.database = new ApplicationCuratorDatabase(tenant, curator);
+        this.database = new ApplicationCuratorDatabase(tenant, curator, configserverConfig);
         this.tenant = tenant;
         this.zkWatcherExecutor = command -> zkWatcherExecutor.execute(tenant, command);
         this.directoryCache = database.createApplicationsPathCache(zkCacheExecutor);
@@ -138,29 +139,28 @@ public class TenantApplications implements RequestHandler, HostValidator {
     }
 
     /**
-     * Returns a transaction which writes the given session id as the currently active for the given application.
-     *
-     * @param applicationId An {@link ApplicationId} that represents an active application.
-     * @param sessionId session id belonging to the application package for this application id.
+     * Append transaction operations for activation of session: update the "last deployed" session of the application,
+     * and set which session is active for the application.
      */
-    public Transaction createWriteActiveTransaction(Transaction transaction, ApplicationId applicationId, long sessionId) {
-        return database().createWriteActiveTransaction(transaction, applicationId, sessionId);
+    public Transaction appendActivateOperations(Lock applicationLock,
+                                                ApplicationId applicationId,
+                                                long sessionId,
+                                                Transaction transaction) {
+        return database().appendDeployOperations(applicationLock, applicationId, sessionId, OptionalLong.of(sessionId), transaction);
     }
 
-    /**
-     * Returns a transaction which writes the given session id as the last deployed for the given application.
-     *
-     * @param applicationId An {@link ApplicationId} that represents an active application.
-     * @param sessionId session id belonging to the application package for this application id.
-     */
-    public Transaction createWritePrepareTransaction(Transaction transaction,
-                                                     ApplicationId applicationId,
-                                                     long sessionId,
-                                                     Optional<Long> activeSessionId) {
-        return database().createWritePrepareTransaction(transaction,
-                                                        applicationId,
-                                                        sessionId,
-                                                        activeSessionId.map(OptionalLong::of).orElseGet(OptionalLong::empty));
+    /** Application session is being prepared: Update the "last deployed" session of the application. */
+    public void prepare(ApplicationId applicationId, long sessionId) {
+        try (var applicationLock = lock(applicationId);
+             var transaction = new CuratorTransaction(curator)) {
+            OptionalLong activeSessionId = database().activeSessionOf(applicationId).map(OptionalLong::of).orElseGet(OptionalLong::empty);
+            database().appendDeployOperations(applicationLock,
+                                              applicationId,
+                                              sessionId,
+                                              activeSessionId,
+                                              transaction)
+                      .commit();
+        }
     }
 
     /**
@@ -185,8 +185,8 @@ public class TenantApplications implements RequestHandler, HostValidator {
     /**
      * Returns a transaction which deletes this application.
      */
-    public CuratorTransaction createDeleteTransaction(ApplicationId applicationId) {
-        return database().createDeleteTransaction(applicationId);
+    public CuratorTransaction createDeleteTransaction(Lock applicationLock, ApplicationId applicationId) {
+        return database().createDeleteTransaction(applicationLock, applicationId);
     }
 
     /**
@@ -206,6 +206,11 @@ public class TenantApplications implements RequestHandler, HostValidator {
     /** Returns the lock for changing the session status of the given application. */
     public Lock lock(ApplicationId id) {
         return database().lock(id);
+    }
+
+    /** Returns the lock for changing the session status of the given application. */
+    public Lock lock(ApplicationId id, Duration lockTimeout) {
+        return database().lock(id, lockTimeout);
     }
 
     private void childEvent(CuratorFramework ignored, PathChildrenCacheEvent event) {
@@ -241,11 +246,6 @@ public class TenantApplications implements RequestHandler, HostValidator {
         return application.resolveConfig(req, responseFactory);
     }
 
-    private void notifyConfigActivationListeners(ApplicationVersions applicationVersions) {
-        hostRegistry.update(applicationVersions.getId(), applicationVersions.allHosts());
-        configActivationListener.configActivated(applicationVersions);
-    }
-
     /**
      * Activates the config of the given app. Notifies listeners
      *
@@ -260,7 +260,6 @@ public class TenantApplications implements RequestHandler, HostValidator {
                 return; // Application activated a new session before we got here.
 
             setActiveApp(applicationVersions);
-            notifyConfigActivationListeners(applicationVersions);
         }
     }
 
@@ -276,7 +275,6 @@ public class TenantApplications implements RequestHandler, HostValidator {
 
         if (hasApplication(applicationId)) {
             applicationMapper.remove(applicationId);
-            hostRegistry.removeHosts(applicationId);
             configActivationListenersOnRemove(applicationId);
             tenantMetricUpdater.setApplications(applicationMapper.numApplications());
             metrics.removeMetricUpdater(Metrics.createDimensions(applicationId));
@@ -311,6 +309,7 @@ public class TenantApplications implements RequestHandler, HostValidator {
         applicationVersions.updateHostMetrics();
         tenantMetricUpdater.setApplications(applicationMapper.numApplications());
         applicationMapper.register(applicationId, applicationVersions);
+        configActivationListener.configActivated(applicationVersions);
     }
 
     @Override
@@ -379,7 +378,7 @@ public class TenantApplications implements RequestHandler, HostValidator {
         try {
             return applicationMapper.getForVersion(appId, vespaVersion, clock.instant());
         } catch (VersionDoesNotExistException ex) {
-            throw new NotFoundException(String.format("%sNo such application (id %s): %s", TenantRepository.logPre(tenant), appId, ex.getMessage()));
+            throw new NotFoundException(Text.format("%sNo such application (id %s): %s", TenantRepository.logPre(tenant), appId, ex.getMessage()));
         }
     }
 
@@ -423,6 +422,8 @@ public class TenantApplications implements RequestHandler, HostValidator {
     public void verifyHosts(ApplicationId applicationId, Collection<String> newHosts) {
         hostRegistry.verifyHosts(applicationId, newHosts);
     }
+
+    public HostRegistry hostRegistry() { return hostRegistry; }
 
     public TenantFileSystemDirs getTenantFileSystemDirs() { return tenantFileSystemDirs; }
 

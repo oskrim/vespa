@@ -2,7 +2,7 @@
 package com.yahoo.vespa.model.application.validation;
 
 import com.yahoo.config.application.api.DeployLogger;
-import com.yahoo.config.model.deploy.DeployState;
+import com.yahoo.config.model.deploy.TestDeployState;
 import com.yahoo.schema.derived.TestableDeployLogger;
 import com.yahoo.vespa.model.VespaModel;
 import com.yahoo.vespa.model.content.utils.ApplicationPackageBuilder;
@@ -52,7 +52,7 @@ public class StreamingValidatorTest {
                     "attribute { distance-metric: euclidean } }");
         var warnings = filter(logger.warnings);
         assertEquals(1, warnings.size());
-        assertEquals("For search cluster 'content', streaming schema 'test', SD field 'nn': hnsw index is not relevant and not supported, ignoring setting",
+        assertEquals("For search cluster 'content', streaming schema 'test', schema field 'nn': hnsw index is not relevant and not supported, ignoring setting",
                      warnings.get(0));
     }
 
@@ -62,7 +62,7 @@ public class StreamingValidatorTest {
         var model = createModel(logger, "field URI type uri { indexing: index | summary }");
         var warnings = filter(logger.warnings);
         assertEquals(1, warnings.size());
-        assertEquals("For search cluster 'content', streaming schema 'test', SD field 'URI': " +
+        assertEquals("For search cluster 'content', streaming schema 'test', schema field 'URI': " +
                         "field type uri is not supported for streaming search, it will be handled as a string field",
                 warnings.get(0));
     }
@@ -73,15 +73,15 @@ public class StreamingValidatorTest {
         var model = createModel(logger, "field pred type predicate { indexing: attribute | summary }");
         var warnings = filter(logger.warnings);
         assertEquals(1, warnings.size());
-        assertEquals("For search cluster 'content', streaming schema 'test', SD field 'pred': " +
+        assertEquals("For search cluster 'content', streaming schema 'test', schema field 'pred': " +
                         "field type predicate is not supported for streaming search",
                 warnings.get(0));
 
     }
 
     private static VespaModel createModel(DeployLogger logger, String sdContent) {
-        var builder = new DeployState.Builder();
-        builder.deployLogger(logger);
+        var builder = TestDeployState.createBuilder()
+                .deployLogger(logger);
         return new ApplicationPackageBuilder()
                 .addCluster(new ContentClusterBuilder().name("content").docTypes(List.of(DocType.streaming("test"))))
                 .addSchemas(new SchemaBuilder().name("test").content(sdContent).build())

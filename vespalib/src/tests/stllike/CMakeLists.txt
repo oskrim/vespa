@@ -4,20 +4,15 @@ vespa_add_executable(vespalib_hash_test_app TEST
     hash_test.cpp
     DEPENDS
     vespalib
+    GTest::gtest
 )
 vespa_add_test(NAME vespalib_hash_test_app COMMAND vespalib_hash_test_app)
-vespa_add_executable(vespalib_string_test_app TEST
-    SOURCES
-    string_test.cpp
-    DEPENDS
-    vespalib
-)
-vespa_add_test(NAME vespalib_string_test_app COMMAND vespalib_string_test_app)
 vespa_add_executable(vespalib_vector_map_test_app TEST
     SOURCES
     vector_map_test.cpp
     DEPENDS
     vespalib
+    GTest::gtest
 )
 vespa_add_test(NAME vespalib_vector_map_test_app COMMAND vespalib_vector_map_test_app)
 vespa_add_executable(vespalib_asciistream_test_app TEST
@@ -33,6 +28,7 @@ vespa_add_executable(vespalib_hashtable_test_app TEST
     hashtable_test.cpp
     DEPENDS
     vespalib
+    GTest::gtest
 )
 vespa_add_test(NAME vespalib_hashtable_test_app COMMAND vespalib_hashtable_test_app)
 vespa_add_executable(vespalib_uniq_by_sort_map_hash_app
@@ -53,7 +49,7 @@ vespa_add_executable(vespalib_replace_variable_test_app TEST
     replace_variable_test.cpp
     DEPENDS
     vespalib
-    GTest::GTest
+    GTest::gtest
 )
 vespa_add_test(NAME vespalib_replace_variable_test_app COMMAND vespalib_replace_variable_test_app)
 vespa_add_executable(vespalib_lrucache_test_app TEST
@@ -61,6 +57,7 @@ vespa_add_executable(vespalib_lrucache_test_app TEST
     lrucache.cpp
     DEPENDS
     vespalib
+    GTest::gtest
 )
 vespa_add_test(NAME vespalib_lrucache_test_app COMMAND vespalib_lrucache_test_app)
 vespa_add_executable(vespalib_cache_test_app TEST
@@ -68,5 +65,6 @@ vespa_add_executable(vespalib_cache_test_app TEST
     cache_test.cpp
     DEPENDS
     vespalib
+    GTest::gtest
 )
 vespa_add_test(NAME vespalib_cache_test_app COMMAND vespalib_cache_test_app)

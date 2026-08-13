@@ -6,7 +6,7 @@ import com.yahoo.document.DocumentType;
 import com.yahoo.document.Field;
 import com.yahoo.vespa.indexinglanguage.ExpressionConverter;
 import com.yahoo.vespa.indexinglanguage.ExpressionVisitor;
-import com.yahoo.vespa.indexinglanguage.UpdateAdapter;
+import com.yahoo.vespa.indexinglanguage.UpdateFieldValues;
 import com.yahoo.vespa.objects.ObjectOperation;
 import com.yahoo.vespa.objects.ObjectPredicate;
 
@@ -15,78 +15,78 @@ import com.yahoo.vespa.objects.ObjectPredicate;
  */
 public final class GuardExpression extends CompositeExpression {
 
-    private final Expression expression;
+    private final Expression innerExpression;
     private final boolean shouldExecute;
 
-    public GuardExpression(Expression expression) {
-        super(expression.requiredInputType());
-        this.expression = expression;
-        shouldExecute = shouldExecute(expression);
+    public GuardExpression(Expression innerExpression) {
+        this.innerExpression = innerExpression;
+        shouldExecute = shouldExecute(innerExpression);
     }
 
-    public Expression getInnerExpression() { return expression; }
+    @Override
+    public boolean isMutating() { return innerExpression.isMutating(); }
+
+    @Override
+    public boolean requiresInput() { return innerExpression.requiresInput(); }
+
+    public Expression getInnerExpression() { return innerExpression; }
 
     @Override
     public GuardExpression convertChildren(ExpressionConverter converter) {
-        return new GuardExpression(converter.convert(expression));
+        return new GuardExpression(converter.convert(innerExpression));
     }
 
     @Override
-    public DataType setInputType(DataType inputType, VerificationContext context) {
+    public DataType setInputType(DataType inputType, TypeContext context) {
         super.setInputType(inputType, context);
-        return expression.setInputType(inputType, context);
+        return innerExpression.setInputType(inputType, context);
     }
 
     @Override
-    public DataType setOutputType(DataType outputType, VerificationContext context) {
+    public DataType setOutputType(DataType outputType, TypeContext context) {
         super.setOutputType(outputType, context);
-        return expression.setOutputType(outputType, context);
+        return innerExpression.setOutputType(outputType, context);
     }
 
     @Override
-    protected void doVerify(VerificationContext context) {
-        expression.verify(context);
+    protected void doResolve(TypeContext context) {
+        innerExpression.resolve(context);
     }
 
     @Override
     protected void doExecute(ExecutionContext context) {
-        if (!shouldExecute && context.getFieldValue() instanceof UpdateAdapter) {
+        if (!shouldExecute && context.getFieldValues() instanceof UpdateFieldValues) {
             context.setCurrentValue(null);
         } else {
-            expression.execute(context);
+            innerExpression.execute(context);
         }
     }
 
     @Override
     public void setStatementOutput(DocumentType documentType, Field field) {
-        expression.setStatementOutput(documentType, field);
-    }
-
-    @Override
-    public DataType createdOutputType() {
-        return expression.createdOutputType();
+        innerExpression.setStatementOutput(documentType, field);
     }
 
     @Override
     public String toString() {
-        return "guard " + toScriptBlock(expression);
+        return "guard " + toScriptBlock(innerExpression);
     }
 
     @Override
     public void selectMembers(ObjectPredicate predicate, ObjectOperation operation) {
-         select(expression, predicate, operation);
+         select(innerExpression, predicate, operation);
     }
 
     @Override
     public boolean equals(Object obj) {
         if (!(obj instanceof GuardExpression rhs)) return false;
-        if (!expression.equals(rhs.expression)) return false;
+        if (!innerExpression.equals(rhs.innerExpression)) return false;
         return true;
     }
 
     @Override
     public int hashCode() {
-        return getClass().hashCode() + expression.hashCode();
+        return getClass().hashCode() + innerExpression.hashCode();
     }
 
     private static boolean shouldExecute(Expression exp) {

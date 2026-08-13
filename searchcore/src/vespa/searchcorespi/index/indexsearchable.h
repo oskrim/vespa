@@ -9,7 +9,7 @@
 #include <vespa/searchlib/queryeval/field_spec.h>
 #include <vespa/searchlib/queryeval/irequestcontext.h>
 #include <vespa/searchlib/queryeval/searchable.h>
-#include <vespa/searchlib/util/searchable_stats.h>
+#include <vespa/searchlib/util/index_stats.h>
 
 namespace searchcorespi {
 
@@ -26,21 +26,21 @@ class IndexSearchableVisitor;
  * that let the components access a per query attribute context that expose
  * attribute vectors that can be utilized during query evaluation.
  **/
-class IndexSearchable : public search::queryeval::Searchable,
-                        public search::index::IFieldLengthInspector {
+class IndexSearchable : public search::queryeval::Searchable, public search::index::IFieldLengthInspector {
 protected:
     using IRequestContext = search::queryeval::IRequestContext;
     using FieldSpec = search::queryeval::FieldSpec;
     using FieldSpecList = search::queryeval::FieldSpecList;
     using Node = search::query::Node;
     using IAttributeContext = search::attribute::IAttributeContext;
+
 public:
     using SP = std::shared_ptr<IndexSearchable>;
 
     /**
-     * Returns the searchable stats for this index searchable.
+     * Returns the index stats for this index searchable.
      */
-    virtual search::SearchableStats getSearchableStats() const = 0;
+    virtual search::IndexStats get_index_stats(bool clear_disk_io_stats) const = 0;
 
     /**
      * Returns the serial number for this index searchable.
@@ -51,7 +51,7 @@ public:
      * Calls visitor with properly downcasted argument to differentiate
      * between different types of indexes (disk index or memory index).
      */
-    virtual void accept(IndexSearchableVisitor &visitor) const = 0;
+    virtual void accept(IndexSearchableVisitor& visitor) const = 0;
 };
 
 } // namespace searchcorespi

@@ -9,7 +9,7 @@ namespace search::tensor {
  */
 class NearestNeighborIndexLoader {
 public:
-    virtual ~NearestNeighborIndexLoader() {}
+    virtual ~NearestNeighborIndexLoader() = default;
 
     /**
      * Loads the next part of the index (e.g. the node corresponding to a given document)
@@ -20,4 +20,4 @@ public:
     virtual bool load_next() = 0;
 };
 
-}
+} // namespace search::tensor

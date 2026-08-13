@@ -12,12 +12,8 @@
   <artifactId>config-proxy</artifactId>
   <packaging>jar</packaging>
   <version>8-SNAPSHOT</version>
+  <name>${project.artifactId}</name>
   <dependencies>
-    <dependency>
-      <groupId>com.amazonaws</groupId>
-      <artifactId>aws-java-sdk-s3</artifactId>
-      <version>${aws-sdk.vespa.version}</version>
-    </dependency>
     <dependency>
       <groupId>com.yahoo.vespa</groupId>
       <artifactId>config-lib</artifactId>
@@ -54,10 +50,12 @@
       <version>${project.version}</version>
     </dependency>
     <dependency>
-      <groupId>com.yahoo.vespa</groupId>
-      <artifactId>container-apache-http-client-bundle</artifactId>
-      <version>${project.version}</version>
-      <scope>provided</scope>
+      <groupId>org.apache.httpcomponents.client5</groupId>
+      <artifactId>httpclient5</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.httpcomponents.core5</groupId>
+      <artifactId>httpcore5</artifactId>
     </dependency>
     <dependency>
       <groupId>org.slf4j</groupId>

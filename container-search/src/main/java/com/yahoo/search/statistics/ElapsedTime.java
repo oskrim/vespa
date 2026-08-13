@@ -9,7 +9,9 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
 
-import static com.yahoo.search.statistics.TimeTracker.Activity.*;
+import static com.yahoo.search.statistics.TimeTracker.Activity.FILL;
+import static com.yahoo.search.statistics.TimeTracker.Activity.PING;
+import static com.yahoo.search.statistics.TimeTracker.Activity.SEARCH;
 
 /**
  * A collection of TimeTracker instances.
@@ -136,13 +138,15 @@ public class ElapsedTime {
     }
 
     /**
-     * Time stamp of start of the first event registered.
+     * Time stamp of start of the first event registered, or 0 if none are regiustered.
      */
     public long first() {
         long first = Long.MAX_VALUE;
         for (TimeTracker track : tracks) {
-            first = Math.min(first, track.first());
+            if (track.first() != 0)
+                first = Math.min(first, track.first());
         }
+        if (first == Long.MAX_VALUE) return 0L;
         return first;
     }
 

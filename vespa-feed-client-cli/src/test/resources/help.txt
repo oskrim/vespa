@@ -19,10 +19,15 @@ Vespa feed client
                                           1ms, instead of sending it
                                           across the network
     --endpoint <arg>                      URI to feed endpoint
+    --exit-on-feed-errors                 Exit with non-zero exit code if
+                                          any feed operation fails
     --file <arg>                          Path to feed file in JSON format
     --header <arg>                        HTTP header on the form 'Name:
                                           value'
     --help
+    --initial-inflight-factor <arg>       Multiplier for minInflight to
+                                          determine the initial
+                                          targetInflight
     --log-config <arg>                    Specify a path to a Java Util
                                           Logging properties file.
                                           Overrides the default

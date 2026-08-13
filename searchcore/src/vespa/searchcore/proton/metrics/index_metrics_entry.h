@@ -2,7 +2,7 @@
 
 #pragma once
 
-#include "disk_usage_metrics.h"
+#include "disk_io_metrics.h"
 #include "field_metrics_entry.h"
 
 namespace proton {
@@ -11,11 +11,13 @@ namespace proton {
  * Class containing metrics for the index aspect of a field, i.e.
  * disk indexes and memory indexes.
  */
-struct IndexMetricsEntry : public FieldMetricsEntry {
-    DiskUsageMetrics _disk_usage;
+class IndexMetricsEntry : public FieldMetricsEntry {
+    DiskIoMetrics _disk_io;
 
-    IndexMetricsEntry(const std::string& field_name);
+public:
+    explicit IndexMetricsEntry(const std::string& field_name);
     ~IndexMetricsEntry() override;
+    void update_disk_io(const search::FieldIndexIoStats& io_stats) { _disk_io.update(io_stats); }
 };
 
 } // namespace proton

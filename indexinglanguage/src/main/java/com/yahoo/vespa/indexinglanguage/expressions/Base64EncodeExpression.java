@@ -12,25 +12,16 @@ import java.util.Base64;
  */
 public final class Base64EncodeExpression extends Expression {
 
-    public Base64EncodeExpression() {
-        super(DataType.LONG);
-    }
-
     @Override
-    public DataType setInputType(DataType inputType, VerificationContext context) {
+    public DataType setInputType(DataType inputType, TypeContext context) {
         super.setInputType(inputType, DataType.LONG, context);
         return DataType.STRING;
     }
 
     @Override
-    public DataType setOutputType(DataType outputType, VerificationContext context) {
-        super.setOutputType(outputType, DataType.STRING, context);
+    public DataType setOutputType(DataType outputType, TypeContext context) {
+        super.setOutputType(DataType.STRING, outputType, null, context);
         return DataType.LONG;
-    }
-
-    @Override
-    protected void doVerify(VerificationContext context) {
-        context.setCurrentType(createdOutputType());
     }
 
     @Override
@@ -44,9 +35,6 @@ public final class Base64EncodeExpression extends Expression {
         String encoded = Base64.getEncoder().encodeToString(output);
         context.setCurrentValue(new StringFieldValue(encoded));
     }
-
-    @Override
-    public DataType createdOutputType() { return DataType.STRING; }
 
     @Override
     public String toString() { return "base64encode"; }

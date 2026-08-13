@@ -1,6 +1,8 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.prelude.query;
 
+import ai.vespa.searchlib.searchprotocol.protobuf.SearchProtocol;
+
 import java.util.Iterator;
 
 /**
@@ -25,7 +27,7 @@ public class AndSegmentItem extends SegmentItem implements BlockItem {
         int weight = item.getWeight();
         if (item.getItemCount() > 0) {
             for (Iterator<Item> i = item.getItemIterator(); i.hasNext();) {
-                WordItem word = (WordItem) i.next();
+                TermItem word = (TermItem) i.next();
                 word.setWeight(weight);
                 addItem(word);
             }
@@ -51,10 +53,30 @@ public class AndSegmentItem extends SegmentItem implements BlockItem {
         }
     }
 
+    @Override
+    public String getFieldName() {
+        if (getParent() instanceof SameElementItem sameElementParent)
+            return sameElementParent.getFieldName() + "." + getIndexName();
+        else
+            return getIndexName();
+    }
+
     public void setWeight(int w) {
         for (Iterator<Item> i = getItemIterator(); i.hasNext();) {
             i.next().setWeight(w);
         }
+    }
+
+    @Override
+    SearchProtocol.QueryTreeItem toProtobuf(SerializationContext context) {
+        // AndSegmentItem should be folded/converted before serialization
+        var builder = SearchProtocol.ItemAnd.newBuilder();
+        for (var child : items()) {
+            builder.addChildren(child.toProtobuf(context));
+        }
+        return SearchProtocol.QueryTreeItem.newBuilder()
+                .setItemAnd(builder.build())
+                .build();
     }
 
 }

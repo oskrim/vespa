@@ -1,7 +1,6 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.model.container;
 
-import com.yahoo.config.model.api.ModelContext;
 import com.yahoo.config.model.api.container.ContainerServiceType;
 import com.yahoo.config.model.deploy.DeployState;
 import com.yahoo.config.model.producer.AnyConfigProducer;
@@ -79,7 +78,6 @@ public abstract class Container extends AbstractService implements
     /** The unique index of this node */
     private final int index;
     private final boolean dumpHeapOnShutdownTimeout;
-    private final double shutdownTimeoutS;
 
     private final ComponentGroup<Handler> handlers = new ComponentGroup<>(this, "handler");
     private final ComponentGroup<Component<?, ?>> components = new ComponentGroup<>(this, "components");
@@ -97,7 +95,6 @@ public abstract class Container extends AbstractService implements
         this.retired = retired;
         this.index = index;
         dumpHeapOnShutdownTimeout = deployState.featureFlags().containerDumpHeapOnShutdownTimeout();
-        shutdownTimeoutS = deployState.featureFlags().containerShutdownTimeout();
         this.defaultHttpServer = new JettyHttpServer("DefaultHttpServer", containerClusterOrNull(parent), deployState);
         if (getHttp() == null) {
             addChild(defaultHttpServer);
@@ -106,6 +103,7 @@ public abstract class Container extends AbstractService implements
 
         addChild(new SimpleComponent("com.yahoo.container.jdisc.ConfiguredApplication$ApplicationContext"));
         addEnvironmentVariable("VESPA_MALLOC_MMAP_THRESHOLD","0x1000000"); // 16M
+        setMallocImpl(deployState.getProperties().mallocImpl(Optional.of(ClusterSpec.Type.container)));
     }
 
     void setOwner(ContainerCluster<?> owner) { this.owner = owner; }
@@ -311,8 +309,9 @@ public abstract class Container extends AbstractService implements
                 .discriminator((clusterName != null ? clusterName + "." : "" ) + name)
                 .clustername(clusterName != null ? clusterName : "")
                 .nodeIndex(index)
-                .shutdown.dumpHeapOnTimeout(dumpHeapOnShutdownTimeout)
-                         .timeout(shutdownTimeoutS);
+                .shutdown.dumpHeapOnTimeout(dumpHeapOnShutdownTimeout);
+        if (getHostResource() != null)
+            builder.availabilityZone(getHostResource().spec().availabilityZone().value());
     }
 
     /** Returns the jvm args set explicitly for this node */

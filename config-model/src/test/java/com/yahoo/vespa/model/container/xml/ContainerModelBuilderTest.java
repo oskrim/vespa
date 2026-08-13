@@ -11,13 +11,13 @@ import com.yahoo.config.model.api.ContainerEndpoint;
 import com.yahoo.config.model.api.ModelContext;
 import com.yahoo.config.model.builder.xml.test.DomBuilderTest;
 import com.yahoo.config.model.deploy.DeployState;
+import com.yahoo.config.model.deploy.TestDeployState;
 import com.yahoo.config.model.deploy.TestProperties;
 import com.yahoo.config.model.producer.AbstractConfigProducerRoot;
 import com.yahoo.config.model.provision.InMemoryProvisioner;
 import com.yahoo.config.model.provision.SingleNodeProvisioner;
 import com.yahoo.config.model.test.MockApplicationPackage;
 import com.yahoo.config.model.test.MockRoot;
-import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.CloudAccount;
 import com.yahoo.config.provision.Environment;
 import com.yahoo.config.provision.Flavor;
@@ -37,8 +37,10 @@ import com.yahoo.container.handler.metrics.MetricsV2Handler;
 import com.yahoo.container.handler.observability.ApplicationStatusHandler;
 import com.yahoo.container.jdisc.JdiscBindingsConfig;
 import com.yahoo.container.usability.BindingsOverviewHandler;
+import com.yahoo.osgi.provider.model.ComponentModel;
 import com.yahoo.prelude.cluster.QrMonitorConfig;
 import com.yahoo.search.config.QrStartConfig;
+import com.yahoo.text.Text;
 import com.yahoo.vespa.model.AbstractService;
 import com.yahoo.vespa.model.VespaModel;
 import com.yahoo.vespa.model.container.ApplicationContainer;
@@ -140,7 +142,7 @@ public class ContainerModelBuilderTest extends ContainerModelBuilderTestBase {
         try {
             String servicesXml =
                     "<services>" +
-                            "<admin version='3.0'>" +
+                            "<admin version='4.0'>" +
                             "    <nodes count='1'/>" +
                             "</admin>" +
                             "<container version='1.0'>" +
@@ -323,7 +325,7 @@ public class ContainerModelBuilderTest extends ContainerModelBuilderTestBase {
                                <nodes count='2' />
                              </container>
                              """;
-        String deploymentXml = """
+        String deploymentXml = Text.format("""
                                <deployment version='1.0'>
                                  <prod>
                                    <region>eu</region>
@@ -332,17 +334,16 @@ public class ContainerModelBuilderTest extends ContainerModelBuilderTestBase {
                                    %s
                                  </endpoints>
                                </deployment>
-                               """.formatted(endpointsTag);
+                               """, endpointsTag);
         ApplicationPackage applicationPackage = new MockApplicationPackage.Builder().withServices(servicesXml).withDeploymentSpec(deploymentXml).build();
         InMemoryProvisioner provisioner = new InMemoryProvisioner(true, false, "host1.yahoo.com", "host2.yahoo.com");
         VespaModel model = new VespaModel(new NullConfigModelRegistry(), new DeployState.Builder()
                 .modelHostProvisioner(provisioner)
-                .provisioned(provisioner.startProvisionedRecording())
                 .applicationPackage(applicationPackage)
                 .endpoints(Set.of(new ContainerEndpoint("default", ApplicationClusterEndpoint.Scope.zone, List.of("default.example.com"))))
                 .properties(new TestProperties().setMultitenant(true)
-                                                .setHostedVespa(true)
-                                                .setZone(new Zone(environment, RegionName.from(region))))
+                                                .setHostedVespa(true))
+                .zone(new Zone(environment, RegionName.from(region)))
                 .build());
         assertEquals(2, model.hostSystem().getHosts().size());
         assertEquals(1, provisioner.provisionedClusters().size());
@@ -522,7 +523,7 @@ public class ContainerModelBuilderTest extends ContainerModelBuilderTestBase {
                 .withHosts(hostsXml)
                 .withServices(servicesXml)
                 .build();
-        VespaModel model = new VespaModel(applicationPackage);
+        VespaModel model = new VespaModel(TestDeployState.create(applicationPackage));
         assertEquals(1, model.hostSystem().getHosts().size());
     }
 
@@ -592,7 +593,6 @@ public class ContainerModelBuilderTest extends ContainerModelBuilderTestBase {
         InMemoryProvisioner provisioner = new InMemoryProvisioner(true, false, "host1.yahoo.com", "host2.yahoo.com");
         VespaModel model = new VespaModel(new NullConfigModelRegistry(), new DeployState.Builder()
                 .modelHostProvisioner(provisioner)
-                .provisioned(provisioner.startProvisionedRecording())
                 .applicationPackage(applicationPackage)
                 .endpoints(Set.of(new ContainerEndpoint("default", ApplicationClusterEndpoint.Scope.zone, List.of("default.example.com"))))
                 .properties(new TestProperties().setMultitenant(true)
@@ -663,7 +663,7 @@ public class ContainerModelBuilderTest extends ContainerModelBuilderTestBase {
     private QrConfig getQrConfig(ModelContext.Properties properties) throws IOException, SAXException {
         String servicesXml =
                 "<services>" +
-                "  <admin version='3.0'>" +
+                "  <admin version='4.0'>" +
                 "    <nodes count='2'/>" +
                 "  </admin>" +
                 "  <container id ='default' version='1.0'>" +
@@ -682,13 +682,6 @@ public class ContainerModelBuilderTest extends ContainerModelBuilderTestBase {
                 .build());
 
         return model.getConfig(QrConfig.class, "default/container.0");
-    }
-
-    @Test
-    void control_container_shutdown() throws IOException, SAXException {
-        QrConfig qr = getQrConfig(new TestProperties().containerShutdownTimeout(133).containerDumpHeapOnShutdownTimeout(true));
-        assertEquals(133.0, qr.shutdown().timeout(), 0.00000000000001);
-        assertTrue(qr.shutdown().dumpHeapOnTimeout());
     }
 
     @Test
@@ -758,7 +751,7 @@ public class ContainerModelBuilderTest extends ContainerModelBuilderTestBase {
     }
 
     void createModelWithTesterNodes(String testerNodesXml) {
-        String containerXml = "<container id='default' version='1.0'>%s</container>".formatted(testerNodesXml);
+        String containerXml = Text.format("<container id='default' version='1.0'>%s</container>", testerNodesXml);
         VespaModelTester tester = new VespaModelTester();
         tester.setApplicationId("t", "a", "i-t");
         tester.addHosts(3);
@@ -797,24 +790,19 @@ public class ContainerModelBuilderTest extends ContainerModelBuilderTestBase {
             } catch (IllegalArgumentException ignored) {
             }
         }
-        {
-            String xmlWithNodes =
-                    "<?xml version='1.0' encoding='utf-8' ?>" +
-                            "<services>" +
-                            "  <container version='1.0' id='container1'>" +
-                            "     <zookeeper/>" +
-                            "     <nodes of='content1'/>" +
-                            "  </container>" +
-                            "  <content version='1.0' id='content1'>" +
-                            "     <nodes count='3'/>" +
-                            "   </content>" +
-                            "</services>";
-            try {
-                tester.createModel(xmlWithNodes, true);
-                fail("Expected exception");
-            } catch (IllegalArgumentException ignored) {
-            }
-        }
+    }
+
+    @Test
+    void dummy_document_api() {
+        Element clusterElem = DomBuilderTest.parse(
+                "<container version='1.0'>",
+                nodesXml,
+                "</container>");
+        var models = createModel(root, clusterElem);
+        assertEquals(1, models.get(0).getCluster().getAllComponents().stream()
+              .filter(component -> component.getComponentId().equals(
+                      new ComponentModel("com.yahoo.document.restapi.resource.DummyDocumentV1ApiHandler", null, "vespaclient-container-plugin").getComponentId()))
+                .count());
     }
 
     private void assertComponentConfigured(ApplicationContainer container, String id) {
@@ -825,9 +813,55 @@ public class ContainerModelBuilderTest extends ContainerModelBuilderTestBase {
         return DomBuilderTest.parse(
                 "<container id='default' version='1.0'>",
                 "  <search>",
-                String.format("    <renderer id='%s'/>", rendererId),
+                Text.format("    <renderer id='%s'/>", rendererId),
                 "  </search>",
                 "</container>");
+    }
+
+    @Test
+    void inference_memory_is_configured() {
+        var clusterElem = DomBuilderTest.parse(
+                "<container id='default' version='1.0'>",
+                "  <inference>",
+                "    <memory>8Gb</memory>",
+                "  </inference>",
+                nodesXml,
+                "</container>");
+        var models = createModel(root, clusterElem);
+        var cluster = (ApplicationContainerCluster) models.get(0).getCluster();
+        assertEquals(8L * 1024 * 1024 * 1024, cluster.getInferenceMemory().orElse(0L));
+    }
+
+    @Test
+    void inference_memory_invalid() {
+        var clusterElem = DomBuilderTest.parse(
+                "<container id='default' version='1.0'>",
+                "  <inference>",
+                "    <memory>-1Gb</memory>",
+                "  </inference>",
+                "</container>");
+        var exception = assertThrows(IllegalArgumentException.class, () -> createModel(root, clusterElem));
+        assertThat(exception.getMessage(), containsString("Invalid inference memory value, got: -1Gb"));
+    }
+
+    @Test
+    void inference_memory_exceed_node_memory() {
+        var flavor = new Flavor(new FlavorsConfig.Flavor.Builder().name("test").minMainMemoryAvailableGb(16).build());
+        var deployState = new DeployState.Builder()
+                .modelHostProvisioner(new SingleNodeProvisioner(flavor))
+                .properties(new TestProperties().setHostedVespa(true))
+                .build();
+        var myRoot = new MockRoot("root", deployState);
+
+        var clusterElem = DomBuilderTest.parse(
+                "<container id='default' version='1.0'>",
+                "  <inference>",
+                "    <memory>32Gb</memory>",
+                "  </inference>",
+                "</container>");
+
+        var exception = assertThrows(IllegalArgumentException.class, () -> createModel(myRoot, clusterElem));
+        assertThat(exception.getMessage(), containsString("Inference memory cannot exceed available node memory (16.00 GiB), got: 32Gb"));
     }
 
 }

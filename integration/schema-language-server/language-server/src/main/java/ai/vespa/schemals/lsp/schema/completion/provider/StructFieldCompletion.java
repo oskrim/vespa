@@ -9,14 +9,15 @@ import org.eclipse.lsp4j.CompletionItem;
 import ai.vespa.schemals.context.EventCompletionContext;
 import ai.vespa.schemals.index.Symbol;
 import ai.vespa.schemals.index.Symbol.SymbolType;
-import ai.vespa.schemals.lsp.schema.completion.utils.CompletionUtils;
+import ai.vespa.schemals.lsp.common.completion.CompletionProvider;
+import ai.vespa.schemals.lsp.common.completion.CompletionUtils;
 import ai.vespa.schemals.parser.ast.NL;
 import ai.vespa.schemals.parser.ast.fieldElm;
 import ai.vespa.schemals.parser.ast.openLbrace;
 import ai.vespa.schemals.parser.ast.structFieldElm;
 import ai.vespa.schemals.schemadocument.SchemaDocument;
 import ai.vespa.schemals.tree.CSTUtils;
-import ai.vespa.schemals.tree.SchemaNode;
+import ai.vespa.schemals.tree.Node;
 
 /**
  * StructFieldProvider
@@ -30,14 +31,14 @@ public class StructFieldCompletion implements CompletionProvider {
 	public List<CompletionItem> getCompletionItems(EventCompletionContext context) {
         if (!(context.document instanceof SchemaDocument)) return List.of();
 
-        SchemaNode lastCleanNode = CSTUtils.getLastCleanNode(context.document.getRootNode(), context.startOfWord());
+        Node lastCleanNode = CSTUtils.getLastCleanNode(context.document.getRootNode(), context.startOfWord());
         if (lastCleanNode == null || !lastCleanNode.isASTInstance(NL.class) || lastCleanNode.getParent() == null) return List.of();
-        SchemaNode parent = lastCleanNode.getParent();
+        Node parent = lastCleanNode.getParent();
 
         if (parent.isASTInstance(openLbrace.class)) parent = parent.getParent();
         if (!parent.isASTInstance(fieldElm.class) && !parent.isASTInstance(structFieldElm.class)) return List.of();
 
-        SchemaNode fieldDefinitionNode = parent.get(1);
+        Node fieldDefinitionNode = parent.get(1);
         if (!fieldDefinitionNode.hasSymbol()) return List.of();
 
         Optional<Symbol> definition = context.schemaIndex.getFirstSymbolDefinition(fieldDefinitionNode.getSymbol());

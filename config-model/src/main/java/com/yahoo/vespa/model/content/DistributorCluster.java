@@ -2,6 +2,7 @@
 package com.yahoo.vespa.model.content;
 
 import ai.vespa.metrics.DistributorMetrics;
+import com.yahoo.config.application.api.DeployLogger;
 import com.yahoo.config.model.deploy.DeployState;
 import com.yahoo.vespa.config.content.core.StorDistributormanagerConfig;
 import com.yahoo.vespa.config.content.core.StorServerConfig;
@@ -10,12 +11,15 @@ import com.yahoo.document.select.parser.ParseException;
 import com.yahoo.config.model.producer.AnyConfigProducer;
 import com.yahoo.config.model.producer.TreeConfigProducer;
 import com.yahoo.metrics.MetricsmanagerConfig;
+import com.yahoo.vespa.model.builder.xml.dom.BinaryUnit;
 import com.yahoo.vespa.model.builder.xml.dom.ModelElement;
 import com.yahoo.vespa.model.builder.xml.dom.VespaDomBuilder;
 import com.yahoo.vespa.model.content.cluster.ContentCluster;
 import org.w3c.dom.Element;
 
 import java.util.logging.Logger;
+
+import static java.util.logging.Level.WARNING;
 
 /**
  * Generates distributor-specific configuration.
@@ -34,9 +38,7 @@ public class DistributorCluster extends TreeConfigProducer<Distributor> implemen
     private final GcOptions gc;
     private final boolean hasIndexedDocumentType;
     private final int maxActivationInhibitedOutOfSyncGroups;
-    private final int contentLayerMetadataFeatureLevel;
-    private final boolean symmetricPutAndActivateReplicaSelection;
-    private final boolean enforceStrictlyIncreasingClusterStateVersions;
+    private final int maxDocumentOperationSizeMib;
 
     public static class Builder extends VespaDomBuilder.DomConfigProducerBuilderBase<DistributorCluster> {
 
@@ -99,36 +101,29 @@ public class DistributorCluster extends TreeConfigProducer<Distributor> implemen
             final boolean hasIndexedDocumentType = clusterContainsIndexedDocumentType(documentsNode);
             var featureFlags = deployState.getProperties().featureFlags();
             int maxInhibitedGroups = featureFlags.maxActivationInhibitedOutOfSyncGroups();
-            int contentLayerMetadataFeatureLevel = featureFlags.contentLayerMetadataFeatureLevel();
-            boolean symmetricPutAndActivateReplicaSelection = featureFlags.symmetricPutAndActivateReplicaSelection();
-            boolean enforceStrictlyIncreasingClusterStateVersions = featureFlags.enforceStrictlyIncreasingClusterStateVersions();
+            int maxDocumentOperationSizeMib = maxDocumentSizeInMib(clusterElement, deployState.getDeployLogger());
 
             return new DistributorCluster(parent,
                     new BucketSplitting.Builder().build(new ModelElement(producerSpec)), gc,
                     hasIndexedDocumentType,
                     maxInhibitedGroups,
-                    contentLayerMetadataFeatureLevel,
-                    symmetricPutAndActivateReplicaSelection,
-                    enforceStrictlyIncreasingClusterStateVersions);
+                    maxDocumentOperationSizeMib);
         }
     }
 
-    private DistributorCluster(ContentCluster parent, BucketSplitting bucketSplitting,
-                               GcOptions gc, boolean hasIndexedDocumentType,
+    private DistributorCluster(ContentCluster parent,
+                               BucketSplitting bucketSplitting,
+                               GcOptions gc,
+                               boolean hasIndexedDocumentType,
                                int maxActivationInhibitedOutOfSyncGroups,
-                               int contentLayerMetadataFeatureLevel,
-                               boolean symmetricPutAndActivateReplicaSelection,
-                               boolean enforceStrictlyIncreasingClusterStateVersions)
-    {
+                               int maxDocumentOperationSizeMib) {
         super(parent, "distributor");
         this.parent = parent;
         this.bucketSplitting = bucketSplitting;
         this.gc = gc;
         this.hasIndexedDocumentType = hasIndexedDocumentType;
         this.maxActivationInhibitedOutOfSyncGroups = maxActivationInhibitedOutOfSyncGroups;
-        this.contentLayerMetadataFeatureLevel = contentLayerMetadataFeatureLevel;
-        this.symmetricPutAndActivateReplicaSelection = symmetricPutAndActivateReplicaSelection;
-        this.enforceStrictlyIncreasingClusterStateVersions = enforceStrictlyIncreasingClusterStateVersions;
+        this.maxDocumentOperationSizeMib = maxDocumentOperationSizeMib;
     }
 
     @Override
@@ -140,10 +135,14 @@ public class DistributorCluster extends TreeConfigProducer<Distributor> implemen
         }
         builder.disable_bucket_activation(!hasIndexedDocumentType);
         builder.max_activation_inhibited_out_of_sync_groups(maxActivationInhibitedOutOfSyncGroups);
-        if (contentLayerMetadataFeatureLevel > 0) {
-            builder.enable_operation_cancellation(true);
+        // TODO: Remove after config definition default value is changed to true
+        builder.enable_operation_cancellation(true);
+        // TODO: Unnecessary, remove after config definition default value is changed to true
+        builder.symmetric_put_and_activate_replica_selection(true);
+
+        if (maxDocumentOperationSizeMib > 0 && maxDocumentOperationSizeMib < 2048) {
+            builder.max_document_operation_message_size_bytes(maxDocumentOperationSizeMib * 1024 * 1024);
         }
-        builder.symmetric_put_and_activate_replica_selection(symmetricPutAndActivateReplicaSelection);
         bucketSplitting.getConfig(builder);
     }
 
@@ -164,10 +163,34 @@ public class DistributorCluster extends TreeConfigProducer<Distributor> implemen
         builder.root_folder("");
         builder.cluster_name(parent.getName());
         builder.is_distributor(true);
-        builder.require_strictly_increasing_cluster_state_versions(enforceStrictlyIncreasingClusterStateVersions);
     }
 
     public String getClusterName() {
         return parent.getName();
     }
+
+    /** Returns the configured {@code max-document-size} in MiB, or 0 if not set. */
+    public int getMaxDocumentOperationSizeMib() { return maxDocumentOperationSizeMib; }
+
+    private static int maxDocumentSizeInMib(ModelElement clusterElement, DeployLogger deployLogger) {
+        var tuning = clusterElement.child("tuning");
+        if (tuning == null) return 0;
+        var maxSize = tuning.child("max-document-size");
+        if (maxSize == null) return 0;
+
+        var configuredValue = maxSize.asString();
+        int maxDocumentSize = 0;
+        if (configuredValue != null && ! configuredValue.isEmpty()) {
+            // The configured value has units, but the config expects it in MiB, extract the value and convert
+            maxDocumentSize = (int) (BinaryUnit.valueOf(configuredValue) / 1024 / 1024);
+            if (maxDocumentSize < 1 || maxDocumentSize > 2048)
+                throw new IllegalArgumentException("Invalid max-document-size value '" + configuredValue + "': Value must be between 1 MiB and 2048 MiB");
+            if (maxDocumentSize > 128)
+                deployLogger.log(WARNING, "max-document-size value is set to '" + configuredValue +
+                        "', setting this above 128 MiB is strongly discouraged, as it may cause major performance issues. " +
+                        "See https://docs.vespa.ai/en/reference/applications/services/content.html#max-document-size");
+        }
+        return maxDocumentSize;
+    }
+
 }

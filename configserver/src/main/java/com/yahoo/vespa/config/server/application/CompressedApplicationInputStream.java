@@ -1,8 +1,8 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.config.server.application;
 
-import com.yahoo.vespa.archive.ArchiveStreamReader;
-import com.yahoo.vespa.archive.ArchiveStreamReader.Options;
+import com.yahoo.compress.ArchiveStreamReader;
+import com.yahoo.compress.ArchiveStreamReader.Options;
 import com.yahoo.vespa.config.server.http.BadRequestException;
 import com.yahoo.vespa.config.server.http.InternalServerException;
 import com.yahoo.vespa.config.server.http.v2.ApplicationApiHandler;
@@ -91,6 +91,9 @@ public class CompressedApplicationInputStream implements AutoCloseable {
                 tmpStream.close();
                 log.log(Level.FINE, "Creating output file: " + file.path());
                 Path dstFile = dir.resolve(file.path().toString()).normalize();
+                if (!dstFile.startsWith(dir.normalize())) {
+                    throw new IOException("Entry attempts to write outside the target directory: " + dstFile);
+                }
                 Files.createDirectories(dstFile.getParent());
                 Files.move(tmpFile, dstFile);
                 tmpFile = createTempFile(dir);

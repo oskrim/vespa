@@ -4,7 +4,11 @@ package com.yahoo.search.query;
 import com.yahoo.search.Query;
 import org.junit.jupiter.api.Test;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 /**
  * @author baldersheim
@@ -52,7 +56,7 @@ public class SoftTimeoutTestCase {
             new Query("?query=test&ranking.softtimeout."+key+"="+value);
             fail();
         } catch (IllegalArgumentException e) {
-            assertEquals("Could not set 'ranking.softtimeout." + key + "' to '" + value +"'", e.getMessage());
+            assertEquals("Could not set 'ranking.softtimeout." + key + "'", e.getMessage());
             assertEquals(key + " must be in the range [0.0, 1.0], got " + value, e.getCause().getMessage());
         }
     }

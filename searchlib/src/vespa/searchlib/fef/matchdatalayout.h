@@ -11,20 +11,26 @@ namespace search::fef {
  * This class is used to describe the layout of term match data and
  * features within MatchData objects for a single query.
  **/
-class MatchDataLayout
-{
+class MatchDataLayout {
 private:
     std::vector<uint32_t> _fieldIds;
+
 public:
     /**
      * Create an empty object.
      **/
     MatchDataLayout();
-    MatchDataLayout(MatchDataLayout &&) noexcept = default;
-    MatchDataLayout & operator=(MatchDataLayout &&) noexcept = default;
-    MatchDataLayout(const MatchDataLayout &) = default;
-    MatchDataLayout & operator=(const MatchDataLayout &) = delete;
+    MatchDataLayout(MatchDataLayout&&) noexcept = default;
+    MatchDataLayout& operator=(MatchDataLayout&&) noexcept = default;
+    MatchDataLayout(const MatchDataLayout&) = delete;
+    MatchDataLayout& operator=(const MatchDataLayout&) = delete;
     ~MatchDataLayout();
+
+    MatchDataLayout copy() {
+        MatchDataLayout result;
+        result._fieldIds = _fieldIds;
+        return result;
+    }
 
     /**
      * Allocate space for a term field match data structure.
@@ -46,6 +52,8 @@ public:
      * @return auto-pointer to a match data object
      **/
     MatchData::UP createMatchData() const;
+
+    bool empty() const noexcept { return _fieldIds.empty(); }
 };
 
-}
+} // namespace search::fef

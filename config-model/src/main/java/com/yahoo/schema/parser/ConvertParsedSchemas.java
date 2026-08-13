@@ -50,19 +50,6 @@ public class ConvertParsedSchemas {
     private final boolean documentsOnly;
     private final ConvertParsedTypes typeConverter;
 
-    // for unit test
-    ConvertParsedSchemas(List<ParsedSchema> orderedInput,
-                         DocumentTypeManager documentTypeManager)
-    {
-        this(orderedInput, documentTypeManager,
-             MockApplicationPackage.createEmpty(),
-             new MockFileRegistry(),
-             new BaseDeployLogger(),
-             new TestProperties(),
-             new RankProfileRegistry(),
-             true);
-    }
-
     public ConvertParsedSchemas(List<ParsedSchema> orderedInput,
                                 DocumentTypeManager documentTypeManager,
                                 ApplicationPackage applicationPackage,
@@ -80,7 +67,7 @@ public class ConvertParsedSchemas {
         this.properties = properties;
         this.rankProfileRegistry = rankProfileRegistry;
         this.documentsOnly = documentsOnly;
-        this.typeConverter = new ConvertParsedTypes(orderedInput, docMan);
+        this.typeConverter = new ConvertParsedTypes(orderedInput, docMan, deployLogger);
     }
 
     private final Map<String, SDDocumentType> convertedDocuments = new LinkedHashMap<>();
@@ -131,7 +118,7 @@ public class ConvertParsedSchemas {
         for (var annotation : parsed.getAnnotations()) {
             fieldConverter.convertAnnotation(schema, document, annotation);
         }
-        for (var field : parsed.getFields()) {
+        for (var field : parsed.getFields().values()) {
             var sdf = fieldConverter.convertDocumentField(schema, document, field);
             if (field.hasIdOverride()) {
                 document.setFieldId(sdf, field.idOverride());
@@ -252,11 +239,11 @@ public class ConvertParsedSchemas {
                 }
             }
             var summaryField = (dataType == null) ?
-                    SummaryField.createWithUnresolvedType(parsedField.name()) :
-                    new SummaryField(parsedField.name(), dataType);
+                    SummaryField.createWithUnresolvedType(parsedField.name(), docsum) :
+                    new SummaryField(parsedField.name(), dataType, docsum);
             // XXX does not belong here:
             summaryField.setVsmCommand(SummaryField.VsmCommand.FLATTENSPACE);
-            ConvertParsedFields.convertSummaryFieldSettings(summaryField, parsedField);
+            ConvertParsedFields.convertSummaryFieldSettings(schema, summaryField, parsedField, parsed.name());
             docsum.add(summaryField);
         }
         schema.addSummary(docsum);
@@ -293,6 +280,7 @@ public class ConvertParsedSchemas {
         if (parsed.hasStemming()) {
             schema.setStemming(parsed.getStemming());
         }
+        parsed.getDocumentIdAttribute().ifPresent(schema::enableDocumentIdAttribute);
         parsed.getRawAsBase64().ifPresent(value -> schema.enableRawAsBase64(value));
         var typeContext = typeConverter.makeContext(parsed.getDocument());
         var sfResolver = new SummaryFieldTypeResolver(schema, parsed.getDocumentSummaries());

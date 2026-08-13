@@ -16,12 +16,26 @@
   <artifactId>container</artifactId>
   <version>8-SNAPSHOT</version>
   <packaging>jar</packaging>
+  <name>${project.artifactId}</name>
   <dependencies>
     <dependency>
       <groupId>com.yahoo.vespa</groupId>
       <artifactId>container-dev</artifactId>
       <version>${project.version}</version>
       <exclusions>
+        <!-- OpenTelemetry is internal to the platform (used by container-disc, provided at runtime by the
+             container-opentelemetry bundle). Do not expose it on the public 3rd-party container classpath. -->
+        <exclusion>
+          <groupId>io.opentelemetry</groupId>
+          <artifactId>*</artifactId>
+        </exclusion>
+        <!-- LOAD-BEARING (unlike the redundant http-utils exclusion below): keeps ai.vespa.telemetry.* off the
+             public 3rd-party container COMPILE classpath. The io.opentelemetry:* wildcard above does NOT catch a
+             com.yahoo.vespa artifact, so this separate exclusion is required. Do not remove as "redundant". -->
+        <exclusion>
+          <groupId>com.yahoo.vespa</groupId>
+          <artifactId>container-opentelemetry</artifactId>
+        </exclusion>
         <exclusion>
           <groupId>com.yahoo.vespa</groupId>
           <artifactId>http-utils</artifactId>

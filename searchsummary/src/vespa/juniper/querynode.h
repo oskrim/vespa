@@ -4,7 +4,7 @@
 #pragma once
 
 #include <vespa/fastlib/text/unicodeutil.h>
-#include "querymodifier.h"
+
 #include <string>
 #include <vector>
 
@@ -12,34 +12,31 @@
  *  in Matcher.h
  */
 
-
 // Option bit definitions:
-#define X_ORDERED   0x1  // PHRASE and WITHIN operator have the ordered property
-#define X_LIMIT     0x2  // NEAR and WITHIN operators have the limit property
-#define X_EXACT     0x4  // PHRASE and descendants have this property
-#define X_COMPLETE  0x8  // All keywords must be present (NEAR/PHRASE/WITHIN)
-#define X_AND       0x10  // threshold must be recomputed when complete - AND semantics
-#define X_OR        0x20  // threshold must be recomputed when complete + OR semantics
-#define X_ANY       0x40  // threshold must be recomputed when complete + ANY semantics
-#define X_CONSTR   0x100  // Bit telling if this subquery has constraints applied somewhere
-#define X_CHKVAL   0x200  // Bit set if validity of keyword occurrences must be checked
-#define X_NOT      0x400  // Limit has opposite sign (eliminate below: NOT_WITHIN semantics)
-#define X_PREFIX  0x1000  // This is a prefix search (valid on terms only)
-#define X_POSTFIX 0x2000  // This is a postfix search (valid on terms only)
-#define X_WILD    0x4000  // This is a wildcard search (valid on terms only)
-#define X_ONLY_1  0x8000  // Tell simplifier to delete all childs but #1 (RANK/ANDNOT)
-#define X_SPECIALTOKEN  0x10000  // This is a special token (valid on terms only)
+#define X_ORDERED 0x1          // PHRASE and WITHIN operator have the ordered property
+#define X_LIMIT 0x2            // NEAR and WITHIN operators have the limit property
+#define X_EXACT 0x4            // PHRASE and descendants have this property
+#define X_COMPLETE 0x8         // All keywords must be present (NEAR/PHRASE/WITHIN)
+#define X_AND 0x10             // threshold must be recomputed when complete - AND semantics
+#define X_OR 0x20              // threshold must be recomputed when complete + OR semantics
+#define X_ANY 0x40             // threshold must be recomputed when complete + ANY semantics
+#define X_CONSTR 0x100         // Bit telling if this subquery has constraints applied somewhere
+#define X_CHKVAL 0x200         // Bit set if validity of keyword occurrences must be checked
+#define X_NOT 0x400            // Limit has opposite sign (eliminate below: NOT_WITHIN semantics)
+#define X_PREFIX 0x1000        // This is a prefix search (valid on terms only)
+#define X_POSTFIX 0x2000       // This is a postfix search (valid on terms only)
+#define X_WILD 0x4000          // This is a wildcard search (valid on terms only)
+#define X_ONLY_1 0x8000        // Tell simplifier to delete all childs but #1 (RANK/ANDNOT)
+#define X_SPECIALTOKEN 0x10000 // This is a special token (valid on terms only)
 
 class QueryNode;
 class QueryTerm;
 
 using querynode_vector = std::vector<QueryNode*>;
 
-
 // Support slightly extended visitor pattern for QueryExpr nodes..
 
-class IQueryExprVisitor
-{
+class IQueryExprVisitor {
 public:
     virtual ~IQueryExprVisitor() = default;
 
@@ -51,13 +48,11 @@ public:
     virtual void VisitQueryTerm(QueryTerm*) = 0;
 };
 
-
 /** Base class for query expressions in Juniper */
-class QueryExpr
-{
+class QueryExpr {
 public:
-    QueryExpr(const QueryExpr &) = delete;
-    QueryExpr &operator=(const QueryExpr &) = delete;
+    QueryExpr(const QueryExpr&) = delete;
+    QueryExpr& operator=(const QueryExpr&) = delete;
     QueryExpr(int weight, int arity);
     explicit QueryExpr(QueryExpr* e);
 
@@ -84,22 +79,20 @@ public:
     bool HasLimit() const noexcept { return _options & X_LIMIT; }
     bool Exact() const noexcept { return _options & X_EXACT; }
 
-    QueryNode* _parent;   // Pointer to parent or NULL if this is the root of the query
-    int        _options;  // Applied options (bitmap) for this node
-    int        _weight;   // Weight of this term by parent - if 0: weight is sum of children
-    int        _arity;    // Arity of this query subexpression (may get decremented..)
-    int        _childno;  // Position number within parent's children (0 if no parents)
+    QueryNode* _parent;  // Pointer to parent or NULL if this is the root of the query
+    int        _options; // Applied options (bitmap) for this node
+    int        _weight;  // Weight of this term by parent - if 0: weight is sum of children
+    int        _arity;   // Arity of this query subexpression (may get decremented..)
+    int        _childno; // Position number within parent's children (0 if no parents)
 };
-
 
 /** Internal node of a query
  */
-class QueryNode : public QueryExpr
-{
+class QueryNode : public QueryExpr {
 public:
     // Create a new node with arity children
-    QueryNode(QueryNode &) = delete;
-    QueryNode &operator=(QueryNode &) = delete;
+    QueryNode(QueryNode&) = delete;
+    QueryNode& operator=(QueryNode&) = delete;
     QueryNode(int arity, int threshold, int weight = 0);
 
     // Create a copy of the node n wrt. arity etc, but without adding any children..
@@ -122,20 +115,18 @@ public:
     /* Pointer to an array of length _arity of pointers to
      * subqueries associated with this query */
     QueryExpr** _children;
-    int _threshold;       // Threshold for this expression node to be considered complete
-    int _limit;           // NEAR/WITHIN limit if X_LIMIT option set
-    int _nchild;   // end pointer (fill level) of _children
-    int _node_idx; // Index (position) of this nonterminal within table of all nonterminals
+    int         _threshold; // Threshold for this expression node to be considered complete
+    int         _limit;     // NEAR/WITHIN limit if X_LIMIT option set
+    int         _nchild;    // end pointer (fill level) of _children
+    int         _node_idx;  // Index (position) of this nonterminal within table of all nonterminals
 };
-
 
 /** Terminal node of a query
  */
-class QueryTerm : public QueryExpr
-{
+class QueryTerm : public QueryExpr {
 public:
-    QueryTerm(const QueryTerm &) = delete;
-    QueryTerm &operator=(const QueryTerm &) = delete;
+    QueryTerm(const QueryTerm&) = delete;
+    QueryTerm& operator=(const QueryTerm&) = delete;
     QueryTerm(std::string_view, int ix, int weight);
     explicit QueryTerm(QueryTerm*);
     ~QueryTerm() override;
@@ -155,16 +146,14 @@ public:
     bool isSpecialToken() const noexcept { return _options & X_SPECIALTOKEN; }
     size_t len() const noexcept { return _term.size(); }
     size_t ucs4_len;
-    int total_match_cnt;
-    int exact_match_cnt;
-    int idx;
-    juniper::Rewriter* rewriter;
-    juniper::string_matcher* reduce_matcher;
+    int    total_match_cnt;
+    int    exact_match_cnt;
+    int    idx;
+
 private:
     std::string _term;
-    ucs4_t* _ucs4_term;
+    ucs4_t*     _ucs4_term;
 };
-
 
 /** Modify the given stack by eliminating unnecessary internal nodes
  *  with arity 1 or non-terms with arity 0

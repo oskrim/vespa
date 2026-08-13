@@ -1,10 +1,19 @@
-#!/bin/bash
+#!/usr/bin/env bash
+#
 # Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+#
+# Executes a build step, logs output, and reports errors to Buildkite.
 
-set -euo pipefail
+set -o errexit
+set -o nounset
+set -o pipefail
+
+if [[ -n "${DEBUG:-}" ]]; then
+    set -o xtrace
+fi
 
 if [[ $# != 1 ]]; then
-  echo "Usage: $0 <Step name>"  
+  echo "Usage: $0 <Step name>"
   exit 1
 fi
 
@@ -17,14 +26,15 @@ function report()
   echo "Reporting...."
   if [[ $BUILDKITE == true ]]; then
       if [[ -f $LOG_DIR/error-$STEP.log ]]; then
-          tail -100 "$LOG_DIR/error-$STEP.log" | head -80 \
+          # shellcheck disable=2016
+          (echo '```term'; tail -100 "$LOG_DIR/error-$STEP.log" | head -80; echo '```') \
           | buildkite-agent annotate --style 'error' --context 'ctx-error'
       fi
   fi
 }
 trap report EXIT
 
-echo "Executing $STEP"
+echo "--- 🚀 Executing step: $STEP"
 START=$(date '+%s')
 /usr/bin/time -v -p "$MYDIR/$STEP.sh" &> "$LOG_DIR/$STEP.log" || (cp -a "$LOG_DIR/$STEP.log" "$LOG_DIR/error-$STEP.log" && cat "$LOG_DIR/$STEP.log" && false)
 
@@ -34,5 +44,4 @@ fi
 
 DURATION=$(( $(date '+%s') - START ))
 echo "STEPTIMER=$STEP:$START,${DURATION}s"
-echo "Finished $STEP in $DURATION seconds. Log saved in $LOG_DIR/$STEP.log."
-
+echo "✅ Finished $STEP in $DURATION seconds. Log saved in $LOG_DIR/$STEP.log."

@@ -22,7 +22,10 @@ public class DocumentDeserializerFactory {
     /**
      * Creates a de-serializer for the 6.x document format.
      * This format is an extension of the 4.2 format.
+     * Deprecated, use createHead instead.
      */
+    @Deprecated(forRemoval = true)
+    @SuppressWarnings("removal")
     public static DocumentDeserializer create6(DocumentTypeManager manager, GrowableByteBuffer buf) {
         return new VespaDocumentDeserializer6(manager, buf);
     }

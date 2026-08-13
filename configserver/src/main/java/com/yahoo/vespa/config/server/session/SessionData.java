@@ -5,17 +5,23 @@ import com.yahoo.component.Version;
 import com.yahoo.config.FileReference;
 import com.yahoo.config.model.api.Quota;
 import com.yahoo.config.model.api.TenantSecretStore;
+import com.yahoo.config.model.api.TenantVault;
 import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.AthenzDomain;
 import com.yahoo.config.provision.CloudAccount;
+import com.yahoo.config.provision.CloudResourceTags;
 import com.yahoo.config.provision.DataplaneToken;
 import com.yahoo.config.provision.DockerImage;
+import com.yahoo.config.provision.TelemetryExporterConfiguration;
+import com.yahoo.config.provision.serialization.TelemetryExporterConfigurationSerializer;
 import com.yahoo.slime.Cursor;
 import com.yahoo.slime.Slime;
 import com.yahoo.slime.SlimeUtils;
+import com.yahoo.vespa.config.server.tenant.CloudResourceTagsSerializer;
 import com.yahoo.vespa.config.server.tenant.DataplaneTokenSerializer;
 import com.yahoo.vespa.config.server.tenant.OperatorCertificateSerializer;
 import com.yahoo.vespa.config.server.tenant.TenantSecretStoreSerializer;
+import com.yahoo.vespa.config.server.tenant.TenantVaultSerializer;
 
 import java.io.IOException;
 import java.security.cert.X509Certificate;
@@ -34,30 +40,39 @@ import static com.yahoo.slime.SlimeUtils.optionalString;
 public record SessionData(ApplicationId applicationId,
                           Optional<FileReference> applicationPackageReference,
                           Version version,
+                          Optional<Version> versionToBuildFirst,
                           Instant created,
                           Optional<DockerImage> dockerImageRepository,
                           Optional<AthenzDomain> athenzDomain,
                           Optional<Quota> quota,
+                          List<TenantVault> tenantVaults,
                           List<TenantSecretStore> tenantSecretStores,
                           List<X509Certificate> operatorCertificates,
                           Optional<CloudAccount> cloudAccount,
+                          CloudResourceTags cloudResourceTags,
                           List<DataplaneToken> dataplaneTokens,
-                          ActivationTriggers activationTriggers) {
+                          ActivationTriggers activationTriggers,
+                          TelemetryExporterConfiguration telemetryExporterConfiguration) {
 
-    // NOTE: Any state added here MUST also be propagated in com.yahoo.vespa.config.server.deploy.Deployment.prepare()
+    // NOTE: Any state added here MUST also be done in SessionPreparer.writeStateToZooKeeper
+    // and SessionSerializer.read()/write()
     static final String APPLICATION_ID_PATH = "applicationId";
     static final String APPLICATION_PACKAGE_REFERENCE_PATH = "applicationPackageReference";
     static final String VERSION_PATH = "version";
+    static final String VERSION_TO_BUILD_FIRST_PATH = "versionToBuildFirst";
     static final String CREATE_TIME_PATH = "createTime";
     static final String DOCKER_IMAGE_REPOSITORY_PATH = "dockerImageRepository";
     static final String ATHENZ_DOMAIN = "athenzDomain";
     static final String QUOTA_PATH = "quota";
+    static final String TENANT_VAULTS_PATH = "tenantVaults";
     static final String TENANT_SECRET_STORES_PATH = "tenantSecretStores";
     static final String OPERATOR_CERTIFICATES_PATH = "operatorCertificates";
     static final String CLOUD_ACCOUNT_PATH = "cloudAccount";
+    static final String CLOUD_RESOURCE_TAGS_PATH = "cloudResourceTags";
     static final String DATAPLANE_TOKENS_PATH = "dataplaneTokens";
     static final String SESSION_DATA_PATH = "sessionData";
     static final String ACTIVATION_TRIGGERS_PATH = "activationTriggers";
+    static final String TELEMETRY_EXPORT_CONFIG_PATH = "telemetryExportConfig";
 
     public byte[] toJson() {
         try {
@@ -74,10 +89,14 @@ public record SessionData(ApplicationId applicationId,
         object.setString(APPLICATION_ID_PATH, applicationId.serializedForm());
         applicationPackageReference.ifPresent(ref -> object.setString(APPLICATION_PACKAGE_REFERENCE_PATH, ref.value()));
         object.setString(VERSION_PATH, version.toString());
+        versionToBuildFirst.ifPresent(v -> object.setString(VERSION_TO_BUILD_FIRST_PATH, v.toString()));
         object.setLong(CREATE_TIME_PATH, created.toEpochMilli());
         dockerImageRepository.ifPresent(image -> object.setString(DOCKER_IMAGE_REPOSITORY_PATH, image.asString()));
         athenzDomain.ifPresent(domain -> object.setString(ATHENZ_DOMAIN, domain.value()));
         quota.ifPresent(q -> q.toSlime(object.setObject(QUOTA_PATH)));
+
+        Cursor tenantVaultArray = object.setArray(TENANT_VAULTS_PATH);
+        TenantVaultSerializer.toSlime(tenantVaults, tenantVaultArray);
 
         Cursor tenantSecretStoresArray = object.setArray(TENANT_SECRET_STORES_PATH);
         TenantSecretStoreSerializer.toSlime(tenantSecretStores, tenantSecretStoresArray);
@@ -87,10 +106,16 @@ public record SessionData(ApplicationId applicationId,
 
         cloudAccount.ifPresent(account -> object.setString(CLOUD_ACCOUNT_PATH, account.value()));
 
+        if ( ! cloudResourceTags.isEmpty())
+            CloudResourceTagsSerializer.toSlime(cloudResourceTags, object.setObject(CLOUD_RESOURCE_TAGS_PATH));
+
         Cursor dataplaneTokensArray = object.setArray(DATAPLANE_TOKENS_PATH);
         DataplaneTokenSerializer.toSlime(dataplaneTokens, dataplaneTokensArray);
 
         ActivationTriggersSerializer.toSlime(activationTriggers, object.setObject(ACTIVATION_TRIGGERS_PATH));
+
+        if ( ! telemetryExporterConfiguration.isEmpty())
+            TelemetryExporterConfigurationSerializer.toSlime(telemetryExporterConfiguration, object.setObject(TELEMETRY_EXPORT_CONFIG_PATH));
     }
 
     static SessionData fromSlime(Slime slime) {
@@ -98,17 +123,23 @@ public record SessionData(ApplicationId applicationId,
         return new SessionData(ApplicationId.fromSerializedForm(cursor.field(APPLICATION_ID_PATH).asString()),
                                optionalString(cursor.field(APPLICATION_PACKAGE_REFERENCE_PATH)).map(FileReference::new),
                                Version.fromString(cursor.field(VERSION_PATH).asString()),
+                               SlimeUtils.isPresent(cursor.field(VERSION_TO_BUILD_FIRST_PATH))
+                                       ? Optional.of(Version.fromString(cursor.field(VERSION_TO_BUILD_FIRST_PATH).asString()))
+                                       : Optional.empty(),
                                Instant.ofEpochMilli(cursor.field(CREATE_TIME_PATH).asLong()),
                                optionalString(cursor.field(DOCKER_IMAGE_REPOSITORY_PATH)).map(DockerImage::fromString),
                                optionalString(cursor.field(ATHENZ_DOMAIN)).map(AthenzDomain::from),
                                SlimeUtils.isPresent(cursor.field(QUOTA_PATH))
                                        ? Optional.of(Quota.fromSlime(cursor.field(QUOTA_PATH)))
                                        : Optional.empty(),
+                               TenantVaultSerializer.listFromSlime(cursor.field(TENANT_VAULTS_PATH)),
                                TenantSecretStoreSerializer.listFromSlime(cursor.field(TENANT_SECRET_STORES_PATH)),
                                OperatorCertificateSerializer.fromSlime(cursor.field(OPERATOR_CERTIFICATES_PATH)),
                                optionalString(cursor.field(CLOUD_ACCOUNT_PATH)).map(CloudAccount::from),
+                               CloudResourceTagsSerializer.fromSlime(cursor.field(CLOUD_RESOURCE_TAGS_PATH)),
                                DataplaneTokenSerializer.fromSlime(cursor.field(DATAPLANE_TOKENS_PATH)),
-                               ActivationTriggersSerializer.fromSlime(cursor.field(ACTIVATION_TRIGGERS_PATH)));
+                               ActivationTriggersSerializer.fromSlime(cursor.field(ACTIVATION_TRIGGERS_PATH)),
+                               TelemetryExporterConfigurationSerializer.fromSlime(cursor.field(TELEMETRY_EXPORT_CONFIG_PATH)));
     }
 
 }

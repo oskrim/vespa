@@ -16,7 +16,12 @@ on:
         description: 'The version to build and publish, it MUST be a tag in this repository without the "v" prefix.'
         required: true
         type: string
-
+      force-homebrew-publish:
+        description: 'This forces the attempt of publishing the update on the homebrew-core repo'
+        required: false
+        type: bool
+        default: false
+        
 defaults:
   run:
     # Specify to ensure "pipefail and errexit" are set.
@@ -115,7 +120,7 @@ jobs:
         run: |
           make test
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: vespa-cli
           path: client/go/dist
@@ -149,7 +154,7 @@ jobs:
           # Prefix the version with "v" to checkout the tag.
           ref: "v${{ needs.prepare.outputs.build-version }}"
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           name: vespa-cli
           path: client/go/dist
@@ -173,15 +178,10 @@ jobs:
           echo "release-url=${release_url}" > "${GITHUB_OUTPUT}"
 
       - name: Publish to Homebrew
-        if: steps.github-release.outputs.release-url != ''
+        if: steps.github-release.outputs.release-url != '' && inputs.force-homebrew-publish == 'true'
         env:
           GITHUB_RELEASE_URL: ${{ steps.github-release.outputs.release-url }}
           HOMEBREW_GITHUB_API_TOKEN: ${{ secrets.HOMEBREW_GITHUB_API_TOKEN }}
         run: |
           # Release to Homebrew directly, bypassing the diff check as we already perform this check in the "prepare" job.
           make -- --dist-homebrew
-
-      - name: Install via Homebrew
-        if: steps.github-release.outputs.release-url != ''
-        run: |
-          make install-brew

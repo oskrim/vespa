@@ -5,27 +5,13 @@ import com.yahoo.document.DataType;
 import com.yahoo.document.datatypes.IntegerFieldValue;
 import org.junit.Test;
 
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 
 /**
  * @author Simon Thoresen Hult
  */
 public class SimpleExpressionTestCase {
-
-    @Test
-    public void requireThatAccessorsWork() {
-        SimpleExpression exp = new SimpleExpression();
-        assertNull(exp.requiredInputType());
-        assertNull(exp.createdOutputType());
-        assertNull(exp.execute());
-        assertNull(exp.verify());
-
-        assertEquals(DataType.INT, new SimpleExpression(DataType.INT).requiredInputType());
-        assertEquals(DataType.INT, new SimpleExpression().setCreatedOutput(DataType.INT).createdOutputType());
-        assertEquals(DataType.INT, new SimpleExpression().setVerifyValue(DataType.INT).verify());
-        assertEquals(new IntegerFieldValue(69),
-                     new SimpleExpression().setExecuteValue(new IntegerFieldValue(69)).execute());
-    }
 
     @Test
     public void requireThatHashCodeAndEqualsAreImplemented() {
@@ -51,11 +37,11 @@ public class SimpleExpressionTestCase {
         assertEquals(exp, new SimpleExpression().setVerifyValue(DataType.INT));
 
         exp = new SimpleExpression(DataType.INT);
-        assertFalse(exp.equals(new SimpleExpression(DataType.STRING)));
         assertEquals(exp, new SimpleExpression(DataType.INT));
 
         exp = new SimpleExpression().setCreatedOutput(DataType.INT);
         assertFalse(exp.equals(new SimpleExpression().setCreatedOutput(DataType.STRING)));
         assertEquals(exp, new SimpleExpression().setCreatedOutput(DataType.INT));
     }
+
 }

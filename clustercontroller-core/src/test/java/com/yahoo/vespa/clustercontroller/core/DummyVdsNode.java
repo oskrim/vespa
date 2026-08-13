@@ -14,6 +14,7 @@ import com.yahoo.jrt.Transport;
 import com.yahoo.jrt.slobrok.api.BackOffPolicy;
 import com.yahoo.jrt.slobrok.api.Register;
 import com.yahoo.jrt.slobrok.api.SlobrokList;
+import com.yahoo.text.Text;
 import com.yahoo.vdslib.state.ClusterState;
 import com.yahoo.vdslib.state.Node;
 import com.yahoo.vdslib.state.NodeState;
@@ -26,6 +27,7 @@ import java.time.Instant;
 import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.TreeMap;
@@ -286,7 +288,7 @@ public class DummyVdsNode {
 
         m = new Method("vespa.storage.connect", "s", "i", this::rpc_storageConnect);
         m.methodDesc("Binds connection to a storage API handle");
-        m.paramDesc(0, "somearg", "Argument looking like slobrok address of the ones we're asking for some reason");
+        m.paramDesc(0, "somearg", "Argument looking like location broker address of the ones we're asking for some reason");
         m.returnDesc(0, "returnCode", "Returncode of request. Should be 0 = OK");
         supervisor.addMethod(m);
 
@@ -431,7 +433,7 @@ public class DummyVdsNode {
                     activatedClusterStateVersion = activateVersion;
                     timer.notifyAll();
                 } else {
-                    log.log(Level.FINE, () -> String.format("Dummy node %s: got a mismatching activation (request version %d, " +
+                    log.log(Level.FINE, () -> Text.format("Dummy node %s: got a mismatching activation (request version %d, " +
                             "actual %d), not marking version as active", this, activateVersion, actualVersion));
                 }
             }

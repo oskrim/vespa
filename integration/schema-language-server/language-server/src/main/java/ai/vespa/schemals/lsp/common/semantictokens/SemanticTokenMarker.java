@@ -5,7 +5,7 @@ import java.util.List;
 
 import org.eclipse.lsp4j.Range;
 
-import ai.vespa.schemals.tree.SchemaNode;
+import ai.vespa.schemals.tree.Node;
 
 public class SemanticTokenMarker {
     private static final int LINE_INDEX = 0;
@@ -15,13 +15,23 @@ public class SemanticTokenMarker {
     private int modifierValue = 0;
     private Range range;
 
-    public SemanticTokenMarker(int tokenType, SchemaNode node) {
+    public SemanticTokenMarker(int tokenType, Node node) {
         this(tokenType, node.getRange());
     }
     
     public SemanticTokenMarker(int tokenType, Range range) {
         this.tokenType = tokenType;
         this.range = range;
+    }
+
+    public SemanticTokenMarker(String tokenString, Node node) {
+        this(CommonSemanticTokens.getType(tokenString), node);
+    }
+
+    public static List<SemanticTokenMarker> GetAsList(String tokenString, Node node) {
+        return new ArrayList<SemanticTokenMarker>() {{
+            add(new SemanticTokenMarker(tokenString, node));
+        }};
     }
 
     public Range getRange() { return range; }

@@ -1,100 +1,86 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+#include <vespa/searchcommon/attribute/config.h>
 #include <vespa/searchlib/attribute/address_space_usage.h>
 #include <vespa/searchlib/attribute/attribute.h>
 #include <vespa/searchlib/attribute/attributefactory.h>
 #include <vespa/searchlib/attribute/attributeguard.h>
 #include <vespa/searchlib/attribute/integerbase.h>
-#include <vespa/searchcommon/attribute/config.h>
-#include <vespa/vespalib/testkit/test_kit.h>
+#include <vespa/vespalib/gtest/gtest.h>
 #include <vespa/vespalib/util/stringfmt.h>
 
 #include <vespa/log/log.h>
 LOG_SETUP("attribute_compaction_test");
 
-using search::IntegerAttribute;
 using search::AttributeVector;
-using search::attribute::Config;
+using search::CommitParam;
+using search::IntegerAttribute;
 using search::attribute::BasicType;
 using search::attribute::CollectionType;
+using search::attribute::Config;
 using vespalib::AddressSpace;
 using vespalib::datastore::CompactionStrategy;
 
 using AttributePtr = AttributeVector::SP;
 using AttributeStatus = search::attribute::Status;
 
-namespace
-{
+namespace {
 
 struct DocIdRange {
     uint32_t docIdStart;
     uint32_t docIdLimit;
-    DocIdRange(uint32_t docIdStart_, uint32_t docIdLimit_)
-        : docIdStart(docIdStart_),
-          docIdLimit(docIdLimit_)
-    {
-    }
+    DocIdRange(uint32_t docIdStart_, uint32_t docIdLimit_) : docIdStart(docIdStart_), docIdLimit(docIdLimit_) {}
     uint32_t begin() { return docIdStart; }
     uint32_t end() { return docIdLimit; }
     uint32_t size() { return end() - begin(); }
 };
 
-
-template <typename VectorType>
-bool is(AttributePtr &v)
-{
-    return dynamic_cast<VectorType *>(v.get());
+template <typename VectorType> bool is(AttributePtr& v) {
+    return dynamic_cast<VectorType*>(v.get());
 }
 
-template <typename VectorType>
-VectorType &as(AttributePtr &v)
-{
-    return dynamic_cast<VectorType &>(*v);
+template <typename VectorType> VectorType& as(AttributePtr& v) {
+    return dynamic_cast<VectorType&>(*v);
 }
 
-void cleanAttribute(AttributeVector &v, DocIdRange range)
-{
+void cleanAttribute(AttributeVector& v, DocIdRange range) {
     for (uint32_t docId = range.begin(); docId < range.end(); ++docId) {
         v.clearDoc(docId);
     }
-    v.commit(true);
+    v.commit(CommitParam::UpdateStats::FORCE);
     v.incGeneration();
 }
 
-DocIdRange addAttributeDocs(AttributePtr &v, uint32_t numDocs)
-{
+DocIdRange addAttributeDocs(AttributePtr& v, uint32_t numDocs) {
     uint32_t startDoc = 0;
     uint32_t lastDoc = 0;
     EXPECT_TRUE(v->addDocs(startDoc, lastDoc, numDocs));
-    EXPECT_EQUAL(startDoc + numDocs - 1, lastDoc);
+    EXPECT_EQ(startDoc + numDocs - 1, lastDoc);
     DocIdRange range(startDoc, startDoc + numDocs);
     cleanAttribute(*v, range);
     return range;
 }
 
-void populateAttribute(IntegerAttribute &v, DocIdRange range, uint32_t values)
-{
-    for(uint32_t docId = range.begin(); docId < range.end(); ++docId) {
+void populateAttribute(IntegerAttribute& v, DocIdRange range, uint32_t values) {
+    for (uint32_t docId = range.begin(); docId < range.end(); ++docId) {
         v.clearDoc(docId);
         for (uint32_t vi = 0; vi <= values; ++vi) {
-            EXPECT_TRUE(v.append(docId, 42, 1) );
+            EXPECT_TRUE(v.append(docId, 42, 1));
         }
         if ((docId % 100) == 0) {
             v.commit();
         }
     }
-    v.commit(true);
+    v.commit(CommitParam::UpdateStats::FORCE);
     v.incGeneration();
 }
 
-void populateAttribute(AttributePtr &v, DocIdRange range, uint32_t values)
-{
+void populateAttribute(AttributePtr& v, DocIdRange range, uint32_t values) {
     if (is<IntegerAttribute>(v)) {
         populateAttribute(as<IntegerAttribute>(v), range, values);
     }
 }
 
-void hammerAttribute(IntegerAttribute &v, DocIdRange range, uint32_t count)
-{
+void hammerAttribute(IntegerAttribute& v, DocIdRange range, uint32_t count) {
     uint32_t work = 0;
     for (uint32_t i = 0; i < count; ++i) {
         for (uint32_t docId = range.begin(); docId < range.end(); ++docId) {
@@ -103,70 +89,74 @@ void hammerAttribute(IntegerAttribute &v, DocIdRange range, uint32_t count)
         }
         work += range.size();
         if (work >= 100000) {
-            v.commit(true);
+            v.commit(CommitParam::UpdateStats::FORCE);
             work = 0;
         } else {
             v.commit();
         }
     }
-    v.commit(true);
+    v.commit(CommitParam::UpdateStats::FORCE);
     v.incGeneration();
 }
 
-void hammerAttribute(AttributePtr &v, DocIdRange range, uint32_t count)
-{
+void hammerAttribute(AttributePtr& v, DocIdRange range, uint32_t count) {
     if (is<IntegerAttribute>(v)) {
         hammerAttribute(as<IntegerAttribute>(v), range, count);
     }
 }
 
-Config compactAddressSpaceAttributeConfig(bool enableAddressSpaceCompact)
-{
+Config compactAddressSpaceAttributeConfig(bool enableAddressSpaceCompact) {
     Config cfg(BasicType::INT8, CollectionType::ARRAY);
-    cfg.setCompactionStrategy({ 1.0f, (enableAddressSpaceCompact ? 0.2f : 1.0f) });
+    cfg.setCompactionStrategy({1.0f, (enableAddressSpaceCompact ? 0.2f : 1.0f)});
     return cfg;
 }
 
-}
+} // namespace
 
-double
-calc_alloc_waste(const AttributeStatus& status)
-{
+double calc_alloc_waste(const AttributeStatus& status) {
     return ((double)(status.getAllocated() - status.getUsed())) / status.getAllocated();
 }
 
 class Fixture {
 public:
     AttributePtr _v;
+    size_t       _reserved_multi_value_address_space;
 
-    Fixture(Config cfg)
-        : _v()
-    { _v = search::AttributeFactory::createAttribute("test", cfg); }
-    ~Fixture() { }
+    Fixture(Config cfg) : _v(), _reserved_multi_value_address_space(0) {
+        _v = search::AttributeFactory::createAttribute("test", cfg);
+        // 1 reserved array accounted as dead. Scaling applied when reporting usage (due to capped buffer sizes)
+        _reserved_multi_value_address_space = getMultiValueAddressSpaceUsage().dead();
+    }
+    ~Fixture() {}
     DocIdRange addDocs(uint32_t numDocs) { return addAttributeDocs(_v, numDocs); }
     void populate(DocIdRange range, uint32_t values) { populateAttribute(_v, range, values); }
     void hammer(DocIdRange range, uint32_t count) { hammerAttribute(_v, range, count); }
     void clean(DocIdRange range) { cleanAttribute(*_v, range); }
-    AttributeStatus getStatus() { _v->commit(true); return _v->getStatus(); }
-    AttributeStatus getStatus(const std::string &prefix) {
+    AttributeStatus getStatus() {
+        _v->commit(CommitParam::UpdateStats::FORCE);
+        return _v->getStatus();
+    }
+    AttributeStatus getStatus(const std::string& prefix) {
         AttributeStatus status(getStatus());
-        LOG(info, "status %s: allocated=%" PRIu64 ", used=%" PRIu64 ", dead=%" PRIu64 ", onHold=%" PRIu64 ", waste=%f",
+        LOG(info,
+            "status %s: allocated=%" PRIu64 ", used=%" PRIu64 ", dead=%" PRIu64 ", onHold=%" PRIu64 ", waste=%f",
             prefix.c_str(), status.getAllocated(), status.getUsed(), status.getDead(), status.getOnHold(),
             calc_alloc_waste(status));
         return status;
     }
-    const Config &getConfig() const { return _v->getConfig(); }
-    AddressSpace getMultiValueAddressSpaceUsage() const {return _v->getAddressSpaceUsage().multi_value_usage(); }
-    AddressSpace getMultiValueAddressSpaceUsage(const std::string &prefix) {
+    const Config& getConfig() const { return _v->getConfig(); }
+    AddressSpace getMultiValueAddressSpaceUsage() const { return _v->getAddressSpaceUsage().multi_value_usage(); }
+    AddressSpace getMultiValueAddressSpaceUsage(const std::string& prefix) {
         AddressSpace usage(getMultiValueAddressSpaceUsage());
-        LOG(info, "address space usage %s: used=%zu, dead=%zu, limit=%zu, usage=%12.8f",
-            prefix.c_str(), usage.used(), usage.dead(), usage.limit(), usage.usage());
+        LOG(info, "address space usage %s: used=%zu, dead=%zu, limit=%zu, usage=%12.8f", prefix.c_str(), usage.used(),
+            usage.dead(), usage.limit(), usage.usage());
         return usage;
     }
+    size_t reserved_multi_value_address_space() const noexcept { return _reserved_multi_value_address_space; }
 };
 
-TEST_F("Test that compaction of integer array attribute reduces memory usage", Fixture({ BasicType::INT64, CollectionType::ARRAY }))
-{
+TEST(AttributeCompactionTest, Test_that_compaction_of_integer_array_attribute_reduces_memory_usage) {
+    Fixture    f({BasicType::INT64, CollectionType::ARRAY});
     DocIdRange range1 = f.addDocs(2000);
     DocIdRange range2 = f.addDocs(1000);
     f.populate(range1, 40);
@@ -174,12 +164,13 @@ TEST_F("Test that compaction of integer array attribute reduces memory usage", F
     AttributeStatus beforeStatus = f.getStatus("before");
     f.clean(range1);
     AttributeStatus afterStatus = f.getStatus("after");
-    EXPECT_LESS(afterStatus.getUsed(), beforeStatus.getUsed());
+    EXPECT_LT(afterStatus.getUsed(), beforeStatus.getUsed());
 }
 
-TEST_F("Allocated memory is not accumulated in an array attribute when moving between value classes when compaction is active",
-       Fixture({BasicType::INT64, CollectionType::ARRAY}))
-{
+TEST(
+    AttributeCompactionTest,
+    Allocated_memory_is_not_accumulated_in_an_array_attribute_when_moving_between_value_classes_when_compaction_is_active) {
+    Fixture    f({BasicType::INT64, CollectionType::ARRAY});
     DocIdRange range = f.addDocs(1000);
     for (uint32_t i = 0; i < 50; ++i) {
         uint32_t values = 10 + i;
@@ -190,13 +181,11 @@ TEST_F("Allocated memory is not accumulated in an array attribute when moving be
         // we don't accumulate allocated memory as part of that process.
         f.populate(range, values);
         auto status = f.getStatus(vespalib::make_string("values=%u", values));
-        EXPECT_LESS(calc_alloc_waste(status), 0.68);
+        EXPECT_LT(calc_alloc_waste(status), 0.68);
     }
 }
 
-void
-populate_and_hammer(Fixture& f, bool take_attribute_guard)
-{
+void populate_and_hammer(Fixture& f, bool take_attribute_guard) {
     DocIdRange range1 = f.addDocs(1000);
     DocIdRange range2 = f.addDocs(1000);
     if (take_attribute_guard) {
@@ -206,7 +195,7 @@ populate_and_hammer(Fixture& f, bool take_attribute_guard)
             f.populate(range1, 1000);
             f.hammer(range2, 101);
         }
-        f._v->commit(true);
+        f._v->commit(CommitParam::UpdateStats::FORCE);
         f._v->commit();
     } else {
         f.populate(range1, 1000);
@@ -214,61 +203,54 @@ populate_and_hammer(Fixture& f, bool take_attribute_guard)
     }
 }
 
-TEST_F("Address space usage (dead) increases significantly when free lists are NOT used (compaction configured off)",
-       Fixture(compactAddressSpaceAttributeConfig(false)))
-{
+TEST(AttributeCompactionTest,
+     Address_space_usage_dead_increases_significantly_when_free_lists_are_NOT_used_and_compaction_configured_off) {
+    Fixture f(compactAddressSpaceAttributeConfig(false));
     populate_and_hammer(f, true);
     AddressSpace afterSpace = f.getMultiValueAddressSpaceUsage("after");
     // 100 * 1000 dead arrays due to new values for docids
-    // 1 reserved array accounted as dead
-    EXPECT_EQUAL(100001u, afterSpace.dead());
+    EXPECT_EQ(100000 + f.reserved_multi_value_address_space(), afterSpace.dead());
 }
 
-TEST_F("Address space usage (dead) increases only slightly when free lists are used (compaction configured off)",
-       Fixture(compactAddressSpaceAttributeConfig(false)))
-{
+TEST(AttributeCompactionTest,
+     Address_space_usage_dead_increases_only_slightly_when_free_lists_are_used_and_compaction_configured_off) {
+    Fixture f(compactAddressSpaceAttributeConfig(false));
     populate_and_hammer(f, false);
     AddressSpace afterSpace = f.getMultiValueAddressSpaceUsage("after");
     // Only 1000 dead arrays (due to new values for docids) as free lists are used.
-    // 1 reserved array accounted as dead
-    EXPECT_EQUAL(1001u, afterSpace.dead());
+    EXPECT_EQ(1000 + f.reserved_multi_value_address_space(), afterSpace.dead());
 }
 
-TEST_F("Compaction limits address space usage (dead) when free lists are NOT used",
-       Fixture(compactAddressSpaceAttributeConfig(true)))
-{
+TEST(AttributeCompactionTest, Compaction_limits_address_space_usage_dead_when_free_lists_are_NOT_used) {
+    Fixture f(compactAddressSpaceAttributeConfig(true));
     populate_and_hammer(f, true);
     AddressSpace afterSpace = f.getMultiValueAddressSpaceUsage("after");
-    EXPECT_GREATER(CompactionStrategy::DEAD_ADDRESS_SPACE_SLACK, afterSpace.dead());
+    EXPECT_GT(CompactionStrategy::DEAD_ADDRESS_SPACE_SLACK, afterSpace.dead());
 }
 
-TEST_F("Compaction is not executed when free lists are used",
-       Fixture(compactAddressSpaceAttributeConfig(true)))
-{
+TEST(AttributeCompactionTest, Compaction_is_not_executed_when_free_lists_are_used) {
+    Fixture f(compactAddressSpaceAttributeConfig(true));
     populate_and_hammer(f, false);
     AddressSpace afterSpace = f.getMultiValueAddressSpaceUsage("after");
     // Only 1000 dead arrays (due to new values for docids) as free lists are used.
-    // 1 reserved array accounted as dead
-    EXPECT_EQUAL(1001u, afterSpace.dead());
+    EXPECT_EQ(1000 + f.reserved_multi_value_address_space(), afterSpace.dead());
 }
 
-TEST_F("Compaction is peformed when compaction strategy is changed to enable compaction",
-       Fixture(compactAddressSpaceAttributeConfig(false)))
-{
+TEST(AttributeCompactionTest, Compaction_is_performed_when_compaction_strategy_is_changed_to_enable_compaction) {
+    Fixture f(compactAddressSpaceAttributeConfig(false));
     populate_and_hammer(f, true);
     AddressSpace after1 = f.getMultiValueAddressSpaceUsage("after1");
     // 100 * 1000 dead arrays due to new values for docids
-    // 1 reserved array accounted as dead
-    EXPECT_EQUAL(100001u, after1.dead());
+    EXPECT_EQ(100000 + f.reserved_multi_value_address_space(), after1.dead());
     f._v->update_config(compactAddressSpaceAttributeConfig(true));
-    auto old_dead = after1.dead();
+    auto         old_dead = after1.dead();
     AddressSpace after2 = f.getMultiValueAddressSpaceUsage("after2");
     while (after2.dead() < old_dead) {
         old_dead = after2.dead();
         f._v->commit(); // new commit might trigger further compaction
         after2 = f.getMultiValueAddressSpaceUsage("after2");
     }
-    EXPECT_GREATER(CompactionStrategy::DEAD_ADDRESS_SPACE_SLACK, after2.dead());
+    EXPECT_GT(CompactionStrategy::DEAD_ADDRESS_SPACE_SLACK, after2.dead());
 }
 
-TEST_MAIN() { TEST_RUN_ALL(); }
+GTEST_MAIN_RUN_ALL_TESTS()

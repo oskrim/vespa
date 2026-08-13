@@ -18,14 +18,17 @@ import com.yahoo.container.handler.VipStatus;
 import com.yahoo.container.jdisc.state.StateMonitor;
 import com.yahoo.docproc.jdisc.metric.NullMetric;
 import com.yahoo.path.Path;
+import com.yahoo.test.ManualClock;
 import com.yahoo.text.Utf8;
 import com.yahoo.vespa.config.server.deploy.DeployTester;
 import com.yahoo.vespa.config.server.filedistribution.FileDirectory;
+import com.yahoo.vespa.config.server.filedistribution.FileServer;
 import com.yahoo.vespa.config.server.rpc.RpcServer;
 import com.yahoo.vespa.config.server.version.VersionState;
 import com.yahoo.vespa.config.server.version.VespaVersion;
 import com.yahoo.vespa.curator.Curator;
 import com.yahoo.vespa.curator.mock.MockCurator;
+import com.yahoo.vespa.flags.InMemoryFlagSource;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -55,6 +58,8 @@ import static org.junit.jupiter.api.Assertions.fail;
  */
 public class ConfigServerBootstrapTest {
 
+    private final ManualClock clock = new ManualClock("2026-02-01T00:00:00");
+
     @Rule
     public TemporaryFolder temporaryFolder = new TemporaryFolder();
 
@@ -62,14 +67,18 @@ public class ConfigServerBootstrapTest {
     public void testBootstrap() throws Exception {
         ConfigserverConfig configserverConfig = createConfigserverConfig(temporaryFolder);
         InMemoryProvisioner provisioner = new InMemoryProvisioner(9, false);
-        DeployTester tester = new DeployTester.Builder(temporaryFolder).modelFactory(createHostedModelFactory())
+        DeployTester tester = new DeployTester.Builder(temporaryFolder).modelFactory(createHostedModelFactory(clock))
                                                                        .configserverConfig(configserverConfig)
                                                                        .hostProvisioner(provisioner).build();
         tester.deployApp("src/test/apps/hosted/");
 
         RpcServer rpcServer = createRpcServer(configserverConfig);
-        // Take a host away so that there are too few for the application, to verify we can still bootstrap
-        provisioner.allocations().values().iterator().next().remove(0);
+        // Take a host away (from a cluster having multiple)
+        // so that there are too few for the application, to verify we can still bootstrap
+        provisioner.allocations().entrySet().stream()
+                   .filter(entry -> entry.getKey().id().value().equals("music"))
+                   .findFirst().orElseThrow()
+                   .getValue().remove(0);
         Bootstrapper bootstrap = createBootstrapper(tester, rpcServer, VIP_STATUS_PROGRAMMATICALLY);
         assertTrue(bootstrap.isUpgraded());
         assertEquals(List.of("ApplicationPackageMaintainer", "TenantsMaintainer"),
@@ -83,7 +92,9 @@ public class ConfigServerBootstrapTest {
         assertTrue(rpcServer.isServingConfigRequests());
         waitUntil(() -> bootstrap.status() == StateMonitor.Status.up, "failed waiting for status 'up'");
         waitUntil(() -> bootstrap.vipStatus().isInRotation(), "failed waiting for server to be in rotation");
-        assertEquals(List.of("ApplicationPackageMaintainer", "FileDistributionMaintainer", "PendingRestartsMaintainer", "ReindexingMaintainer", "SessionsMaintainer", "TenantsMaintainer"),
+        assertEquals(List.of("ApplicationPackageMaintainer", "FileDistributionMaintainer", "HostRegistryMaintainer",
+                             "PendingRestartsMaintainer", "ReindexingMaintainer", "RestartOnDeployMaintainer",
+                             "SessionsMaintainer", "TenantsMaintainer"),
                      bootstrap.configServerMaintenance().maintainers().stream()
                               .map(Maintainer::name)
                               .sorted().toList());
@@ -101,7 +112,7 @@ public class ConfigServerBootstrapTest {
     public void testBootstrapWithVipStatusFile() throws Exception {
         ConfigserverConfig configserverConfig = createConfigserverConfig(temporaryFolder);
         InMemoryProvisioner provisioner = new InMemoryProvisioner(9, false);
-        DeployTester tester = new DeployTester.Builder(temporaryFolder).modelFactory(createHostedModelFactory())
+        DeployTester tester = new DeployTester.Builder(temporaryFolder).modelFactory(createHostedModelFactory(clock))
                 .configserverConfig(configserverConfig).hostProvisioner(provisioner).build();
         tester.deployApp("src/test/apps/hosted/");
 
@@ -121,7 +132,7 @@ public class ConfigServerBootstrapTest {
     @Test
     public void testBootstrapWhenRedeploymentFails() throws Exception {
         ConfigserverConfig configserverConfig = createConfigserverConfig(temporaryFolder);
-        DeployTester tester = new DeployTester.Builder(temporaryFolder).modelFactory(createHostedModelFactory())
+        DeployTester tester = new DeployTester.Builder(temporaryFolder).modelFactory(createHostedModelFactory(clock))
                 .configserverConfig(configserverConfig).build();
         tester.deployApp("src/test/apps/hosted/");
 
@@ -154,7 +165,7 @@ public class ConfigServerBootstrapTest {
         List<Host> hosts = createHosts(vespaVersion);
         Curator curator = new MockCurator();
         DeployTester tester = new DeployTester.Builder(temporaryFolder)
-                .modelFactory(DeployTester.createModelFactory(Version.fromString(vespaVersion)))
+                .modelFactory(DeployTester.createModelFactory(Version.fromString(vespaVersion), clock))
                 .hostProvisioner(new InMemoryProvisioner(new Hosts(hosts), true, false))
                 .configserverConfig(configserverConfig)
                 .zone(new Zone(Environment.dev, RegionName.defaultName()))
@@ -184,7 +195,7 @@ public class ConfigServerBootstrapTest {
         String oldVespaVersion = "8.100.1";
         Curator curator = new MockCurator();
         DeployTester tester = new DeployTester.Builder(temporaryFolder)
-                .modelFactory(DeployTester.createModelFactory(Version.fromString(oldVespaVersion)))
+                .modelFactory(DeployTester.createModelFactory(Version.fromString(oldVespaVersion), clock))
                 .configserverConfig(configserverConfig)
                 .curator(curator)
                 .build();
@@ -257,6 +268,9 @@ public class ConfigServerBootstrapTest {
                                             VipStatusMode vipStatusMode,
                                             VersionState versionState) {
         StateMonitor stateMonitor = StateMonitor.createForTesting();
+        ConfigserverConfig configserverConfig = tester.applicationRepository().configserverConfig();
+        FileDirectory fileDirectory = new FileDirectory(configserverConfig);
+        FileServer fileServer = new FileServer(configserverConfig, new InMemoryFlagSource(), fileDirectory);
         VipStatus vipStatus = createVipStatus(stateMonitor);
         return new Bootstrapper(tester.applicationRepository(),
                                 rpcServer,
@@ -264,7 +278,8 @@ public class ConfigServerBootstrapTest {
                                 stateMonitor,
                                 vipStatus,
                                 vipStatusMode,
-                                new FileDirectory(tester.applicationRepository().configserverConfig()));
+                                fileDirectory,
+                                fileServer);
     }
 
     private void waitUntil(BooleanSupplier booleanSupplier, String messageIfWaitingFails) throws InterruptedException {
@@ -363,8 +378,10 @@ public class ConfigServerBootstrapTest {
                             StateMonitor stateMonitor,
                             VipStatus vipStatus,
                             VipStatusMode vipStatusMode,
-                            FileDirectory fileDirectory) {
-            super(applicationRepository, server, versionState, stateMonitor, vipStatus, CONTINUE, vipStatusMode, fileDirectory);
+                            FileDirectory fileDirectory,
+                            FileServer fileServer) {
+            super(applicationRepository, server, versionState, stateMonitor, vipStatus, CONTINUE,
+                  vipStatusMode, fileDirectory, fileServer);
         }
 
         @Override
@@ -378,7 +395,7 @@ public class ConfigServerBootstrapTest {
 
         public VersionState versionState() { return versionState; }
 
-        public boolean isUpgraded() { return versionState.isUpgraded(); }
+        public boolean isUpgraded() { return versionState.isUpgrading(); }
 
     }
 

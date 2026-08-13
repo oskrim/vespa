@@ -9,7 +9,10 @@ import com.yahoo.document.DocumentTypeManager;
 import com.yahoo.document.Field;
 import com.yahoo.document.MapDataType;
 import com.yahoo.document.StructDataType;
-import com.yahoo.document.serialization.*;
+import com.yahoo.document.serialization.DocumentDeserializer;
+import com.yahoo.document.serialization.DocumentDeserializerFactory;
+import com.yahoo.document.serialization.DocumentSerializer;
+import com.yahoo.document.serialization.DocumentSerializerFactory;
 import com.yahoo.io.GrowableByteBuffer;
 import org.junit.Test;
 
@@ -144,10 +147,10 @@ public class MapTestCase {
         DocumentTypeManager man = new DocumentTypeManager();
         man.register(mapType);
         GrowableByteBuffer buffer = new GrowableByteBuffer(1024);
-        DocumentSerializer serializer = DocumentSerializerFactory.create6(buffer);
+        DocumentSerializer serializer = DocumentSerializerFactory.createHead(buffer);
         serializer.write(f, map);
         buffer.flip();
-        DocumentDeserializer deserializer = DocumentDeserializerFactory.create6(man, buffer);
+        DocumentDeserializer deserializer = DocumentDeserializerFactory.createHead(man, buffer);
         MapFieldValue<FieldValue, FieldValue> map2 = new MapFieldValue<FieldValue, FieldValue>(mapType);
         deserializer.read(f, map2);
         assertNotSame(map, map2);

@@ -50,8 +50,11 @@ import java.util.logging.Logger;
 import static com.yahoo.documentapi.DocumentOperationParameters.parameters;
 import static com.yahoo.documentapi.Response.Outcome.CONDITION_FAILED;
 import static com.yahoo.documentapi.Response.Outcome.ERROR;
+import static com.yahoo.documentapi.Response.Outcome.IGNORED;
 import static com.yahoo.documentapi.Response.Outcome.INSUFFICIENT_STORAGE;
 import static com.yahoo.documentapi.Response.Outcome.NOT_FOUND;
+import static com.yahoo.documentapi.Response.Outcome.OVERLOAD;
+import static com.yahoo.documentapi.Response.Outcome.REJECTED;
 import static com.yahoo.documentapi.Response.Outcome.SUCCESS;
 import static com.yahoo.documentapi.Response.Outcome.TIMEOUT;
 
@@ -273,23 +276,34 @@ public class MessageBusAsyncSession implements MessageBusSession, AsyncSession {
                 messageBusErrorToResultType(mbusResult.getError().getCode()), mbusResult.getError());
     }
 
-    private static Response.Outcome toOutcome(Reply reply) {
-        if (reply.getErrorCodes().contains(DocumentProtocol.ERROR_NO_SPACE))
+    private static Response.Outcome toErrorOutcome(Reply reply) {
+        if (reply.getErrorCodes().contains(DocumentProtocol.ERROR_OVERLOAD)) {
+            return OVERLOAD;
+        }
+        if (reply.getErrorCodes().contains(DocumentProtocol.ERROR_NO_SPACE)) {
             return INSUFFICIENT_STORAGE;
-        if (reply.getErrorCodes().contains(DocumentProtocol.ERROR_TEST_AND_SET_CONDITION_FAILED))
+        }
+        if (reply.getErrorCodes().contains(DocumentProtocol.ERROR_TEST_AND_SET_CONDITION_FAILED)) {
             return CONDITION_FAILED;
+        }
         if (   reply instanceof UpdateDocumentReply && ! ((UpdateDocumentReply) reply).wasFound()
-            || reply instanceof RemoveDocumentReply && ! ((RemoveDocumentReply) reply).wasFound())
+            || reply instanceof RemoveDocumentReply && ! ((RemoveDocumentReply) reply).wasFound()
+            || reply.getErrorCodes().contains(DocumentProtocol.ERROR_DOCUMENT_NOT_FOUND)) {
             return NOT_FOUND;
-        if (reply.getErrorCodes().contains(ErrorCode.TIMEOUT))
+        }
+        if (reply.getErrorCodes().contains(DocumentProtocol.ERROR_REJECTED)) {
+            return REJECTED;
+        }
+        if (reply.getErrorCodes().contains(ErrorCode.TIMEOUT)) {
             return TIMEOUT;
+        }
         return ERROR;
     }
 
     private static Response toError(Reply reply, long reqId) {
         Message msg = reply.getMessage();
         String err = getErrorMessage(reply);
-        Response.Outcome outcome = toOutcome(reply);
+        Response.Outcome outcome = toErrorOutcome(reply);
         return switch (msg.getType()) {
             case DocumentProtocol.MESSAGE_PUTDOCUMENT ->
                     new DocumentResponse(reqId, ((PutDocumentMessage) msg).getDocumentPut().getDocument(), err, outcome, reply.getTrace());
@@ -318,6 +332,8 @@ public class MessageBusAsyncSession implements MessageBusSession, AsyncSession {
                 return new UpdateResponse(reqId, ((UpdateDocumentReply)reply).wasFound(), reply.getTrace());
             case DocumentProtocol.REPLY_PUTDOCUMENT:
                 return new DocumentResponse(reqId, ((PutDocumentMessage)reply.getMessage()).getDocumentPut().getDocument(), reply.getTrace());
+            case DocumentProtocol.REPLY_DOCUMENTIGNORED:
+                return new Response(reqId, null, IGNORED, reply.getTrace());
             default:
                 return new Response(reqId, null, SUCCESS, reply.getTrace());
         }
@@ -336,15 +352,15 @@ public class MessageBusAsyncSession implements MessageBusSession, AsyncSession {
         @Override
         public void handleReply(Reply reply) {
             if (reply.getTrace().getLevel() > 0) {
-                log.log(Level.INFO, reply.getTrace().toString());
+                log.log(Level.FINE, () -> reply.getTrace().toString());
             }
             OperationContext context = (OperationContext) reply.getContext();
             long reqId = context.reqId;
             Response response = reply.hasErrors() ? toError(reply, reqId) : toSuccess(reply, reqId);
             ResponseHandler operationSpecificResponseHandler = context.responseHandler;
-            if (operationSpecificResponseHandler != null)
+            if (operationSpecificResponseHandler != null) {
                 operationSpecificResponseHandler.handleResponse(response);
-            else if (handler != null) {
+            } else if (handler != null) {
                 handler.handleResponse(response);
             } else {
                 queue.add(response);

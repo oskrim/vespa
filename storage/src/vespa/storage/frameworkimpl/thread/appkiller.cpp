@@ -2,6 +2,8 @@
 
 #include <vespa/storage/frameworkimpl/thread/appkiller.h>
 
+#include <cstdlib>
+
 #include <vespa/log/log.h>
 
 LOG_SETUP(".deadlock.killer");
@@ -15,4 +17,4 @@ void RealAppKiller::kill() {
     abort();
 }
 
-} // storage
+} // namespace storage

@@ -1,0 +1,48 @@
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+package com.yahoo.document.restapi.resource;
+
+import com.yahoo.document.Document;
+import com.yahoo.document.DocumentId;
+import com.yahoo.jdisc.handler.CompletionHandler;
+import com.yahoo.messagebus.Trace;
+
+import java.io.IOException;
+import java.util.function.Supplier;
+
+/**
+ * Shared abstraction that can be used for both buffered and streaming response
+ * rendering of Document V1 responses.
+ */
+interface StreamableJsonResponse extends AutoCloseable {
+    void commit(int status, boolean fullyApplied, boolean ignoredOperation) throws IOException;
+    void writeDocumentsArrayStart() throws IOException;
+    void writeDocumentsArrayEnd() throws IOException;
+    void writeDocumentValue(Document document, CompletionHandler completionHandler) throws IOException;
+    void writeDocumentRemoval(DocumentId id, CompletionHandler completionHandler) throws IOException;
+    // The implementation MUST NOT assume the Supplier is safe to invoke at any other
+    // time than during the synchronous invocation of this method. This is because the
+    // underlying supplied resource may require locking for safe access.
+    void reportUpdatedContinuation(Supplier<VisitorContinuation> continuationSupplier) throws IOException;
+    void writeEpilogueContinuation(VisitorContinuation continuation) throws IOException;
+    /**
+     * Write a Trace that encapsulates a logical span of the <em>entire</em> request
+     * (e.g. Get/Put or visitor session). For visitor sessions traces are intentionally
+     * limited in total size due to the amount of messages involved, so for that case
+     * this is usually a very truncated representation of the full trace.
+     */
+    void writeTrace(Trace trace) throws IOException;
+
+    enum MessageSeverity {
+        INFO("info"),
+        WARNING("warning"),
+        ERROR("error");
+
+        private final String jsonValue;
+        MessageSeverity(String jsonValue) { this.jsonValue = jsonValue; }
+        public String jsonValue() { return jsonValue; }
+    }
+
+    void writeMessage(String message, MessageSeverity severity) throws IOException;
+    void writeDocumentCount(long count) throws IOException;
+    void close() throws IOException; // Narrowed exception specifier
+}

@@ -3,6 +3,7 @@ package com.yahoo.language.wordpiece;
 
 import com.yahoo.collections.Tuple2;
 import com.yahoo.language.Language;
+import com.yahoo.language.process.LinguisticsParameters;
 import com.yahoo.language.process.StemMode;
 import com.yahoo.language.process.Token;
 import com.yahoo.language.process.Tokenizer;
@@ -17,6 +18,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.NavigableMap;
 import java.util.TreeMap;
@@ -64,14 +66,14 @@ class Model {
 
     Language language() { return language; }
 
-    List<Integer> embed(String text, Tokenizer tokenizer) {
+    List<Integer> embed(String text, Tokenizer tokenizer, LinguisticsParameters parameters) {
         List<Integer> ids = new ArrayList<>();
-        text = text.toLowerCase();
-        for (Token t : tokenizer.tokenize(text, language, StemMode.NONE, true)) {
+        text = text.toLowerCase(Locale.ROOT);
+        for (Token t : tokenizer.tokenize(text, parameters)) {
             String originalToken = t.getTokenString();
             String candidate = originalToken;
             int count = 0;
-            while (candidate.length() > 0 && !candidate.equals(subwordPrefix)) {
+            while (!candidate.isEmpty() && !candidate.equals(subwordPrefix)) {
                 Tuple2<String, Integer> entry = findLongestSubstring(candidate);
                 if (entry == null) break;
                 ids.add(entry.second);
@@ -83,8 +85,8 @@ class Model {
         return ids;
     }
 
-    List<String> segment(String text, Tokenizer tokenizer) {
-        return embed(text, tokenizer).stream().map(tokenId -> tokenId2Token.get(tokenId)).toList();
+    List<String> segment(String text, Tokenizer tokenizer, LinguisticsParameters parameters) {
+        return embed(text, tokenizer, parameters).stream().map(tokenId -> tokenId2Token.get(tokenId)).toList();
     }
 
     private Tuple2<String, Integer> findLongestSubstring(String candidate) {

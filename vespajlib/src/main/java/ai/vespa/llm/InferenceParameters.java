@@ -15,20 +15,39 @@ import java.util.function.Function;
  * the language model used.
  *
  * author lesters
+ * author glebashnik
  */
 @Beta
 public class InferenceParameters {
-
+    // Consider replacing these options with fields.
+    public static final String OPTION_MODEL = "model";
+    public static final String OPTION_TEMPERATURE = "temperature";
+    public static final String OPTION_MAX_TOKENS = "maxTokens";
+    public static final String OPTION_TOP_K = "topk";
+    public static final String OPTION_TOP_P = "topp";
+    public static final String OPTION_N_PREDICT = "npredict";
+    public static final String OPTION_REPEAT_PENALTY = "repeatpenalty";
+    public static final String OPTION_FREQUENCY_PENALTY = "frequencypenalty";
+    public static final String OPTION_PRESENCE_PENALTY = "presencepenalty";
+    public static final String OPTION_SEED = "seed";
+    public static final String OPTION_JSON_SCHEMA = "json_schema";
+    public static final String OPTION_REASONING_EFFORT = "reasoningEffort";
+    
     private String apiKey;
     private String endpoint;
     private final Function<String, String> options;
 
     public InferenceParameters(Function<String, String> options) {
-        this(null, options);
+        this(null, null, options);
     }
 
     public InferenceParameters(String apiKey, Function<String, String> options) {
+        this(apiKey, null, options);
+    }
+
+    public InferenceParameters(String apiKey, String endpoint, Function<String, String> options) {
         this.apiKey = apiKey;
+        this.endpoint = endpoint;
         this.options = Objects.requireNonNull(options);
     }
 
@@ -68,9 +87,25 @@ public class InferenceParameters {
         }
     }
 
+    public Optional<Long> getLong(String option) {
+        try {
+            return Optional.of(Long.parseLong(options.apply(option)));
+        } catch (Exception e) {
+            return Optional.empty();
+        }
+    }
+
     public void ifPresent(String option, Consumer<String> func) {
         get(option).ifPresent(func);
     }
-
+    
+    // Creates a new InferenceParameters object with default values for options,
+    // i.e. a value in the given default options is used when a corresponding value in the current options is null.
+    public InferenceParameters withDefaultOptions(Function<String, String> defaultOptions) {
+        Function<String, String> optionsWithDefault = key -> {
+            var value = options.apply(key);
+            return value != null ? value : defaultOptions.apply(key);
+        };
+        return new InferenceParameters(apiKey, endpoint, optionsWithDefault);
+    }
 }
-

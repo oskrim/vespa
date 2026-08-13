@@ -3,32 +3,30 @@
 #include <vespa/persistence/spi/resource_usage.h>
 #include <vespa/persistence/spi/resource_usage_listener.h>
 #include <vespa/searchcore/proton/attribute/attribute_usage_stats.h>
-#include <vespa/searchcore/proton/attribute/i_attribute_usage_listener.h>
 #include <vespa/searchcore/proton/persistenceengine/resource_usage_tracker.h>
-#include <vespa/searchcore/proton/test/disk_mem_usage_notifier.h>
+#include <vespa/searchcore/proton/test/resource_usage_notifier.h>
 #include <vespa/searchlib/attribute/address_space_components.h>
 #include <vespa/vespalib/gtest/gtest.h>
 #include <vespa/vespalib/util/idestructorcallback.h>
+
+#include <gmock/gmock.h>
+
 #include <atomic>
 
+using proton::AttributeUsageStats;
+using proton::ResourceUsageState;
+using proton::ResourceUsageTracker;
+using proton::ResourceUsageWithLimit;
+using proton::test::ResourceUsageNotifier;
 using storage::spi::AttributeResourceUsage;
 using storage::spi::ResourceUsage;
-using proton::test::DiskMemUsageNotifier;
-using proton::AttributeUsageStats;
-using proton::DiskMemUsageState;
-using proton::ResourceUsageTracker;
 
 namespace {
 
-struct MyResourceUsageListener : public storage::spi::ResourceUsageListener
-{
+struct MyResourceUsageListener : public storage::spi::ResourceUsageListener {
     std::atomic<size_t> _update_count;
 
-    MyResourceUsageListener()
-        : storage::spi::ResourceUsageListener(),
-          _update_count(0u)
-    {
-    }
+    MyResourceUsageListener() : storage::spi::ResourceUsageListener(), _update_count(0u) {}
 
     void update_resource_usage(const ResourceUsage& resource_usage) override {
         storage::spi::ResourceUsageListener::update_resource_usage(resource_usage);
@@ -37,30 +35,53 @@ struct MyResourceUsageListener : public storage::spi::ResourceUsageListener
     size_t get_update_count() const { return _update_count; }
 };
 
+bool mostly_equal_resource_usage(const ResourceUsage& lhs, const ResourceUsage& rhs) {
+    double eps = 1e-9;
+    auto&  alhs = lhs.get_attribute_address_space_usage();
+    auto&  arhs = rhs.get_attribute_address_space_usage();
+    return std::abs(lhs.get_disk_usage() - rhs.get_disk_usage()) < eps &&
+           std::abs(lhs.get_memory_usage() - rhs.get_memory_usage()) < eps &&
+           std::abs(alhs.get_usage() - arhs.get_usage()) < eps && alhs.get_name() == arhs.get_name();
 }
 
-class ResourceUsageTrackerTest : public ::testing::Test
-{
+MATCHER_P(MostlyEqualResourceUsage, expected, "") {
+    return mostly_equal_resource_usage(expected, arg);
+}
+
+} // namespace
+
+class ResourceUsageTrackerTest : public ::testing::Test {
 protected:
-    DiskMemUsageNotifier                     _notifier;
+    ResourceUsageNotifier                    _notifier;
     std::shared_ptr<ResourceUsageTracker>    _tracker;
     std::unique_ptr<MyResourceUsageListener> _listener;
 
 public:
     ResourceUsageTrackerTest()
         : testing::Test(),
-          _notifier(DiskMemUsageState({ 0.8, 0.5 }, { 0.8, 0.4 })),
+          _notifier(ResourceUsageState(ResourceUsageWithLimit{0.5, 0.8}, ResourceUsageWithLimit{0.4, 0.8})),
           _tracker(std::make_shared<ResourceUsageTracker>(_notifier)),
-          _listener(std::make_unique<MyResourceUsageListener>())
-    {
+          _listener(std::make_unique<MyResourceUsageListener>()) {}
+
+    ~ResourceUsageTrackerTest() override;
+
+    void notify(double disk_usage, double memory_usage) {
+        notify(disk_usage, memory_usage, disk_usage, memory_usage, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
     }
-
-    ~ResourceUsageTrackerTest();
-
-    void notify(double disk_usage, double memory_usage, double transient_disk_usage = 0.0, double transient_memory_usage = 0.0)
-    {
-        _notifier.notify(DiskMemUsageState({ 0.8, disk_usage }, { 0.8, memory_usage },
-                                           transient_disk_usage, transient_memory_usage));
+    void notify(double disk_usage, double memory_usage, double non_transient_disk_usage,
+                double non_transient_memory_usage, double reserved_disk_space, double reserved_disk_space_factor,
+                double reserved_memory, double reserved_memory_factor, double transient_disk_usage,
+                double transient_memory_usage) {
+        _notifier.notify(ResourceUsageState(
+            ResourceUsageWithLimit{disk_usage, 0.8}, ResourceUsageWithLimit{memory_usage, 0.8},
+            non_transient_disk_usage, non_transient_memory_usage, reserved_disk_space, reserved_disk_space_factor,
+            reserved_memory, reserved_memory_factor, transient_disk_usage, transient_memory_usage));
+    }
+    void notify_attribute_usage(const AttributeUsageStats& attribute_usage) {
+        double max_attribute_address_space_usage = attribute_usage.max_address_space_usage().getUsage().usage();
+        _notifier.notify(ResourceUsageState(
+            ResourceUsageWithLimit(0.0, 0.8), ResourceUsageWithLimit(0.0, 0.8), 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+            0.0, ResourceUsageWithLimit(max_attribute_address_space_usage, 0.8), attribute_usage));
     }
 
     ResourceUsage get_usage() { return _listener->get_usage(); }
@@ -69,8 +90,7 @@ public:
 
 ResourceUsageTrackerTest::~ResourceUsageTrackerTest() = default;
 
-TEST_F(ResourceUsageTrackerTest, resource_usage_is_forwarded_to_listener)
-{
+TEST_F(ResourceUsageTrackerTest, resource_usage_is_forwarded_to_listener) {
     EXPECT_EQ(ResourceUsage(0.0, 0.0), get_usage());
     auto register_guard = _tracker->set_listener(*_listener);
     EXPECT_EQ(ResourceUsage(0.5, 0.4), get_usage());
@@ -78,25 +98,35 @@ TEST_F(ResourceUsageTrackerTest, resource_usage_is_forwarded_to_listener)
     EXPECT_EQ(ResourceUsage(0.75, 0.25), get_usage());
 }
 
-TEST_F(ResourceUsageTrackerTest, transient_resource_usage_is_subtracted_from_absolute_usage)
-{
+TEST_F(ResourceUsageTrackerTest, transient_resource_usage_is_subtracted_from_absolute_usage) {
     auto register_guard = _tracker->set_listener(*_listener);
-    notify(0.8, 0.5, 0.4, 0.2);
+    notify(0.8, 0.5, 0.4, 0.3, 0.0, 0.0, 0.0, 0.0, 0.4, 0.2);
     EXPECT_EQ(ResourceUsage(0.4, 0.3), get_usage());
-    notify(0.8, 0.5, 0.9, 0.6);
+    notify(0.8, 0.5, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.8, 0.5);
     EXPECT_EQ(ResourceUsage(0.0, 0.0), get_usage());
 }
 
-TEST_F(ResourceUsageTrackerTest, forwarding_depends_on_register_guard)
-{
+TEST_F(ResourceUsageTrackerTest, reserved_disk_space_is_scaled_by_reserved_disk_space_factor) {
+    auto register_guard = _tracker->set_listener(*_listener);
+    notify(0.8, 0.5, 0.4, 0.3, 0.4, 0.5, 0.0, 0.0, 0.1, 0.2);
+    EXPECT_THAT(get_usage(), MostlyEqualResourceUsage(ResourceUsage(0.6, 0.3)));
+}
+
+TEST_F(ResourceUsageTrackerTest, reserved_memory_is_scaled_by_reserved_memory_factor) {
+    auto register_guard = _tracker->set_listener(*_listener);
+    notify(0.8, 0.5, 0.4, 0.3, 0.0, 0.0, 0.3, 0.5, 0.1, 0.2);
+    // non_transient_memory_usage + reserved_memory * reserved_memory_factor = 0.3 + 0.3 * 0.5 = 0.45
+    EXPECT_THAT(get_usage(), MostlyEqualResourceUsage(ResourceUsage(0.4, 0.45)));
+}
+
+TEST_F(ResourceUsageTrackerTest, forwarding_depends_on_register_guard) {
     auto register_guard = _tracker->set_listener(*_listener);
     register_guard.reset();
     notify(0.75, 0.25);
     EXPECT_EQ(ResourceUsage(0.5, 0.4), get_usage());
 }
 
-TEST_F(ResourceUsageTrackerTest, no_forwarding_to_deleted_listener)
-{
+TEST_F(ResourceUsageTrackerTest, no_forwarding_to_deleted_listener) {
     _listener->set_register_guard(_tracker->set_listener(*_listener));
     notify(0.75, 0.25);
     EXPECT_EQ(ResourceUsage(0.75, 0.25), get_usage());
@@ -104,124 +134,68 @@ TEST_F(ResourceUsageTrackerTest, no_forwarding_to_deleted_listener)
     notify(0.2, 0.1);
 }
 
-TEST_F(ResourceUsageTrackerTest, register_guard_handles_deleted_tracker)
-{
+TEST_F(ResourceUsageTrackerTest, register_guard_handles_deleted_tracker) {
     auto register_guard = _tracker->set_listener(*_listener);
     _tracker.reset();
 }
 
 namespace {
 
-struct NamedAttribute
-{
-    std::string subdb;
-    std::string attribute;
-
-    NamedAttribute(const std::string& subdb_in, const std::string& attribute_in)
-        : subdb(subdb_in),
-          attribute(attribute_in)
-    {
-    }
-};
-
-NamedAttribute ready_a1("0.ready", "a1");
-NamedAttribute notready_a1("2.notready", "a1");
-NamedAttribute ready_a2("0.ready", "a2");
-
 constexpr size_t usage_limit = 1024;
 
-struct AttributeUsageStatsBuilder
-{
-    AttributeUsageStats stats;
-
-    AttributeUsageStatsBuilder()
-        : stats()
-    {
-    }
-
-    ~AttributeUsageStatsBuilder();
-
-    AttributeUsageStatsBuilder& reset() { stats = AttributeUsageStats(); return *this; }
-    AttributeUsageStatsBuilder& merge(const NamedAttribute& named_attribute, size_t used_address_space);
-
-    AttributeUsageStats build() { return stats; }
-
-};
-
-AttributeUsageStatsBuilder::~AttributeUsageStatsBuilder() = default;
-
-AttributeUsageStatsBuilder&
-AttributeUsageStatsBuilder::merge(const NamedAttribute& named_attribute, size_t used_address_space)
-{
-    vespalib::AddressSpace address_space_usage(used_address_space, 0, usage_limit);
-    search::AddressSpaceUsage as_usage;
-    as_usage.set("comp", address_space_usage);
-    stats.merge(as_usage, named_attribute.attribute, named_attribute.subdb);
-    return *this;
-}
-
 double rel_usage(size_t usage) noexcept {
-    return (double) usage / (double) usage_limit;
+    return (double)usage / (double)usage_limit;
 }
 
-ResourceUsage make_resource_usage(const std::string& attr_name, size_t used_address_space)
-{
+ResourceUsage make_resource_usage(const std::string& attr_name, size_t used_address_space) {
     AttributeResourceUsage address_space_usage(rel_usage(used_address_space), attr_name);
     return ResourceUsage(0.0, 0.0, address_space_usage);
 }
 
+AttributeUsageStats make_stats(const std::string& document_type, const std::string& subdb,
+                               const std::string& attribute, size_t used_address_space) {
+    AttributeUsageStats stats(document_type);
+    if (!document_type.empty()) {
+        search::AddressSpaceUsage usage;
+        usage.set("comp", vespalib::AddressSpace(used_address_space, 0, usage_limit));
+        stats.merge(usage, attribute, subdb);
+    }
+    return stats;
 }
 
-TEST_F(ResourceUsageTrackerTest, aggregates_attribute_usage)
-{
-    notify(0.0, 0.0);
+AttributeUsageStats make_index_stats(const std::string& document_type, size_t used_address_space) {
+    AttributeUsageStats       stats(document_type);
+    search::AddressSpaceUsage usage;
+    usage.set("", vespalib::AddressSpace(used_address_space, 0, usage_limit));
+    stats.merge(usage, "index_shards", "");
+    return stats;
+}
+
+} // namespace
+
+TEST_F(ResourceUsageTrackerTest, attribute_usage_is_sent_to_listener) {
     auto register_guard = _tracker->set_listener(*_listener);
-    auto aul1 = _tracker->make_attribute_usage_listener("doctype1");
-    auto aul2 = _tracker->make_attribute_usage_listener("doctype2");
-    AttributeUsageStatsBuilder b1;
-    AttributeUsageStatsBuilder b2;
-    b1.merge(ready_a1, 10).merge(ready_a2, 5);
-    b2.merge(ready_a1, 15);
-    aul1->notify_attribute_usage(b1.build());
-    aul2->notify_attribute_usage(b2.build());
+    notify_attribute_usage(make_stats("doctype2", "0.ready", "a1", 15));
     EXPECT_EQ(make_resource_usage("doctype2.0.ready.a1.comp", 15), get_usage());
-    b1.merge(notready_a1, 16);
-    aul1->notify_attribute_usage(b1.build());
+    EXPECT_EQ(2, get_update_count());
+    notify_attribute_usage(make_stats("doctype1", "2.notready", "a1", 16));
     EXPECT_EQ(make_resource_usage("doctype1.2.notready.a1.comp", 16), get_usage());
-    b1.reset().merge(ready_a1, 10).merge(ready_a2, 5);
-    aul1->notify_attribute_usage(b1.build());
+    EXPECT_EQ(3, get_update_count());
+    notify_attribute_usage(make_stats("doctype2", "0.ready", "a1", 15));
     EXPECT_EQ(make_resource_usage("doctype2.0.ready.a1.comp", 15), get_usage());
-    aul2.reset();
+    EXPECT_EQ(4, get_update_count());
+    notify_attribute_usage(make_stats("doctype1", "0.ready", "a1", 10));
     EXPECT_EQ(make_resource_usage("doctype1.0.ready.a1.comp", 10), get_usage());
-    aul1.reset();
+    EXPECT_EQ(5, get_update_count());
+    notify_attribute_usage(make_stats("", "", "", 10));
     EXPECT_EQ(make_resource_usage("", 0), get_usage());
-    aul2 = _tracker->make_attribute_usage_listener("doctype2");
-    aul2->notify_attribute_usage(b2.build());
+    EXPECT_EQ(6, get_update_count());
+    notify_attribute_usage(make_stats("doctype2", "0.ready", "a1", 15));
     EXPECT_EQ(make_resource_usage("doctype2.0.ready.a1.comp", 15), get_usage());
-}
-
-TEST_F(ResourceUsageTrackerTest, can_skip_scan_when_aggregating_attributes)
-{
-    notify(0.0, 0.0);
-    auto register_guard = _tracker->set_listener(*_listener);
-    auto aul1 = _tracker->make_attribute_usage_listener("doctype1");
-    auto aul2 = _tracker->make_attribute_usage_listener("doctype2");
-    AttributeUsageStatsBuilder b1;
-    AttributeUsageStatsBuilder b2;
-    b1.merge(ready_a1, 20).merge(ready_a2, 5);
-    b2.merge(ready_a1, 15);
-    aul1->notify_attribute_usage(b1.build());
-    EXPECT_EQ(make_resource_usage("doctype1.0.ready.a1.comp", 20), get_usage());
-    EXPECT_EQ(2u, get_update_count());
-    aul1->notify_attribute_usage(b1.build());
-    EXPECT_EQ(make_resource_usage("doctype1.0.ready.a1.comp", 20), get_usage());
-    EXPECT_EQ(2u, get_update_count()); // usage for doctype1 has not changed
-    aul2->notify_attribute_usage(b2.build());
-    EXPECT_EQ(make_resource_usage("doctype1.0.ready.a1.comp", 20), get_usage());
-    EXPECT_EQ(2u, get_update_count()); // usage for doctype2 is less than usage for doctype1
-    aul2.reset();
-    aul1.reset();
-    EXPECT_EQ(4u, get_update_count()); // never skip scan when removing document type
+    EXPECT_EQ(7, get_update_count());
+    notify_attribute_usage(make_index_stats("doctype2", 14));
+    EXPECT_EQ(make_resource_usage("doctype2.index_shards", 14), get_usage());
+    EXPECT_EQ(8, get_update_count());
 }
 
 GTEST_MAIN_RUN_ALL_TESTS()

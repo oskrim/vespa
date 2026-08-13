@@ -13,6 +13,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.Locale;
 import java.util.stream.Collectors;
 
 import static com.yahoo.text.Ascii7BitMatcher.charsAndNumbers;
@@ -35,14 +36,6 @@ public class TensorType {
         // Types added must also be added to TensorTypeParser.parseValueTypeSpec, serialization, and largestOf below
         DOUBLE("double"), FLOAT("float"), BFLOAT16("bfloat16"), INT8("int8");
 
-        int sizeOfCell() {
-            return switch (this) {
-                case DOUBLE -> 8;
-                case FLOAT -> 4;
-                case BFLOAT16 -> 2;
-                case INT8 -> 1;
-            };
-        }
         private final String id;
 
         Value(String id) { this.id = id; }
@@ -74,7 +67,7 @@ public class TensorType {
         }
 
         @Override
-        public String toString() { return name().toLowerCase(); }
+        public String toString() { return name().toLowerCase(Locale.ROOT); }
 
         public static Value fromId(String valueTypeString) {
             for (Value value : values()) {
@@ -161,7 +154,7 @@ public class TensorType {
 
     /**
      * Returns a tensor type instance from a
-     * <a href="https://docs.vespa.ai/en/reference/tensor.html#tensor-type-spec">tensor type spec</a>:
+     * <a href="https://docs.vespa.ai/en/reference/ranking/tensor.html#tensor-type-spec">tensor type spec</a>:
      * <code>tensor(dimension1, dimension2, ...)</code>
      * where each dimension is either
      * <ul>
@@ -224,7 +217,7 @@ public class TensorType {
 
     /**
      * Returns whether this type can be assigned to the given type,
-     * i.e if the given type is a generalization of this type.
+     * i.e. if the given type is a generalization of this type.
      */
     public boolean isAssignableTo(TensorType generalization) {
         return isConvertibleOrAssignableTo(generalization, false, true);
@@ -658,7 +651,7 @@ public class TensorType {
             switch (type) {
                 case mapped -> mapped(name);
                 case indexedUnbound -> indexed(name);
-                default -> throw new IllegalArgumentException("This can not create a dimension of type " + type);
+                default -> throw new IllegalArgumentException("This cannot create a dimension of type " + type);
             }
             return this;
         }

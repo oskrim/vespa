@@ -1,13 +1,22 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.search.yql;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.yahoo.language.Language;
 import com.yahoo.prelude.Index;
 import com.yahoo.prelude.IndexFacts;
 import com.yahoo.prelude.IndexModel;
 import com.yahoo.prelude.SearchDefinition;
+import com.yahoo.prelude.query.CompositeItem;
+import com.yahoo.prelude.query.Item;
+import com.yahoo.prelude.query.OrItem;
 import com.yahoo.prelude.query.WeakAndItem;
+import com.yahoo.prelude.query.WordItem;
 import org.apache.http.client.utils.URIBuilder;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -48,6 +57,53 @@ public class UserInputTestCase {
     }
 
     @Test
+    public void testNear() {
+        URIBuilder builder = searchUri();
+        builder.setParameter("yql", "select * from sources * where ({grammar.syntax:'none',grammar.tokenization:'linguistics',grammar.composite:'near'}userInput('Noëlᛁ continuation'))");
+        // Further token processing is disabled due to type=linguistics applied by default to all terms
+        assertEquals("select * from sources * where default contains near(({stem: false, normalizeCase: false, accentDrop: false, implicitTransforms: false}\"noel\\u16C1\"), ({stem: false, normalizeCase: false, accentDrop: false, implicitTransforms: false}\"continuation\"))",
+                     searchAndAssertNoErrors(builder).yqlRepresentation());
+    }
+
+    @Test
+    public void testNearDistanceAnnotation() {
+        URIBuilder builder = searchUri();
+        builder.setParameter("yql", "select * from sources * where ({grammar.syntax:'none',grammar.tokenization:'linguistics',grammar.composite:'near',distance:3}userInput('a b'))");
+        Query near = searchAndAssertNoErrors(builder);
+        assertEquals("select * from sources * where default contains ({distance: 3}near(({stem: false, normalizeCase: false, accentDrop: false, implicitTransforms: false}\"a\"), ({stem: false, normalizeCase: false, accentDrop: false, implicitTransforms: false}\"b\")))",
+                     near.yqlRepresentation());
+
+        builder.setParameter("yql", "select * from sources * where ({grammar.syntax:'none',grammar.tokenization:'linguistics',grammar.composite:'oNear',distance:4}userInput('a b'))");
+        Query oNear = searchAndAssertNoErrors(builder);
+        assertEquals("select * from sources * where default contains ({distance: 4}onear(({stem: false, normalizeCase: false, accentDrop: false, implicitTransforms: false}\"a\"), ({stem: false, normalizeCase: false, accentDrop: false, implicitTransforms: false}\"b\")))",
+                     oNear.yqlRepresentation());
+    }
+
+    @Test
+    public void testNearAndONearGrammarTypes() {
+        URIBuilder builder = searchUri();
+        builder.setParameter("yql", "select * from sources * where ({grammar:'near'}userInput('a b'))");
+        Query near = searchAndAssertNoErrors(builder);
+        assertEquals("select * from sources * where default contains near(\"a\", \"b\")",
+                     near.yqlRepresentation());
+
+        builder.setParameter("yql", "select * from sources * where ({grammar:'near',distance:3}userInput('a b'))");
+        near = searchAndAssertNoErrors(builder);
+        assertEquals("select * from sources * where default contains ({distance: 3}near(\"a\", \"b\"))",
+                     near.yqlRepresentation());
+
+        builder.setParameter("yql", "select * from sources * where ({grammar:'onear'}userInput('a b'))");
+        Query oNear = searchAndAssertNoErrors(builder);
+        assertEquals("select * from sources * where default contains onear(\"a\", \"b\")",
+                     oNear.yqlRepresentation());
+
+        builder.setParameter("yql", "select * from sources * where ({grammar:'onear',distance:4}userInput('a b'))");
+        oNear = searchAndAssertNoErrors(builder);
+        assertEquals("select * from sources * where default contains ({distance: 4}onear(\"a\", \"b\"))",
+                     oNear.yqlRepresentation());
+    }
+
+    @Test
     void testSimpleUserInput() {
         {
             URIBuilder builder = searchUri();
@@ -81,6 +137,60 @@ public class UserInputTestCase {
     }
 
     @Test
+    void testUserInputInSameElement() {
+        URIBuilder builder = searchUri();
+        builder.setParameter("yql", "select * from sources * where myArray contains sameElement({grammar:'all'}userInput('a b'))");
+        Query query = searchAndAssertNoErrors(builder);
+        assertEquals("select * from sources * where myArray contains sameElement(\"a\" AND \"b\")",
+                     query.yqlRepresentation());
+    }
+
+    /** weakAnd in SameElement: Not supported, will be stopped by downstream query validation */
+    @Test
+    void testSameElementUserInputWithWeakAnd() {
+        URIBuilder builder = searchUri();
+        builder.setParameter("yql",
+                             "select * from sources * where a contains 'b' and c contains sameElement(userInput(@query))");
+        builder.setParameter("query", "c d");
+        Query query = searchAndAssertNoErrors(builder);
+        assertEquals("select * from sources * where (a contains \"b\" AND c contains sameElement(weakAnd(\"c\", \"d\")))",
+                     query.yqlRepresentation());
+    }
+
+    @Test
+    void testMustAndShouldUserInput() {
+        URIBuilder builder = searchUri();
+        builder.setParameter("yql",
+                             "select * from sources * where " +
+                             "{grammar: 'all'}rank(userInput('must terms'), {grammar: 'any'}userInput('should terms'))"
+                            );
+        Query query = searchAndAssertNoErrors(builder);
+        assertEquals("select * from sources * where rank((default contains \"must\" AND default contains \"terms\"), (default contains \"should\" OR default contains \"terms\"))", query.yqlRepresentation());
+    }
+
+    @Test
+    void testGrammarDetails() {
+        URIBuilder builder = searchUri();
+        builder.setParameter("yql",
+                             "select * from sources * where " +
+                             "{grammar.composite:'or', grammar.tokenization:'linguistics', grammar.syntax:'none'}userInput('a b -c')"
+                            );
+        Query query1 = searchAndAssertNoErrors(builder);
+        assertEquals("select * from sources * where (default contains ({stem: false, normalizeCase: false, accentDrop: false, implicitTransforms: false}\"a\") OR " +
+                                                             "default contains ({stem: false, normalizeCase: false, accentDrop: false, implicitTransforms: false}\"b\") OR " +
+                                                             "default contains ({stem: false, normalizeCase: false, accentDrop: false, implicitTransforms: false}\"c\"))",
+                     query1.yqlRepresentation());
+
+        builder.setParameter("yql",
+                             "select * from sources * where " +
+                             "{grammar.composite:'weakAnd', grammar.tokenization:'internal', grammar.syntax:'web'}userInput('a b -c')"
+                            );
+        Query query2 = searchAndAssertNoErrors(builder);
+        assertEquals("select * from sources * where (weakAnd(default contains \"a\", default contains \"b\")) AND !(default contains \"c\")",
+                     query2.yqlRepresentation());
+    }
+
+    @Test
     void testSegmentedUserInput() {
         URIBuilder builder = searchUri();
         builder.setParameter("yql",
@@ -98,11 +208,23 @@ public class UserInputTestCase {
     private void assertTargetHitsIsPropagatedInUserInput(String grammar) {
         URIBuilder builder = searchUri();
         builder.setParameter("yql",
-                             "select * from sources * where {grammar: \"" + grammar + "\", targetHits: 17, defaultIndex: \"f\"}userInput(\"a test\")");
+                             "select * from sources * where {grammar: \"" + grammar + "\", targetHits: 17, totalTargetHits: 19, defaultIndex: \"f\"}userInput(\"a test\")");
         Query query = searchAndAssertNoErrors(builder);
-        assertEquals("select * from sources * where ({targetNumHits: 17}weakAnd(f contains \"a\", f contains \"test\"))", query.yqlRepresentation());
+        assertEquals("select * from sources * where ({targetHits: 17, totalTargetHits: 19}weakAnd(f contains \"a\", f contains \"test\"))", query.yqlRepresentation());
         WeakAndItem weakAnd = (WeakAndItem)query.getModel().getQueryTree().getRoot();
-        assertEquals(17, weakAnd.getN());
+        assertEquals(17, weakAnd.getTargetHits());
+        assertEquals(19, weakAnd.getTotalTargetHits());
+    }
+
+    @Test
+    void testQuotedSymbol() {
+        URIBuilder builder = searchUri();
+        builder.setParameter("yql",
+                             "select * from sources * where {targetHits: 500}userInput(@query)");
+        builder.setParameter("query", "˘͈ᵕ˘͈ meaning in english");
+        Query query = searchAndAssertNoErrors(builder);
+        assertEquals("select * from sources * where ({targetHits: 500}weakAnd((default contains ({origin: {original: \"\\u02D8\\u0348\\u1D55\\u02D8\\u0348 meaning in english\", offset: 1, length: 2}}\"\\u0348\\u1D17\") AND default contains \"\\u0348\"), default contains \"meaning\", default contains \"in\", default contains \"english\"))",
+                     query.yqlRepresentation());
     }
 
     @Test
@@ -162,6 +284,17 @@ public class UserInputTestCase {
     }
 
     @Test
+    void testNegativeUserInput() {
+        URIBuilder builder = searchUri();
+        builder.setParameter("yql",
+                             "select * from sources * where a contains 'b' and !({grammar:'all',defaultIndex:'e'}userInput(@query))");
+        builder.setParameter("query", "c d");
+        Query query = searchAndAssertNoErrors(builder);
+        assertEquals("select * from sources * where (a contains \"b\") AND !((e contains \"c\" AND e contains \"d\"))",
+                     query.yqlRepresentation());
+    }
+
+    @Test
     void testCustomUserInputWithTwoDefaultIndexes() {
         URIBuilder builder = searchUri();
         builder.setParameter("query", "foo");
@@ -190,7 +323,7 @@ public class UserInputTestCase {
                 "select * from ecitem where rank(({defaultIndex:\"myfield\"}(userInput(@myinput))))");
         Query query = searchAndAssertNoErrors(builder);
         assertEquals("select * from ecitem where rank(weakAnd(myfield = (-5)))", query.yqlRepresentation());
-        assertEquals("RANK (WEAKAND(100) myfield:-5)", query.getModel().getQueryTree().getRoot().toString());
+        assertEquals("RANK (WEAKAND myfield:-5)", query.getModel().getQueryTree().getRoot().toString());
     }
 
     @Test
@@ -417,12 +550,110 @@ public class UserInputTestCase {
         assertEquals("select * from sources * where (text_field contains \"foo\" AND text_field contains \"bar\")", query.yqlRepresentation());
     }
 
+    @Test
+    void testYqlRepresentationShowsLanguagePerClause() {
+        URIBuilder builder = searchUri();
+        builder.setParameter("query", "hello");
+        builder.setParameter("yql",
+                "select * from sources * where " +
+                "({language: 'fr'}userInput(@query)) or ({language: 'en'}userInput(@query))");
+        Query query = searchAndAssertNoErrors(builder);
+        String yql = query.yqlRepresentation();
+        assertTrue(yql.contains("language: \"fr\""),
+                "yqlRepresentation should contain French language annotation: " + yql);
+        assertTrue(yql.contains("language: \"en\""),
+                "yqlRepresentation should contain English language annotation: " + yql);
+    }
+
+    @Test
+    void testParsingLanguageReflectsExplicitEnglishAnnotation() {
+        URIBuilder builder = searchUri();
+        builder.setParameter("query", "hello");
+        builder.setParameter("yql",
+                "select * from sources * where ({language: 'en'}userInput(@query))");
+        Query query = searchAndAssertNoErrors(builder);
+        // Explicit English annotation: getParsingLanguage should return ENGLISH
+        assertEquals(Language.ENGLISH, query.getModel().getParsingLanguage());
+    }
+
     private IndexFacts createIndexFacts(boolean phraseSegmenting) {
         SearchDefinition sd = new SearchDefinition("sources");
         Index test = new Index("text_field");
         test.setPhraseSegmenting(phraseSegmenting);
         sd.addIndex(test);
         return new IndexFacts(new IndexModel(sd));
+    }
+
+    @Test
+    void testMultiWordFrenchUserInputSetsLanguageOnAllChildren() {
+        URIBuilder builder = searchUri();
+        builder.setParameter("query", "machine learning");
+        builder.setParameter("yql",
+                "select * from sources * where ({language: 'fr', grammar: 'all'}userInput(@query))");
+        Query query = searchAndAssertNoErrors(builder);
+        Item root = query.getModel().getQueryTree().getRoot();
+        // With grammar:all and multi-word, root should be an AND with children
+        assertInstanceOf(CompositeItem.class, root, "Expected composite for multi-word input");
+        CompositeItem composite = (CompositeItem) root;
+        assertTrue(composite.getItemCount() >= 2, "Expected at least 2 children for 'machine learning'");
+        for (int i = 0; i < composite.getItemCount(); i++) {
+            assertEquals(Language.FRENCH, composite.getItem(i).getLanguage(),
+                    "Child " + i + " should have FRENCH language");
+        }
+        // The composite itself should also have FRENCH
+        assertEquals(Language.FRENCH, root.getLanguage(),
+                "Root composite should have FRENCH language");
+    }
+
+    @Test
+    void testQueryLevelLanguageUsedWhenNoPerItemAnnotation() {
+        URIBuilder builder = searchUri();
+        builder.setParameter("query", "hello");
+        builder.setParameter("language", "ja");
+        builder.setParameter("yql",
+                "select * from sources * where userInput(@query)");
+        Query query = searchAndAssertNoErrors(builder);
+        // Query-level language is Japanese
+        assertEquals(Language.JAPANESE, query.getModel().getLanguage());
+    }
+
+    @Test
+    void testMultipleUserInputFirstSetsModelLanguage() {
+        URIBuilder builder = searchUri();
+        builder.setParameter("query", "hello");
+        builder.setParameter("yql",
+                "select * from sources * where " +
+                "({language: 'fr'}userInput(@query)) or ({language: 'en'}userInput(@query))");
+        Query query = searchAndAssertNoErrors(builder);
+        // The first userInput has {language: 'fr'}, which should set the model's parsing language
+        assertEquals(Language.FRENCH, query.getModel().getParsingLanguage());
+        // Check the item tree has both languages
+        Item root = query.getModel().getQueryTree().getRoot();
+        assertInstanceOf(OrItem.class, root);
+        OrItem or = (OrItem) root;
+        assertEquals(2, or.getItemCount());
+        assertEquals(Language.FRENCH, or.getItem(0).getLanguage());
+        assertEquals(Language.ENGLISH, or.getItem(1).getLanguage());
+    }
+
+    @Test
+    void testExplicitEnglishLanguageSetsEnglishOnItems() {
+        URIBuilder builder = searchUri();
+        builder.setParameter("query", "hello");
+        builder.setParameter("yql",
+                "select * from sources * where ({language: 'en'}userInput(@query))");
+        Query query = searchAndAssertNoErrors(builder);
+        Item root = query.getModel().getQueryTree().getRoot();
+        // With explicit {language: 'en'}, items should have Language.ENGLISH, not UNKNOWN
+        if (root instanceof CompositeItem composite) {
+            for (int i = 0; i < composite.getItemCount(); i++) {
+                assertEquals(Language.ENGLISH, composite.getItem(i).getLanguage(),
+                        "Child item should have ENGLISH language");
+            }
+        } else {
+            assertEquals(Language.ENGLISH, root.getLanguage(),
+                    "Root item should have ENGLISH language");
+        }
     }
 
 }

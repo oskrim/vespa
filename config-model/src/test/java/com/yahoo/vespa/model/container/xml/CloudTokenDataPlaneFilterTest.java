@@ -16,6 +16,7 @@ import com.yahoo.config.provision.SystemName;
 import com.yahoo.config.provision.Zone;
 import com.yahoo.jdisc.http.ConnectorConfig;
 import com.yahoo.jdisc.http.filter.security.cloud.config.CloudTokenDataPlaneFilterConfig;
+import com.yahoo.text.Text;
 import com.yahoo.vespa.model.container.ApplicationContainer;
 import com.yahoo.vespa.model.container.ContainerModel;
 import com.yahoo.vespa.model.container.http.ConnectorFactory;
@@ -60,8 +61,9 @@ public class CloudTokenDataPlaneFilterTest extends ContainerModelBuilderTestBase
     private static final List<DataplaneToken> defaultTokens = List.of(new DataplaneToken("my-token", List.of(
             new DataplaneToken.Version("myfingerprint1", "myaccesshash1", Optional.empty()),
             new DataplaneToken.Version("myfingerprint2", "myaccesshash2", Optional.of(Instant.EPOCH.plus(Duration.ofDays(100000)))))));
-    private static final ContainerEndpoint tokenEndpoint = new ContainerEndpoint("cluster", ApplicationClusterEndpoint.Scope.zone, List.of("token"), OptionalInt.empty(), ApplicationClusterEndpoint.RoutingMethod.exclusive, ApplicationClusterEndpoint.AuthMethod.token);
-    private static final ContainerEndpoint mtlsEndpoint = new ContainerEndpoint("cluster", ApplicationClusterEndpoint.Scope.zone, List.of("mtls"), OptionalInt.empty(), ApplicationClusterEndpoint.RoutingMethod.exclusive, ApplicationClusterEndpoint.AuthMethod.mtls);
+    private static final ContainerEndpoint tokenEndpoint = new ContainerEndpoint("container", ApplicationClusterEndpoint.Scope.zone, List.of("token"), OptionalInt.empty(), ApplicationClusterEndpoint.RoutingMethod.exclusive, ApplicationClusterEndpoint.AuthMethod.token);
+    private static final ContainerEndpoint mtlsEndpoint = new ContainerEndpoint("container", ApplicationClusterEndpoint.Scope.zone, List.of("mtls"), OptionalInt.empty(), ApplicationClusterEndpoint.RoutingMethod.exclusive, ApplicationClusterEndpoint.AuthMethod.mtls);
+
     @TempDir
     public File applicationFolder;
 
@@ -78,7 +80,7 @@ public class CloudTokenDataPlaneFilterTest extends ContainerModelBuilderTestBase
     @Test
     void generates_correct_config_for_tokens() throws IOException {
         var certFile = securityFolder.resolve("foo.pem");
-        var clusterElem = DomBuilderTest.parse(servicesXmlTemplate.formatted(applicationFolder.toPath().relativize(certFile).toString()));
+        var clusterElem = DomBuilderTest.parse(Text.format(servicesXmlTemplate, applicationFolder.toPath().relativize(certFile).toString()));
         createCertificate(certFile);
         buildModel(Set.of(tokenEndpoint, mtlsEndpoint), defaultTokens, clusterElem);
 
@@ -95,11 +97,11 @@ public class CloudTokenDataPlaneFilterTest extends ContainerModelBuilderTestBase
     @Test
     void configures_dataplane_proxy_when_token_defined() throws IOException {
         var certFile = securityFolder.resolve("foo.pem");
-        var clusterElem = DomBuilderTest.parse(servicesXmlTemplate.formatted(applicationFolder.toPath().relativize(certFile).toString()));
+        var clusterElem = DomBuilderTest.parse(Text.format(servicesXmlTemplate, applicationFolder.toPath().relativize(certFile).toString()));
         createCertificate(certFile);
         buildModel(Set.of(tokenEndpoint, mtlsEndpoint), defaultTokens, clusterElem);
 
-        var configId = "container/component/com.yahoo.container.jdisc.DataplaneProxyConfigurator";
+        var configId = "container/component/com.yahoo.vespa.cloud.tenant.dataplane.DataplaneProxyConfigurator";
         var cfg = root.getConfig(DataplaneProxyConfig.class, configId);
         assertEquals(8443, cfg.mtlsPort());
         assertEquals(8444, cfg.tokenPort());
@@ -108,11 +110,11 @@ public class CloudTokenDataPlaneFilterTest extends ContainerModelBuilderTestBase
     @Test
     void configures_dataplane_proxy_when_token_defined_but_missing() throws IOException {
         var certFile = securityFolder.resolve("foo.pem");
-        var clusterElem = DomBuilderTest.parse(servicesXmlTemplate.formatted(applicationFolder.toPath().relativize(certFile).toString()));
+        var clusterElem = DomBuilderTest.parse(Text.format(servicesXmlTemplate, applicationFolder.toPath().relativize(certFile).toString()));
         createCertificate(certFile);
         buildModel(Set.of(tokenEndpoint, mtlsEndpoint), List.of(), clusterElem);
 
-        var configId = "container/component/com.yahoo.container.jdisc.DataplaneProxyConfigurator";
+        var configId = "container/component/com.yahoo.vespa.cloud.tenant.dataplane.DataplaneProxyConfigurator";
         var cfg = root.getConfig(DataplaneProxyConfig.class, configId);
         assertNotNull(cfg);
         assertEquals(8443, cfg.mtlsPort());
@@ -122,7 +124,7 @@ public class CloudTokenDataPlaneFilterTest extends ContainerModelBuilderTestBase
     @Test
     void does_notconfigure_dataplane_proxy_when_token_endpoints_not_defined() throws IOException {
         var certFile = securityFolder.resolve("foo.pem");
-        var clusterElem = DomBuilderTest.parse(servicesXmlTemplate.formatted(applicationFolder.toPath().relativize(certFile).toString()));
+        var clusterElem = DomBuilderTest.parse(Text.format(servicesXmlTemplate, applicationFolder.toPath().relativize(certFile).toString()));
         createCertificate(certFile);
         buildModel(Set.of(mtlsEndpoint), List.of(), clusterElem);
 
@@ -132,7 +134,7 @@ public class CloudTokenDataPlaneFilterTest extends ContainerModelBuilderTestBase
     @Test
     void configuresCorrectConnectors() throws IOException {
         var certFile = securityFolder.resolve("foo.pem");
-        var clusterElem = DomBuilderTest.parse(servicesXmlTemplate.formatted(applicationFolder.toPath().relativize(certFile).toString()));
+        var clusterElem = DomBuilderTest.parse(Text.format(servicesXmlTemplate, applicationFolder.toPath().relativize(certFile).toString()));
         createCertificate(certFile);
         buildModel(Set.of(tokenEndpoint, mtlsEndpoint), defaultTokens, clusterElem);
 
@@ -147,7 +149,7 @@ public class CloudTokenDataPlaneFilterTest extends ContainerModelBuilderTestBase
     @Test
     void fails_on_unknown_permission() throws IOException {
         var certFile = securityFolder.resolve("foo.pem");
-        var servicesXml = """
+        var servicesXml = Text.format("""
                 <container version='1.0'>
                   <clients>
                     <client id="foo" permissions="read,unknown-permission">
@@ -155,7 +157,7 @@ public class CloudTokenDataPlaneFilterTest extends ContainerModelBuilderTestBase
                     </client>
                   </clients>
                 </container>
-                """.formatted(applicationFolder.toPath().relativize(certFile).toString());
+                """, applicationFolder.toPath().relativize(certFile).toString());
         var clusterElem = DomBuilderTest.parse(servicesXml);
         createCertificate(certFile);
         var exception = assertThrows(IllegalArgumentException.class, () -> buildModel(Set.of(mtlsEndpoint), defaultTokens, clusterElem));
@@ -165,7 +167,7 @@ public class CloudTokenDataPlaneFilterTest extends ContainerModelBuilderTestBase
     @Test
     void fails_on_duplicate_clients() throws IOException {
         var certFile = securityFolder.resolve("foo.pem");
-        var servicesXml = """
+        var servicesXml = Text.format("""
                     <container version="1.0">
                         <clients>
                             <client id="mtls" permissions="read,write">
@@ -185,7 +187,7 @@ public class CloudTokenDataPlaneFilterTest extends ContainerModelBuilderTestBase
                             </client>
                         </clients>
                     </container>
-                """.formatted(applicationFolder.toPath().relativize(certFile).toString());
+                """, applicationFolder.toPath().relativize(certFile).toString());
         var clusterElem = DomBuilderTest.parse(servicesXml);
         createCertificate(certFile);
         var exception = assertThrows(IllegalArgumentException.class, () -> buildModel(Set.of(mtlsEndpoint), defaultTokens, clusterElem));

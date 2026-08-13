@@ -23,11 +23,13 @@ import com.yahoo.config.model.api.HostInfo;
 import com.yahoo.config.model.api.Model;
 import com.yahoo.config.model.api.Provisioned;
 import com.yahoo.config.model.deploy.DeployState;
+import com.yahoo.config.model.deploy.TestProperties;
 import com.yahoo.config.model.producer.AnyConfigProducer;
 import com.yahoo.config.model.producer.AbstractConfigProducerRoot;
 import com.yahoo.config.model.producer.UserConfigRepo;
 import com.yahoo.config.provision.AllocatedHosts;
 import com.yahoo.config.provision.ClusterSpec;
+import com.yahoo.config.provision.TelemetryExporterConfiguration;
 import com.yahoo.container.QrConfig;
 import com.yahoo.path.Path;
 import com.yahoo.schema.LargeRankingExpressions;
@@ -137,7 +139,7 @@ public final class VespaModel extends AbstractConfigProducerRoot implements Mode
      *        to instantiate config models
      */
     public VespaModel(ApplicationPackage app, ConfigModelRegistry configModelRegistry) throws IOException, SAXException {
-        this(configModelRegistry, new DeployState.Builder().applicationPackage(app).build());
+        this(configModelRegistry, new DeployState.Builder().applicationPackage(app).properties(new TestProperties()).build());
     }
 
     /**
@@ -297,7 +299,7 @@ public final class VespaModel extends AbstractConfigProducerRoot implements Mode
                 throw new RuntimeException(e);
             }
         }
-        new Processing().processRankProfiles(deployLogger, rankProfileRegistry, queryProfiles, true, false);
+        new Processing(deployState.getProperties()).processRankProfiles(deployLogger, rankProfileRegistry, queryProfiles, true, false);
     }
 
     private void addOnnxModelInfoFromSource(ImportedMlModel model, RankProfile profile) {
@@ -644,12 +646,12 @@ public final class VespaModel extends AbstractConfigProducerRoot implements Mode
     /** If provisioning through the node repo, returns the provision requests issued during build of this */
     public Provisioned provisioned() { return provisioned; }
 
-    /** Returns the id of all clusters in this */
+    /** Returns the spec of all clusters in this */
     public Set<ClusterSpec.Id> allClusters() {
         return hostSystem().getHosts().stream()
                                       .map(HostResource::spec)
                                       .filter(spec -> spec.membership().isPresent())
-                                      .map(spec -> spec.membership().get().cluster().id())
+                                      .map(spec -> spec.membership().get().id())
                                       .collect(Collectors.toCollection(LinkedHashSet::new));
     }
 
@@ -657,4 +659,21 @@ public final class VespaModel extends AbstractConfigProducerRoot implements Mode
     public Set<ApplicationClusterInfo> applicationClusterInfo() {
         return Set.copyOf(getContainerClusters().values());
     }
+
+    @Override
+    public void markClustersForDeferredReconfiguration(Set<String> clusterNames) {
+        if (clusterNames.isEmpty()) return;
+
+        getContainerClusters().values().stream()
+                .filter(cluster -> clusterNames.contains(cluster.getName()))
+                .forEach(cluster -> cluster.setDeferChangesUntilRestart(true));
+    }
+
+    @Override
+    public TelemetryExporterConfiguration telemetryExporterConfiguration() {
+        Admin admin = getAdmin();
+        if (admin == null) return TelemetryExporterConfiguration.empty();
+        return admin.telemetryExporterConfiguration();
+    }
+
 }

@@ -23,6 +23,7 @@ import ai.vespa.schemals.index.Symbol.SymbolType;
 import ai.vespa.schemals.parser.SchemaParser;
 import ai.vespa.schemals.parser.SubLanguageData;
 import ai.vespa.schemals.parser.ast.indexingElm;
+import ai.vespa.schemals.parser.ast.indexingOperationElm;
 import ai.vespa.schemals.parser.ParseException;
 import ai.vespa.schemals.parser.Node;
 
@@ -39,7 +40,7 @@ import ai.vespa.schemals.schemadocument.resolvers.RankExpression.argument.FieldA
 import ai.vespa.schemals.tree.CSTUtils;
 import ai.vespa.schemals.tree.SchemaNode;
 import ai.vespa.schemals.tree.YQLNode;
-import ai.vespa.schemals.tree.SchemaNode.LanguageType;
+import ai.vespa.schemals.tree.Node.LanguageType;
 import ai.vespa.schemals.tree.indexinglanguage.ILUtils;
 
 /**
@@ -75,8 +76,10 @@ public class SchemaDocument implements DocumentManager {
         this.scheduler = scheduler;
     }
     
-    public ParseContext getParseContext(String content) {
+    @Override
+    public ParseContext getParseContext() {
         ParseContext context = new ParseContext(content, this.logger, this.fileURI, this.schemaIndex, this.scheduler);
+        context.useGeneralIdentifers();
         context.useDocumentIdentifiers();
         return context;
     }
@@ -100,7 +103,7 @@ public class SchemaDocument implements DocumentManager {
         schemaIndex.clearDocument(fileURI);
 
         logger.info("Parsing: " + fileURI);
-        ParseContext context = getParseContext(content);
+        ParseContext context = getParseContext();
         var parsingResult = parseContent(context);
 
         parsingResult.diagnostics().addAll(verifyFileName());
@@ -111,15 +114,12 @@ public class SchemaDocument implements DocumentManager {
             this.CST = parsingResult.CST().get();
             lexer.setCST(CST);
 
-            //logger.info("======== CST for file: " + fileURI + " ========");
-     
-            //CSTUtils.printTree(logger, CST);
+            // logger.info("======== CST for file: " + fileURI + " ========");
+
+            // CSTUtils.printTree(logger, CST);
         }
 
-
-
         //schemaIndex.dumpIndex();
-
     }
 
     private List<Diagnostic> verifyFileName() {
@@ -257,26 +257,29 @@ public class SchemaDocument implements DocumentManager {
 
     private static void traverseCST(SchemaNode node, ParseContext context, List<Diagnostic> diagnostics) {
         if (node.containsOtherLanguageData(LanguageType.INDEXING)) {
-            SchemaNode indexingNode = parseIndexingScript(node, context, diagnostics);
-            if (indexingNode != null) {
-                node.addChild(indexingNode);
+            if (node.get(node.size() - 1).isASTInstance(indexingOperationElm.class)) {
+                node.removeChild(node.size() - 1);
+            }
+            SchemaNode indexingRoot = parseIndexingScript(node, context, diagnostics);
+            if (indexingRoot != null) {
+                node.addChild(indexingRoot);
             }
         }
 
         if (node.containsOtherLanguageData(LanguageType.RANK_EXPRESSION)) {
-            // Range nodeRange = node.getRange();
-            // String nodeString = node.get(0).get(0).getText();
-            // Position rankExpressionStart = CSTUtils.addPositions(nodeRange.getStart(), new Position(0, nodeString.length()));
-
-            SchemaRankExpressionParser.embedCST(context, node, diagnostics);
+            SchemaRankingExpressionParser.embedCST(context, node, diagnostics);
         }
 
-        for (Identifier identifier : context.identifiers()) {
-            diagnostics.addAll(identifier.identify(node));
+        for (Identifier<SchemaNode> identifier : context.schemaIdentifiers()) {
+            identifier.identify(node, diagnostics);
         }
 
-        for (int i = 0; i < node.size(); ++i) {
-            traverseCST(node.get(i), context, diagnostics);
+        for (Identifier<ai.vespa.schemals.tree.Node> identifier : context.generalIdentifiers()) {
+            identifier.identify(node, diagnostics);
+        }
+
+        for (ai.vespa.schemals.tree.Node child : node) {
+            traverseCST(child.getSchemaNode(), context, diagnostics);
         }
     }
 
@@ -289,7 +292,7 @@ public class SchemaDocument implements DocumentManager {
         try {
             traverseCST(CST, context, errors);
         } catch(Exception ex) {
-            context.logger().error(ex.getMessage());
+            context.logger().error(ex);
         }
         return new ParseResult(errors, Optional.of(CST));
     }

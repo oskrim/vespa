@@ -3,6 +3,8 @@
 #pragma once
 
 #include <vespa/vespalib/data/fileheader.h>
+
+#include <chrono>
 #include <memory>
 
 class FastOS_FileInterface;
@@ -18,21 +20,25 @@ namespace search {
 class FileWithHeader {
 private:
     std::unique_ptr<FastOS_FileInterface> _file;
-    vespalib::FileHeader _header;
-    uint64_t _header_len;
-    uint64_t _file_size;
+    vespalib::FileHeader                  _header;
+    uint64_t                              _header_len;
+    uint64_t                              _file_size;  // Excludes directio padding
+    uint64_t                            _size_on_disk; // includes directio padding and disk space calculator padding
+    std::chrono::steady_clock::duration _flush_duration;
 
 public:
     FileWithHeader(std::unique_ptr<FastOS_FileInterface> file_in);
     ~FileWithHeader();
     FastOS_FileInterface& file() const { return *_file; }
     const vespalib::GenericHeader& header() const { return _header; }
-    uint64_t file_size() const { return _file_size; }
-    uint64_t data_size() const { return _file_size - _header_len; }
+    uint64_t file_size() const noexcept { return _file_size; }
+    uint64_t data_size() const noexcept { return _file_size - _header_len; }
+    uint64_t size_on_disk() const noexcept { return _size_on_disk; }
+    std::chrono::steady_clock::duration flush_duration() const noexcept { return _flush_duration; }
 
     bool valid() const;
     void rewind();
     void close();
 };
 
-}
+} // namespace search

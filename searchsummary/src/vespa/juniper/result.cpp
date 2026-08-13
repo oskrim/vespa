@@ -1,13 +1,15 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #define _NEED_SUMMARY_CONFIG_IMPL 1
-#include "SummaryConfig.h"
-#include "rpinterface.h"
 #include "result.h"
-#include "juniperparams.h"
+
 #include "Matcher.h"
-#include "config.h"
+#include "SummaryConfig.h"
 #include "appender.h"
+#include "config.h"
+#include "juniperparams.h"
+#include "rpinterface.h"
+
 #include <vespa/vespalib/util/size_literals.h>
 
 #include <vespa/log/log.h>
@@ -16,8 +18,7 @@ LOG_SETUP(".juniper.result");
 namespace juniper {
 
 /** Actual implementation of Juniper generated summaries. */
-class SummaryImpl : public Summary
-{
+class SummaryImpl : public Summary {
 public:
     explicit SummaryImpl() : _text() {}
     explicit SummaryImpl(const std::string& t) : _text(t) {}
@@ -27,31 +28,28 @@ public:
     std::string _text;
 };
 
+Result::Result(const Config& config, QueryHandle& qhandle, const char* docsum, size_t docsum_len)
+    : _qhandle(&qhandle),
+      _mo(qhandle.MatchObj()),
+      _docsum(docsum),
+      _docsum_len(docsum_len),
+      _config(&config),
+      _matcher(),
+      _tokenizer(),
+      _summaries(),
+      _scan_done(false),
+      _dynsum_len(-1),
+      _max_matches(-1),
+      _surround_max(-1),
+      _stem_min(0),
+      _stem_extend(0),
+      _winsize(0),
+      _winsize_fallback_multiplier(10.0),
+      _max_match_candidates(1000) {
+    if (!_mo)
+        return; // The empty result..
 
-Result::Result(const Config& config, QueryHandle& qhandle,
-               const char* docsum, size_t docsum_len, uint32_t langid) :
-    _qhandle(&qhandle),
-    _mo(qhandle.MatchObj(langid)),
-    _docsum(docsum),
-    _docsum_len(docsum_len),
-    _langid(langid),
-    _config(&config),
-    _matcher(),
-    _tokenizer(),
-    _summaries(),
-    _scan_done(false),
-    _dynsum_len(-1),
-    _max_matches(-1),
-    _surround_max(-1),
-    _stem_min(0),
-    _stem_extend(0),
-    _winsize(0),
-    _winsize_fallback_multiplier(10.0),
-    _max_match_candidates(1000)
-{
-    if (!_mo) return; // The empty result..
-
-    const MatcherParams& mp = _config->_matcherparams;
+    const MatcherParams&   mp = _config->_matcherparams;
     const Fast_WordFolder* wordfolder = mp.WordFolder();
 
     if (_qhandle->_stem_min < 0)
@@ -99,21 +97,20 @@ Result::Result(const Config& config, QueryHandle& qhandle,
 
 Result::~Result() = default;
 
-
-long Result::GetRelevancy()
-{
-    if (!_mo) return PROXIMITYBOOST_NOCONSTRAINT_OFFSET;
-    if (!_mo->Query()) return PROXIMITYBOOST_NOCONSTRAINT_OFFSET;
+long Result::GetRelevancy() {
+    if (!_mo)
+        return PROXIMITYBOOST_NOCONSTRAINT_OFFSET;
+    if (!_mo->Query())
+        return PROXIMITYBOOST_NOCONSTRAINT_OFFSET;
     Scan();
     long retval = _matcher->GlobalRank();
     LOG(debug, "juniper::GetRelevancy(%lu)", retval);
     return retval;
 }
 
-Summary* Result::GetTeaser(const Config* alt_config)
-{
+Summary* Result::GetTeaser(const Config* alt_config) {
     LOG(debug, "juniper::GetTeaser");
-    const Config* cfg = (alt_config ? alt_config : _config);
+    const Config*       cfg = (alt_config ? alt_config : _config);
     const DocsumParams& dsp = cfg->_docsumparams;
     if (_qhandle->_dynsum_len < 0)
         _dynsum_len = dsp.Length();
@@ -132,8 +129,7 @@ Summary* Result::GetTeaser(const Config* alt_config)
         else
             _surround_max = _qhandle->_surround_max;
 
-        SummaryDesc* sdesc =
-            _matcher->CreateSummaryDesc(_dynsum_len, dsp.MinLength(), _max_matches, _surround_max);
+        SummaryDesc* sdesc = _matcher->CreateSummaryDesc(_dynsum_len, dsp.MinLength(), _max_matches, _surround_max);
 
         if (sdesc) {
             size_t char_size;
@@ -146,36 +142,34 @@ Summary* Result::GetTeaser(const Config* alt_config)
         sum = std::make_unique<SummaryImpl>();
     }
 
-    if (sum->_text.empty() && dsp.Fallback() == DocsumParams::FALLBACK_PREFIX)
-    {
-        std::vector<char> text;
-        Appender         a(cfg->_sumconf);
-        ucs4_t           buf[TOKEN_DSTLEN];
-        const char      *src      = _docsum;
-        const char      *src_end  = _docsum + _docsum_len;
-        ucs4_t          *dst      = buf;
-        ucs4_t          *dst_end  = dst + TOKEN_DSTLEN;
-        const Fast_WordFolder *folder   = _config->_matcherparams.WordFolder();
+    if (sum->_text.empty() && dsp.Fallback() == DocsumParams::FALLBACK_PREFIX) {
+        std::vector<char>      text;
+        Appender               a(cfg->_sumconf);
+        ucs4_t                 buf[TOKEN_DSTLEN];
+        const char*            src = _docsum;
+        const char*            src_end = _docsum + _docsum_len;
+        ucs4_t*                dst = buf;
+        ucs4_t*                dst_end = dst + TOKEN_DSTLEN;
+        const Fast_WordFolder* folder = _config->_matcherparams.WordFolder();
 
-        text.reserve(std::min(4_Ki, size_t(_dynsum_len*2)));
+        text.reserve(std::min(4_Ki, size_t(_dynsum_len * 2)));
         if (src_end - src <= _dynsum_len) {
             a.append(text, src, src_end - src);
             src = src_end; // ensure while loop not run
         }
         while (src < src_end) {
-            const char *startpos;
-            size_t tokenLen;
-            const char *old_src = src;
-            size_t old_sum_len = text.size();
-            src = folder->UCS4Tokenize(src, src_end, dst, dst_end,
-                                       startpos, tokenLen);
+            const char* startpos;
+            size_t      tokenLen;
+            const char* old_src = src;
+            size_t      old_sum_len = text.size();
+            src = folder->UCS4Tokenize(src, src_end, dst, dst_end, startpos, tokenLen);
             if (dst[0] == 0) {
                 a.append(text, old_src, src_end - old_src);
                 src = src_end; // ensure loop termination
             } else {
                 a.append(text, old_src, src - old_src);
             }
-            if (text.size() > (size_t) _dynsum_len) {
+            if (text.size() > (size_t)_dynsum_len) {
                 text.resize(old_sum_len);
                 text.insert(text.end(), cfg->_sumconf->dots().begin(), cfg->_sumconf->dots().end());
                 break;
@@ -187,23 +181,18 @@ Summary* Result::GetTeaser(const Config* alt_config)
     return _summaries.back().get();
 }
 
-
-Summary* Result::GetLog()
-{
+Summary* Result::GetLog() {
     // Avoid overhead when being called with an empty stack
     std::unique_ptr<Summary> sum;
-    if (_mo && _mo->Query())
-    {
+    if (_mo && _mo->Query()) {
         LOG(debug, "juniper::GetLog");
         Scan();
         sum = std::make_unique<SummaryImpl>(_matcher->GetLog());
-    }
-    else {
+    } else {
         sum = std::make_unique<SummaryImpl>();
     }
     _summaries.emplace_back(std::move(sum));
     return _summaries.back().get();
 }
 
-
-}  // end namespace juniper
+} // end namespace juniper

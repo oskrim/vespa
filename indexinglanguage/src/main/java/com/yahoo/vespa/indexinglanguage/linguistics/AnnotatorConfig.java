@@ -2,48 +2,74 @@
 package com.yahoo.vespa.indexinglanguage.linguistics;
 
 import com.yahoo.language.Language;
+import com.yahoo.language.process.LinguisticsParameters;
 import com.yahoo.language.process.StemMode;
 import com.yahoo.vespa.configdefinition.IlscriptsConfig;
+
+import java.util.Objects;
 
 /**
  * @author Simon Thoresen Hult
  */
 public class AnnotatorConfig implements Cloneable {
 
+    private String profile = null;
     private Language language;
     private StemMode stemMode;
     private boolean removeAccents;
+    private boolean lowercase;
     private int maxTermOccurrences;
     private int maxTokenLength;
     private int maxTokenizeLength;
+    private double maxReplacementCharactersRatio;
+    private int maxReplacementCharacters;
 
     public static final int DEFAULT_MAX_TERM_OCCURRENCES;
     private static final int DEFAULT_MAX_TOKEN_LENGTH;
     private static final int DEFAULT_MAX_TOKENIZE_LENGTH;
+    private static final double DEFAULT_MAX_REPLACEMENT_CHARACTERS_RATIO;
+    private static final int DEFAULT_MAX_REPLACEMENT_CHARACTERS;
 
     static {
         IlscriptsConfig defaults = new IlscriptsConfig(new IlscriptsConfig.Builder());
         DEFAULT_MAX_TERM_OCCURRENCES = defaults.maxtermoccurrences();
         DEFAULT_MAX_TOKEN_LENGTH = defaults.maxtokenlength();
         DEFAULT_MAX_TOKENIZE_LENGTH = defaults.fieldmatchmaxlength();
+        DEFAULT_MAX_REPLACEMENT_CHARACTERS_RATIO = defaults.maxReplacementCharactersRatio();
+        DEFAULT_MAX_REPLACEMENT_CHARACTERS = defaults.maxReplacementCharacters();
     }
 
     public AnnotatorConfig() {
         language = Language.ENGLISH;
         stemMode = StemMode.NONE;
         removeAccents = false;
+        lowercase = true;
         maxTermOccurrences = DEFAULT_MAX_TERM_OCCURRENCES;
         maxTokenLength = DEFAULT_MAX_TOKEN_LENGTH;
         maxTokenizeLength = DEFAULT_MAX_TOKENIZE_LENGTH;
+        maxReplacementCharactersRatio = DEFAULT_MAX_REPLACEMENT_CHARACTERS_RATIO;
+        maxReplacementCharacters = DEFAULT_MAX_REPLACEMENT_CHARACTERS;
     }
 
-    public AnnotatorConfig(AnnotatorConfig rhs) {
-        language = rhs.language;
-        stemMode = rhs.stemMode;
-        removeAccents = rhs.removeAccents;
-        maxTermOccurrences = rhs.maxTermOccurrences;
-        maxTokenLength = rhs.maxTokenLength;
-        maxTokenizeLength = rhs.maxTokenizeLength;
+    public AnnotatorConfig(AnnotatorConfig other) {
+        profile = other.profile;
+        language = other.language;
+        stemMode = other.stemMode;
+        removeAccents = other.removeAccents;
+        lowercase = other.lowercase;
+        maxTermOccurrences = other.maxTermOccurrences;
+        maxTokenLength = other.maxTokenLength;
+        maxTokenizeLength = other.maxTokenizeLength;
+        maxReplacementCharactersRatio = other.maxReplacementCharactersRatio;
+        maxReplacementCharacters = other.maxReplacementCharacters;
+    }
+
+    /** Returns the target field this is annotating the value of, or null if not set. */
+    public String getProfile() { return profile; }
+
+    public AnnotatorConfig setProfile(String profile) {
+        this.profile = profile;
+        return this;
     }
 
     public Language getLanguage() {
@@ -78,6 +104,15 @@ public class AnnotatorConfig implements Cloneable {
         return this;
     }
 
+    public boolean getLowercase() {
+        return lowercase;
+    }
+
+    public AnnotatorConfig setLowercase(boolean lowercase) {
+        this.lowercase = lowercase;
+        return this;
+    }
+
     public int getMaxTermOccurrences() {
         return maxTermOccurrences;
     }
@@ -97,6 +132,12 @@ public class AnnotatorConfig implements Cloneable {
     }
 
     public static int getDefaultMaxTokenLength() { return DEFAULT_MAX_TOKEN_LENGTH; }
+
+    public double getMaxReplacementCharactersRatio() { return maxReplacementCharactersRatio; }
+    public AnnotatorConfig setMaxReplacementCharactersRatio(double ratio) { this.maxReplacementCharactersRatio = ratio; return this;}
+
+    public int getMaxReplacementCharacters() { return maxReplacementCharacters; }
+    public AnnotatorConfig setMaxReplacementCharacters(int count) { this.maxReplacementCharacters = count; return this; }
 
     public AnnotatorConfig setMaxTokenizeLength(int maxTokenizeLength) {
         this.maxTokenizeLength = maxTokenizeLength;
@@ -119,36 +160,77 @@ public class AnnotatorConfig implements Cloneable {
         return maxTermOccurrences != DEFAULT_MAX_TERM_OCCURRENCES;
     }
 
+    public boolean hasNonDefaultMaxReplacementCharactersRatio() {
+        return maxReplacementCharactersRatio != DEFAULT_MAX_REPLACEMENT_CHARACTERS_RATIO;
+    }
+
+    public boolean hasNonDefaultMaxReplacementCharacters() {
+        return maxReplacementCharacters != DEFAULT_MAX_REPLACEMENT_CHARACTERS;
+    }
+
+    public LinguisticsParameters asLinguisticsParameters() {
+        return new LinguisticsParameters(profile, language, stemMode, removeAccents, lowercase);
+    }
+
     @Override
-    public boolean equals(Object obj) {
-        if (!(obj instanceof AnnotatorConfig rhs)) {
-            return false;
-        }
-        if (!language.equals(rhs.language)) {
-            return false;
-        }
-        if (!stemMode.equals(rhs.stemMode)) {
-            return false;
-        }
-        if (removeAccents != rhs.removeAccents) {
-            return false;
-        }
-        if (maxTermOccurrences != rhs.maxTermOccurrences) {
-            return false;
-        }
-        if (maxTokenLength != rhs.maxTokenLength) {
-            return false;
-        }
-        if (maxTokenizeLength != rhs.maxTokenizeLength) {
-            return false;
-        }
+    public boolean equals(Object o) {
+        if (!(o instanceof AnnotatorConfig other)) return false;
+        if (!Objects.equals(profile, other.profile)) return false;
+        if (!language.equals(other.language)) return false;
+        if (!stemMode.equals(other.stemMode)) return false;
+        if (removeAccents != other.removeAccents) return false;
+        if (lowercase != other.lowercase) return false;
+        if (maxTermOccurrences != other.maxTermOccurrences) return false;
+        if (maxTokenLength != other.maxTokenLength) return false;
+        if (maxTokenizeLength != other.maxTokenizeLength) return false;
+        if (maxReplacementCharactersRatio != other.maxReplacementCharactersRatio) return false;
+        if (maxReplacementCharacters != other.maxReplacementCharacters) return false;
         return true;
     }
 
     @Override
     public int hashCode() {
-        return getClass().hashCode() + language.hashCode() + stemMode.hashCode() +
-               Boolean.valueOf(removeAccents).hashCode() + maxTermOccurrences + maxTokenLength + maxTokenizeLength;
+        return Objects.hash(getClass(), profile, language.hashCode(), stemMode.hashCode(),
+                            removeAccents, lowercase, maxTermOccurrences, maxTokenLength, maxTokenizeLength,
+                            maxReplacementCharactersRatio, maxReplacementCharacters);
+    }
+
+    @Override
+    public AnnotatorConfig clone() {
+        try {
+            return (AnnotatorConfig) super.clone();
+        }
+        catch (CloneNotSupportedException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    @Override
+    public String toString() {
+        return "annotator config" + parameterString();
+    }
+
+    public String parameterString() {
+        StringBuilder ret = new StringBuilder();
+        if (getRemoveAccents())
+            ret.append(" normalize");
+        if ( ! getLowercase())
+            ret.append(" keep-case");
+        if (getProfile() != null)
+            ret.append(" profile:\"" + getProfile() + "\"");
+        if (getStemMode() != StemMode.NONE)
+            ret.append(" stem:\"" + getStemMode() + "\"");
+        if (hasNonDefaultMaxTokenizeLength())
+            ret.append(" max-length:" + getMaxTokenizeLength());
+        if (hasNonDefaultMaxTokenLength())
+            ret.append(" max-token-length:" + getMaxTokenLength());
+        if (hasNonDefaultMaxTermOccurrences())
+            ret.append(" max-occurrences:" + getMaxTermOccurrences());
+        if (hasNonDefaultMaxReplacementCharactersRatio())
+            ret.append(" max-replacement-characters-ratio:").append(getMaxReplacementCharactersRatio());
+        if (hasNonDefaultMaxReplacementCharacters())
+            ret.append(" max-replacement-characters:").append(getMaxReplacementCharacters());
+        return ret.toString();
     }
 
 }

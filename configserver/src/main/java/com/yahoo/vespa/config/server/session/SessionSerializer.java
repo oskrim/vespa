@@ -5,11 +5,14 @@ import com.yahoo.component.Version;
 import com.yahoo.config.FileReference;
 import com.yahoo.config.model.api.Quota;
 import com.yahoo.config.model.api.TenantSecretStore;
+import com.yahoo.config.model.api.TenantVault;
 import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.AthenzDomain;
 import com.yahoo.config.provision.CloudAccount;
+import com.yahoo.config.provision.CloudResourceTags;
 import com.yahoo.config.provision.DataplaneToken;
 import com.yahoo.config.provision.DockerImage;
+import com.yahoo.config.provision.TelemetryExporterConfiguration;
 import com.yahoo.vespa.flags.BooleanFlag;
 import com.yahoo.yolean.Exceptions;
 
@@ -31,34 +34,50 @@ public class SessionSerializer {
 
     void write(SessionZooKeeperClient zooKeeperClient, ApplicationId applicationId,
                Instant created, Optional<FileReference> fileReference, Optional<DockerImage> dockerImageRepository,
-               Version vespaVersion, Optional<AthenzDomain> athenzDomain, Optional<Quota> quota,
-               List<TenantSecretStore> tenantSecretStores, List<X509Certificate> operatorCertificates,
-               Optional<CloudAccount> cloudAccount, List<DataplaneToken> dataplaneTokens, ActivationTriggers activationTriggers,
+               Version vespaVersion, Optional<Version> versionToBuildFirst,
+               Optional<AthenzDomain> athenzDomain, Optional<Quota> quota,
+               List<TenantVault> tenantVaults, List<TenantSecretStore> tenantSecretStores,
+               List<X509Certificate> operatorCertificates, Optional<CloudAccount> cloudAccount,
+               CloudResourceTags cloudResourceTags,
+               List<DataplaneToken> dataplaneTokens, ActivationTriggers activationTriggers,
+               TelemetryExporterConfiguration telemetryExporterConfiguration,
                BooleanFlag writeSessionData) {
+
+        // Note: Any changes to SessionData needs to be reflected in the calls below and in the call to writeSessionData()
+        // and readSessionDataFromLegacyPaths
         zooKeeperClient.writeApplicationId(applicationId);
         zooKeeperClient.writeApplicationPackageReference(fileReference);
         zooKeeperClient.writeVespaVersion(vespaVersion);
+        zooKeeperClient.writeVersionToBuildFirst(versionToBuildFirst);
         zooKeeperClient.writeDockerImageRepository(dockerImageRepository);
         zooKeeperClient.writeAthenzDomain(athenzDomain);
         zooKeeperClient.writeQuota(quota);
+        zooKeeperClient.writeTenantVaults(tenantVaults);
         zooKeeperClient.writeTenantSecretStores(tenantSecretStores);
         zooKeeperClient.writeOperatorCertificates(operatorCertificates);
         zooKeeperClient.writeCloudAccount(cloudAccount);
+        zooKeeperClient.writeCloudResourceTags(cloudResourceTags);
         zooKeeperClient.writeDataplaneTokens(dataplaneTokens);
         zooKeeperClient.writeActivationTriggers(activationTriggers);
+        zooKeeperClient.writeTelemetryExportConfig(telemetryExporterConfiguration);
+
         if (writeSessionData.value())
             zooKeeperClient.writeSessionData(new SessionData(applicationId,
                                                              fileReference,
                                                              vespaVersion,
+                                                             versionToBuildFirst,
                                                              created,
                                                              dockerImageRepository,
                                                              athenzDomain,
                                                              quota,
+                                                             tenantVaults,
                                                              tenantSecretStores,
                                                              operatorCertificates,
                                                              cloudAccount,
+                                                             cloudResourceTags,
                                                              dataplaneTokens,
-                                                             activationTriggers));
+                                                             activationTriggers,
+                                                             telemetryExporterConfiguration));
     }
 
     SessionData read(SessionZooKeeperClient zooKeeperClient, BooleanFlag readSessionData) {
@@ -77,15 +96,19 @@ public class SessionSerializer {
         return new SessionData(zooKeeperClient.readApplicationId(),
                                zooKeeperClient.readApplicationPackageReference(),
                                zooKeeperClient.readVespaVersion(),
+                               zooKeeperClient.readVersionToBuildFirst(),
                                zooKeeperClient.readCreateTime(),
                                zooKeeperClient.readDockerImageRepository(),
                                zooKeeperClient.readAthenzDomain(),
                                zooKeeperClient.readQuota(),
+                               zooKeeperClient.readTenantVaults(),
                                zooKeeperClient.readTenantSecretStores(),
                                zooKeeperClient.readOperatorCertificates(),
                                zooKeeperClient.readCloudAccount(),
+                               zooKeeperClient.readCloudResourceTags(),
                                zooKeeperClient.readDataplaneTokens(),
-                               zooKeeperClient.readActivationTriggers());
+                               zooKeeperClient.readActivationTriggers(),
+                               zooKeeperClient.readTelemetryExporterConfiguration());
     }
 
 }

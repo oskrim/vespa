@@ -3,15 +3,17 @@
 
 #include "i_blockable_maintenance_job.h"
 #include "i_move_operation_limiter.h"
+
 #include <mutex>
 #include <unordered_set>
 
 namespace proton {
 
 class BlockableMaintenanceJobConfig;
-class DiskMemUsageState;
+class ResourceUsageState;
 class IMaintenanceJobRunner;
 struct IMoveOperationLimiter;
+class MaintenanceJobTokenSource;
 
 /**
  * Implementation of a maintenance job that can be blocked and unblocked due to various external reasons.
@@ -23,26 +25,28 @@ private:
     using LockGuard = std::lock_guard<std::mutex>;
     using ReasonSet = std::unordered_set<BlockedReason>;
 
-    mutable std::mutex     _mutex;
-    ReasonSet              _blockReasons;
-    bool                   _blocked;
-    IMaintenanceJobRunner *_runner;
-    double                 _resourceLimitFactor;
+    mutable std::mutex                     _mutex;
+    ReasonSet                              _blockReasons;
+    bool                                   _blocked;
+    IMaintenanceJobRunner*                 _runner;
+    double                                 _resourceLimitFactor;
     std::shared_ptr<IMoveOperationLimiter> _moveOpsLimiter;
 
-    void updateBlocked(const LockGuard &guard);
 protected:
-    void internalNotifyDiskMemUsage(const DiskMemUsageState &state);
+    std::shared_ptr<MaintenanceJobToken>       _token;
+    std::shared_ptr<MaintenanceJobTokenSource> _token_source;
+
+private:
+    void updateBlocked(const LockGuard& guard);
+
+protected:
+    void internal_notify_resource_usage(const ResourceUsageState& state);
 
 public:
-    BlockableMaintenanceJob(const std::string &name,
-                            vespalib::duration delay,
-                            vespalib::duration interval);
+    BlockableMaintenanceJob(const std::string& name, vespalib::duration delay, vespalib::duration interval);
 
-    BlockableMaintenanceJob(const std::string &name,
-                            vespalib::duration delay,
-                            vespalib::duration interval,
-                            const BlockableMaintenanceJobConfig &config);
+    BlockableMaintenanceJob(const std::string& name, vespalib::duration delay, vespalib::duration interval,
+                            const BlockableMaintenanceJobConfig& config);
 
     ~BlockableMaintenanceJob() override;
 
@@ -53,9 +57,10 @@ public:
     void setBlocked(BlockedReason reason) override;
     void unBlock(BlockedReason reason) override;
     bool isBlocked() const override;
-    void registerRunner(IMaintenanceJobRunner *runner) override { _runner = runner; }
-    IMoveOperationLimiter & getLimiter() { return *_moveOpsLimiter; }
-    const IMoveOperationLimiter & getLimiter() const { return *_moveOpsLimiter; }
+    void got_token(std::shared_ptr<MaintenanceJobToken> token, bool sync) override;
+    void registerRunner(IMaintenanceJobRunner* runner) override { _runner = runner; }
+    IMoveOperationLimiter& getLimiter() { return *_moveOpsLimiter; }
+    const IMoveOperationLimiter& getLimiter() const { return *_moveOpsLimiter; }
 };
 
-}
+} // namespace proton

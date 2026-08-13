@@ -12,7 +12,7 @@ namespace search::memoryindex {
  */
 class IFieldIndexRemoveListener {
 public:
-    virtual ~IFieldIndexRemoveListener() {}
+    virtual ~IFieldIndexRemoveListener() = default;
 
     /**
      * Called when a {word, docId} tuple is removed from the field index.
@@ -20,4 +20,4 @@ public:
     virtual void remove(const std::string_view word, uint32_t docId) = 0;
 };
 
-}
+} // namespace search::memoryindex

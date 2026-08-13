@@ -20,11 +20,13 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/vespa-engine/vespa/client/go/internal/cli/config"
+	"github.com/vespa-engine/vespa/client/go/internal/ioutil"
 	"github.com/vespa-engine/vespa/client/go/internal/vespa"
 )
 
 const (
-	configFile = "config.yaml"
+	configFile               = "config.yaml"
+	defaultConfigScopeOption = "default_config_scope"
 )
 
 func newConfigCmd() *cobra.Command {
@@ -41,9 +43,10 @@ Configuration is written to $HOME/.vespa by default. This path can be
 overridden by setting the VESPA_CLI_HOME environment variable.
 
 When setting an option locally, the configuration is written to .vespa in the
-working directory, where that directory is assumed to be a Vespa application
-directory. This allows you to have separate configuration options per
-application.
+working directory. When reading configuration, Vespa CLI searches for .vespa
+in the current directory and parent directories, allowing you to run commands
+from subdirectories of your application. This allows you to have separate
+configuration options per application.
 
 Vespa CLI chooses the value for a given option in the following order, from
 most to least preferred:
@@ -60,7 +63,7 @@ application
 Specifies the application ID to manage. It has three parts, separated by
 dots, with the third part being optional. If the third part is omitted it
 defaults to "default". This is only relevant for the "cloud" and "hosted"
-targets. See https://cloud.vespa.ai/en/tenant-apps-instances for more details.
+targets. See https://docs.vespa.ai/en/learn/tenant-apps-instances.html for more details.
 This has no default value. Examples: tenant1.app1, tenant1.app1.instance1
 
 cluster
@@ -69,7 +72,7 @@ Specifies the container cluster to manage. If left empty (default) and the
 application has only one container cluster, that cluster is chosen
 automatically. When an application has multiple cluster this must specify a
 valid cluster name, as specified in services.xml. See
-https://docs.vespa.ai/en/reference/services-container.html for more details.
+https://docs.vespa.ai/en/reference/applications/services/container.html for more details.
 
 color
 
@@ -113,8 +116,15 @@ zone
 
 Specifies a custom zone to use when connecting to a Vespa Cloud application.
 This is only relevant for cloud and hosted targets and defaults to a dev zone.
-See https://cloud.vespa.ai/en/reference/zones for available zones. Examples:
-dev.aws-us-east-1c, dev.gcp-us-central1-f, perf.aws-us-east-1c`,
+See https://docs.vespa.ai/en/operations/zones.html for available zones. Examples:
+dev.aws-us-east-1c, dev.gcp-us-central1-f
+
+default_config_scope
+
+Controls whether config set and config unset write to local or global
+configuration by default. Valid values are "local" and "global". When unset,
+defaults to "global". In Vespa 9, the default will change to "local". Use
+--local or --global on individual commands to override this setting.`,
 		DisableAutoGenTag: true,
 		SilenceUsage:      false,
 		Args:              cobra.MinimumNArgs(1),
@@ -124,8 +134,32 @@ dev.aws-us-east-1c, dev.gcp-us-central1-f, perf.aws-us-east-1c`,
 	}
 }
 
+func resolveWriteConfig(cli *CLI, local, global bool, optionName string) (cfg *Config, useLocal, implicitScope, scopeIsSet bool, err error) {
+	if local && global {
+		return nil, false, false, false, fmt.Errorf("cannot use both --local and --global flags")
+	}
+	if local && optionName == defaultConfigScopeOption {
+		return nil, false, false, false, fmt.Errorf("%s can only be modified in global configuration", defaultConfigScopeOption)
+	}
+	useLocal = local
+	scopeValue, scopeIsSet := cli.config.getNonEmpty(defaultConfigScopeOption)
+	implicitScope = !local && !global && optionName != defaultConfigScopeOption
+	if implicitScope && scopeValue == "local" {
+		useLocal = true
+	}
+	cfg = cli.config
+	if useLocal {
+		if _, err := cli.applicationPackageFrom(nil, vespa.PackageOptions{}); err != nil {
+			return nil, false, false, false, fmt.Errorf("failed to write local configuration: %w", err)
+		}
+		cfg = cli.config.local
+	}
+	return cfg, useLocal, implicitScope, scopeIsSet, nil
+}
+
 func newConfigSetCmd(cli *CLI) *cobra.Command {
 	var localArg bool
+	var globalArg bool
 	cmd := &cobra.Command{
 		Use:   "set option-name value",
 		Short: "Set a configuration option.",
@@ -141,32 +175,48 @@ $ vespa config set application my-tenant.my-application.my-instance
 # Set the instance explicitly. This will take precedence over an instance specified as part of the application option.
 $ vespa config set instance other-instance
 
-# Set an option in local configuration, for the current application only
-$ vespa config set --local zone perf.us-north-1`,
+# Control whether config set/unset writes to local or global config by default
+$ vespa config set default_config_scope local
+
+# Set an option in local configuration, for the current application only. Overrides default_config_scope
+$ vespa config set --local zone dev.aws-us-east-1c
+
+# Set an option in global configuration. Overrides default_config_scope
+$ vespa config set --global target cloud`,
 		DisableAutoGenTag: true,
 		SilenceUsage:      true,
 		Args:              cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			config := cli.config
-			if localArg {
-				// Need an application package in working directory to allow local configuration
-				if _, err := cli.applicationPackageFrom(nil, vespa.PackageOptions{}); err != nil {
-					return fmt.Errorf("failed to write local configuration: %w", err)
-				}
-				config = cli.config.local
-			}
-			if err := config.set(args[0], args[1]); err != nil {
+			cfg, useLocal, implicitScope, scopeIsSet, err := resolveWriteConfig(cli, localArg, globalArg, args[0])
+			if err != nil {
 				return err
 			}
-			return config.write()
+			if err := cfg.set(args[0], args[1]); err != nil {
+				return err
+			}
+			if err := cfg.write(); err != nil {
+				return err
+			}
+			scope := "global"
+			if useLocal {
+				scope = "local"
+			}
+			cli.printSuccess(fmt.Sprintf("set %s to %s in %s config at %s", args[0], args[1], scope, filepath.Join(cfg.homeDir, configFile)))
+			if implicitScope && !scopeIsSet {
+				cli.printWarning(`default_config_scope is unset, wrote to global config`,
+					`set default_config_scope to "local" or "global" to silence this warning; in Vespa 9 unset will default to "local"`)
+			}
+			return nil
 		},
 	}
 	cmd.Flags().BoolVarP(&localArg, "local", "l", false, "Write option to local configuration, i.e. for the current application")
+	cmd.Flags().BoolVarP(&globalArg, "global", "g", false, "Write option to global configuration, overriding default_config_scope")
 	return cmd
 }
 
 func newConfigUnsetCmd(cli *CLI) *cobra.Command {
 	var localArg bool
+	var globalArg bool
 	cmd := &cobra.Command{
 		Use:   "unset option-name",
 		Short: "Unset a configuration option.",
@@ -178,46 +228,73 @@ Unsetting a configuration option will reset it to its default value, which may b
 $ vespa config unset target
 
 # Stop overriding application option in local config
-$ vespa config unset --local application`,
+$ vespa config unset --local application
+
+# Unset a global option, overriding default_config_scope
+$ vespa config unset --global target`,
 		DisableAutoGenTag: true,
 		SilenceUsage:      true,
 		Args:              cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			config := cli.config
-			if localArg {
-				if _, err := cli.applicationPackageFrom(nil, vespa.PackageOptions{}); err != nil {
-					return fmt.Errorf("failed to write local configuration: %w", err)
-				}
-				config = cli.config.local
-			}
-			if err := config.unset(args[0]); err != nil {
+			cfg, useLocal, implicitScope, scopeIsSet, err := resolveWriteConfig(cli, localArg, globalArg, args[0])
+			if err != nil {
 				return err
 			}
-			return config.write()
+			if err := cfg.unset(args[0]); err != nil {
+				return err
+			}
+			if err := cfg.write(); err != nil {
+				return err
+			}
+			scope := "global"
+			if useLocal {
+				scope = "local"
+			}
+			cli.printSuccess(fmt.Sprintf("Unset %s in %s config at %s", args[0], scope, filepath.Join(cfg.homeDir, configFile)))
+			if implicitScope && !scopeIsSet {
+				cli.printWarning(`default_config_scope is unset, wrote to global config`,
+					`set default_config_scope to "local" or "global" to silence this warning; in Vespa 9 unset will default to "local"`)
+			}
+			return nil
 		},
 	}
 	cmd.Flags().BoolVarP(&localArg, "local", "l", false, "Unset option in local configuration, i.e. for the current application")
+	cmd.Flags().BoolVarP(&globalArg, "global", "g", false, "Unset option in global configuration, overriding default_config_scope")
 	return cmd
 }
 
 func newConfigGetCmd(cli *CLI) *cobra.Command {
 	var localArg bool
+	var globalArg bool
 	cmd := &cobra.Command{
 		Use:   "get [option-name]",
 		Short: "Show given configuration option, or all configuration options",
 		Long: `Show given configuration option, or all configuration options.
 
-By default this command prints the effective configuration for the current
+By default, this command prints the effective configuration for the current
 application, i.e. it takes into account any local configuration located in
 [working-directory]/.vespa.
+
+When default_config_scope is set to "local", this command shows only local
+configuration by default, if any local configuration is present.
 `,
 		Example: `$ vespa config get
 $ vespa config get target
-$ vespa config get --local`,
+$ vespa config get --local
+$ vespa config get --global`,
 		Args:              cobra.MaximumNArgs(1),
 		DisableAutoGenTag: true,
 		SilenceUsage:      true,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if localArg && globalArg {
+				return fmt.Errorf("cannot use both --local and --global flags")
+			}
+			if !localArg && !globalArg {
+				scopeValue, _ := cli.config.getNonEmpty(defaultConfigScopeOption)
+				if scopeValue == "local" && !cli.config.local.isEmpty() {
+					localArg = true
+				}
+			}
 			config := cli.config
 			if localArg {
 				if cli.config.local.isEmpty() {
@@ -226,6 +303,11 @@ $ vespa config get --local`,
 				}
 				config = cli.config.local
 			}
+			scope := "global"
+			if localArg {
+				scope = "local"
+			}
+			cli.printHelpfulInfo(fmt.Sprintf("Got %s config from %s", scope, filepath.Join(config.homeDir, configFile)))
 			if len(args) == 0 { // Print all values
 				for _, option := range config.list(!localArg) {
 					config.printOption(option)
@@ -237,6 +319,7 @@ $ vespa config get --local`,
 		},
 	}
 	cmd.Flags().BoolVarP(&localArg, "local", "l", false, "Show only local configuration, if any")
+	cmd.Flags().BoolVarP(&globalArg, "global", "g", false, "Show global configuration, overriding default_config_scope")
 	return cmd
 }
 
@@ -286,11 +369,12 @@ func loadConfigFrom(dir string, environment map[string]string, flags map[string]
 	}
 	f, err := os.Open(filepath.Join(dir, configFile))
 	var cfg *config.Config
-	if os.IsNotExist(err) {
+	switch {
+	case os.IsNotExist(err):
 		cfg = config.New()
-	} else if err != nil {
+	case err != nil:
 		return nil, err
-	} else {
+	default:
 		defer f.Close()
 		cfg, err = config.Read(f)
 		if err != nil {
@@ -310,12 +394,38 @@ func athenzPath(filename string) (string, error) {
 }
 
 func (c *Config) loadLocalConfigFrom(parent string) error {
-	home := filepath.Join(parent, ".vespa")
-	_, err := os.Stat(home)
-	if err != nil && !os.IsNotExist(err) {
+	dir, err := filepath.Abs(parent)
+	if err != nil {
 		return err
 	}
-	config, err := loadConfigFrom(home, c.environment, c.flags)
+	startDir := dir
+	// Use home directory as a boundary for walking up, if available
+	// This prevents accidentally picking up a .vespa from unrelated locations
+	homeDir, _ := os.UserHomeDir() // Ignore error - just skip boundary check if unavailable
+	for {
+		// Don't search in or above home directory for local config
+		if homeDir != "" && dir == homeDir {
+			break
+		}
+		vespaDir := filepath.Join(dir, ".vespa")
+		if stat, err := os.Stat(vespaDir); err == nil && stat.IsDir() {
+			config, err := loadConfigFrom(vespaDir, c.environment, c.flags)
+			if err != nil {
+				return err
+			}
+			c.local = config
+			return nil
+		} else if err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		parentDir := filepath.Dir(dir)
+		if parentDir == dir {
+			break // Hit filesystem root
+		}
+		dir = parentDir
+	}
+	// No .vespa directory found, create empty local config for current directory
+	config, err := loadConfigFrom(filepath.Join(startDir, ".vespa"), c.environment, c.flags)
 	if err != nil {
 		return err
 	}
@@ -324,7 +434,7 @@ func (c *Config) loadLocalConfigFrom(parent string) error {
 }
 
 func (c *Config) write() error {
-	if err := os.MkdirAll(c.homeDir, 0700); err != nil {
+	if err := os.MkdirAll(c.homeDir, 0o700); err != nil {
 		return err
 	}
 	configFile := filepath.Join(c.homeDir, configFile)
@@ -417,6 +527,30 @@ func (c *Config) credentialsFile(app vespa.ApplicationID, targetType string, cer
 	return credentialsFile{path, true}, nil
 }
 
+func (c *Config) oldPrivateKeyPath(app vespa.ApplicationID, targetType string) (credentialsFile, error) {
+	f, err := c.privateKeyPath(app, targetType)
+	if err != nil {
+		return credentialsFile{}, err
+	}
+	return credentialsFile{f.path + ".old", f.optional}, nil
+}
+
+func (c *Config) backupPrivateKey(app vespa.ApplicationID, targetType string) (backupKeyPath string, err error) {
+	src, err := c.privateKeyPath(app, targetType)
+	if err != nil {
+		return "", err
+	}
+	dst, err := c.oldPrivateKeyPath(app, targetType)
+	if err != nil {
+		return "", err
+	}
+	data, err := os.ReadFile(src.path)
+	if err != nil {
+		return "", err
+	}
+	return dst.path, ioutil.AtomicWriteFile(dst.path, data)
+}
+
 func (c *Config) certificatePath(app vespa.ApplicationID, targetType string) (credentialsFile, error) {
 	return c.credentialsFile(app, targetType, true)
 }
@@ -478,7 +612,6 @@ func (c *Config) readTLSOptions(app vespa.ApplicationID, targetType string) (ves
 		options.PrivateKeyFile = keyFile
 	} else {
 		return vespa.TLSOptions{}, err
-
 	}
 	// CA certificate
 	_, options.TrustAll = c.environment["VESPA_CLI_DATA_PLANE_TRUST_ALL"]
@@ -570,12 +703,12 @@ func (c *Config) writeSessionID(app vespa.ApplicationID, sessionID int64) error 
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(sessionPath, []byte(fmt.Sprintf("%d\n", sessionID)), 0600)
+	return os.WriteFile(sessionPath, []byte(fmt.Sprintf("%d\n", sessionID)), 0o600)
 }
 
 func (c *Config) applicationFilePath(app vespa.ApplicationID, name string) (string, error) {
 	appDir := filepath.Join(c.homeDir, app.String())
-	if err := os.MkdirAll(appDir, 0700); err != nil {
+	if err := os.MkdirAll(appDir, 0o700); err != nil {
 		return "", err
 	}
 	return filepath.Join(appDir, name), nil
@@ -593,6 +726,7 @@ func (c *Config) list(includeUnset bool) []string {
 	for k := range c.flags {
 		flags = append(flags, k)
 	}
+	flags = append(flags, defaultConfigScopeOption)
 	sort.Strings(flags)
 	return flags
 }
@@ -639,9 +773,20 @@ func (c *Config) get(option string) (string, bool) {
 
 func (c *Config) set(option, value string) error {
 	switch option {
+	case defaultConfigScopeOption:
+		switch value {
+		case "local", "global":
+			c.config.Set(option, value)
+			return nil
+		}
+		return errHint(
+			fmt.Errorf("invalid value for %s: %q", defaultConfigScopeOption, value),
+			`valid values are "local" and "global"`,
+			`when unset, defaults to "global"; in Vespa 9 the default will change to "local"`,
+		)
 	case targetFlag:
 		switch value {
-		case vespa.TargetLocal, vespa.TargetCloud, vespa.TargetHosted:
+		case vespa.TargetLocal, vespa.TargetCloud, vespa.TargetHosted, vespa.TargetCD, vespa.TargetPublicCD:
 			c.config.Set(option, value)
 			return nil
 		}
@@ -693,6 +838,9 @@ func (c *Config) unset(option string) error {
 }
 
 func (c *Config) checkOption(option string) error {
+	if option == defaultConfigScopeOption {
+		return nil
+	}
 	if _, ok := c.flags[option]; !ok {
 		return fmt.Errorf("invalid option: %s", option)
 	}
@@ -723,7 +871,7 @@ func vespaCliHome(env map[string]string) (string, error) {
 		}
 		home = filepath.Join(userHome, ".vespa")
 	}
-	if err := os.MkdirAll(home, 0700); err != nil {
+	if err := os.MkdirAll(home, 0o700); err != nil {
 		return "", err
 	}
 	return home, nil
@@ -738,7 +886,7 @@ func vespaCliCacheDir(env map[string]string) (string, error) {
 		}
 		cacheDir = filepath.Join(userCacheDir, "vespa")
 	}
-	if err := os.MkdirAll(cacheDir, 0755); err != nil {
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
 		return "", err
 	}
 	return cacheDir, nil

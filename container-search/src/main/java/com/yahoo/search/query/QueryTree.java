@@ -1,9 +1,18 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.search.query;
 
-import com.yahoo.prelude.query.*;
+import ai.vespa.searchlib.searchprotocol.protobuf.SearchProtocol;
+import com.yahoo.prelude.query.AndItem;
+import com.yahoo.prelude.query.CompositeItem;
+import com.yahoo.prelude.query.IndexedItem;
+import com.yahoo.prelude.query.Item;
+import com.yahoo.prelude.query.NotItem;
+import com.yahoo.prelude.query.NullItem;
+import com.yahoo.prelude.query.PhraseItem;
+import com.yahoo.prelude.query.RankItem;
+import com.yahoo.prelude.query.RootItem;
+import com.yahoo.prelude.query.TermItem;
 
-import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
@@ -25,47 +34,14 @@ import java.util.ListIterator;
  *
  * @author Arne Bergene Fossaa
  */
-public class QueryTree extends CompositeItem {
+public class QueryTree extends RootItem {
+
+    public QueryTree() {
+        super();
+    }
 
     public QueryTree(Item root) {
-        setRoot(root);
-    }
-
-    public void setIndexName(String index) {
-        if (getRoot() != null)
-            getRoot().setIndexName(index);
-    }
-
-    public ItemType getItemType() {
-        throw new RuntimeException("Packet type access attempted. A query tree has no packet code. " + 
-                                   "This is probably a misbehaving searcher.");
-    }
-
-    public String getName() { return "ROOT"; }
-
-    public int encode(ByteBuffer buffer) {
-        if (getRoot() == null) return 0;
-        return getRoot().encode(buffer);
-    }
-
-    // Let's not pollute toString() by adding "ROOT"
-    protected void appendHeadingString(StringBuilder sb) {
-    }
-
-    /** Returns the query root. This is null if this is a null query. */
-    public Item getRoot() {
-        if (getItemCount() == 0) return null;
-        return getItem(0);
-    }
-
-    public final void setRoot(Item root) {
-        if (root == this) throw new IllegalArgumentException("Cannot make a root point at itself");
-        if (root == null) throw new IllegalArgumentException("Root must not be null, use NullItem instead.");
-        if (root instanceof QueryTree) throw new IllegalArgumentException("Do not use a new QueryTree instance as a root.");
-        if (this.getItemCount() == 0) // initializing
-            super.addItem(root);
-        else
-            setItem(0, root); // replacing
+        super(root);
     }
 
     @Override
@@ -84,27 +60,6 @@ public class QueryTree extends CompositeItem {
 
     private void fixClonedConnectivityReferences(QueryTree clone) {
         // TODO!
-    }
-
-    @Override
-    public void addItem(Item item) {
-        if (getItemCount() == 0)
-            super.addItem(item);
-        else
-            throw new RuntimeException("Programming error: Cannot add multiple roots");
-    }
-
-    @Override
-    public void addItem(int index, Item item) {
-        if (getItemCount() == 0 && index == 0)
-            super.addItem(index, item);
-        else
-            throw new RuntimeException("Programming error: Cannot add multiple roots, have '" + getRoot() + "'");
-    }
-
-    /** Returns true if this represents the null query */
-    public boolean isEmpty() {
-        return getRoot() instanceof NullItem || getItemCount() == 0;
     }
 
     // -------------- Facade

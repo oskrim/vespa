@@ -10,17 +10,20 @@ import com.yahoo.document.datatypes.Array;
 import com.yahoo.document.datatypes.StringFieldValue;
 import com.yahoo.document.datatypes.TensorFieldValue;
 import com.yahoo.language.process.Embedder;
+import com.yahoo.metrics.simple.MetricReceiver;
 import com.yahoo.tensor.Tensor;
 import com.yahoo.tensor.TensorType;
 import com.yahoo.vespa.indexinglanguage.expressions.ExecutionContext;
-import com.yahoo.vespa.indexinglanguage.expressions.VerificationContext;
+import com.yahoo.vespa.indexinglanguage.expressions.ScriptExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.StatementExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.TypeContext;
 import com.yahoo.vespa.indexinglanguage.expressions.VerificationException;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.Map;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
@@ -63,7 +66,7 @@ public class EmbeddingScriptTestCase {
     @Test
     public void testEmbedBinarizeAndPack_bits() {
         var tester = new EmbeddingScriptTester(Map.of("emb1", new EmbeddingScriptTester.MockIndexedEmbedder("myDocument.myTensor", -111)));
-        tester.testStatement("input myText | embed | binarize | pack_bits | attribute 'myTensor'", "input text", "tensor<int8>(x[2])", "[58, 192]");
+        tester.testStatement("input myText | embed | binarize | pack_bits | attribute 'myTensor'", "input text", "tensor<int8>(x[2])", "[58, -64]");
     }
 
     @SuppressWarnings("unchecked")
@@ -86,15 +89,13 @@ public class EmbeddingScriptTestCase {
         adapter.setValue("myTextArray", array);
         expression.setStatementOutput(new DocumentType("myDocument"), tensorField);
 
-        // Necessary to resolve output type
-        VerificationContext verificationContext = new VerificationContext(adapter);
-        assertEquals(new ArrayDataType(new TensorDataType(tensorType)), expression.verify(verificationContext));
+        expression.resolve(new TypeContext(adapter));
 
         ExecutionContext context = new ExecutionContext(adapter);
         context.setCurrentValue(array);
         expression.execute(context);
         assertTrue(adapter.values.containsKey("myTensorArray"));
-        var tensorArray = (Array<TensorFieldValue>)adapter.values.get("myTensorArray");
+        var tensorArray = (Array<TensorFieldValue>) adapter.values.get("myTensorArray");
         assertEquals(Tensor.from(tensorType, "[102, 105, 114, 115]"), tensorArray.get(0).getTensor().get());
         assertEquals(Tensor.from(tensorType, "[115, 101,  99, 111]"), tensorArray.get(1).getTensor().get());
     }
@@ -123,20 +124,20 @@ public class EmbeddingScriptTestCase {
 
         expression.setStatementOutput(new DocumentType("myDocument"), tensorField);
 
-        // Necessary to resolve output type
-        VerificationContext verificationContext = new VerificationContext(adapter);
-        assertEquals(new TensorDataType(tensorType), expression.verify(verificationContext));
+        expression.resolve(new TypeContext(adapter));
 
         ExecutionContext context = new ExecutionContext(adapter);
         context.setCurrentValue(array);
         expression.execute(context);
         assertTrue(adapter.values.containsKey("mySparseTensor"));
-        var sparseTensor = (TensorFieldValue)adapter.values.get("mySparseTensor");
+        var sparseTensor = (TensorFieldValue) adapter.values.get("mySparseTensor");
         assertEquals(Tensor.from(tensorType, "{ '0':[116.0, 105.0, 116.0, 108.0], 1:[116.0, 105.0, 116.0, 108.0]}"),
                      sparseTensor.getTensor().get());
     }
 
-    /** Multiple paragraphs */
+    /**
+     * Multiple paragraphs
+     */
     @Test
     public void testArrayEmbedTo2dMixedTensor() {
         var tester = new EmbeddingScriptTester(Map.of("emb1", new EmbeddingScriptTester.MockIndexedEmbedder("myDocument.mySparseTensor")));
@@ -156,20 +157,20 @@ public class EmbeddingScriptTestCase {
         adapter.setValue("myTextArray", array);
         expression.setStatementOutput(new DocumentType("myDocument"), tensorField);
 
-        // Necessary to resolve output type
-        VerificationContext verificationContext = new VerificationContext(adapter);
-        assertEquals(new TensorDataType(tensorType), expression.verify(verificationContext));
+        expression.resolve(new TypeContext(adapter));
 
         ExecutionContext context = new ExecutionContext(adapter);
         context.setCurrentValue(array);
         expression.execute(context);
         assertTrue(adapter.values.containsKey("mySparseTensor"));
-        var sparseTensor = (TensorFieldValue)adapter.values.get("mySparseTensor");
+        var sparseTensor = (TensorFieldValue) adapter.values.get("mySparseTensor");
         assertEquals(Tensor.from(tensorType, "{ '0':[102, 105, 114, 115], '1':[115, 101,  99, 111]}"),
                      sparseTensor.getTensor().get());
     }
 
-    /** Multiple paragraphs, and each paragraph leading to multiple vectors (ColBert style) */
+    /**
+     * Multiple paragraphs, and each paragraph leading to multiple vectors (ColBert style)
+     */
     @Test
     public void testArrayEmbedTo3dMixedTensor() {
         var tester = new EmbeddingScriptTester(Map.of("emb1", new EmbeddingScriptTester.MockMixedEmbedder("myDocument.mySparseTensor")));
@@ -189,47 +190,49 @@ public class EmbeddingScriptTestCase {
         adapter.setValue("myTextArray", array);
         expression.setStatementOutput(new DocumentType("myDocument"), tensorField);
 
-        assertEquals(new TensorDataType(tensorType), expression.verify(new VerificationContext(adapter)));
+        expression.resolve(new TypeContext(adapter));
 
         ExecutionContext context = new ExecutionContext(adapter);
         context.setCurrentValue(array);
         expression.execute(context);
         assertTrue(adapter.values.containsKey("mySparseTensor"));
-        var sparseTensor = (TensorFieldValue)adapter.values.get("mySparseTensor");
+        var sparseTensor = (TensorFieldValue) adapter.values.get("mySparseTensor");
         // The two "passages" are [first, sec], the middle (d=1) token encodes those letters
         assertEquals(Tensor.from(tensorType,
-                        """
-                        {
-                        {passage:0, token:0, d:0}: 101,
-                        {passage:0, token:0, d:1}: 102,
-                        {passage:0, token:0, d:2}: 103,
-                        {passage:0, token:1, d:0}: 104,
-                        {passage:0, token:1, d:1}: 105,
-                        {passage:0, token:1, d:2}: 106,
-                        {passage:0, token:2, d:0}: 113,
-                        {passage:0, token:2, d:1}: 114,
-                        {passage:0, token:2, d:2}: 115,
-                        {passage:0, token:3, d:0}: 114,
-                        {passage:0, token:3, d:1}: 115,
-                        {passage:0, token:3, d:2}: 116,
-                        {passage:0, token:4, d:0}: 115,
-                        {passage:0, token:4, d:1}: 116,
-                        {passage:0, token:4, d:2}: 117,
-                        {passage:1, token:0, d:0}: 114,
-                        {passage:1, token:0, d:1}: 115,
-                        {passage:1, token:0, d:2}: 116,
-                        {passage:1, token:1, d:0}: 100,
-                        {passage:1, token:1, d:1}: 101,
-                        {passage:1, token:1, d:2}: 102,
-                        {passage:1, token:2, d:0}:  98,
-                        {passage:1, token:2, d:1}:  99,
-                        {passage:1, token:2, d:2}: 100
-                        }
-                        """),
-                sparseTensor.getTensor().get());
+                                 """
+                                 {
+                                 {passage:0, token:0, d:0}: 101,
+                                 {passage:0, token:0, d:1}: 102,
+                                 {passage:0, token:0, d:2}: 103,
+                                 {passage:0, token:1, d:0}: 104,
+                                 {passage:0, token:1, d:1}: 105,
+                                 {passage:0, token:1, d:2}: 106,
+                                 {passage:0, token:2, d:0}: 113,
+                                 {passage:0, token:2, d:1}: 114,
+                                 {passage:0, token:2, d:2}: 115,
+                                 {passage:0, token:3, d:0}: 114,
+                                 {passage:0, token:3, d:1}: 115,
+                                 {passage:0, token:3, d:2}: 116,
+                                 {passage:0, token:4, d:0}: 115,
+                                 {passage:0, token:4, d:1}: 116,
+                                 {passage:0, token:4, d:2}: 117,
+                                 {passage:1, token:0, d:0}: 114,
+                                 {passage:1, token:0, d:1}: 115,
+                                 {passage:1, token:0, d:2}: 116,
+                                 {passage:1, token:1, d:0}: 100,
+                                 {passage:1, token:1, d:1}: 101,
+                                 {passage:1, token:1, d:2}: 102,
+                                 {passage:1, token:2, d:0}:  98,
+                                 {passage:1, token:2, d:1}:  99,
+                                 {passage:1, token:2, d:2}: 100
+                                 }
+                                 """),
+                     sparseTensor.getTensor().get());
     }
 
-    /** Multiple paragraphs, and each paragraph leading to multiple vectors (ColBERT style) */
+    /**
+     * Multiple paragraphs, and each paragraph leading to multiple vectors (ColBERT style)
+     */
     @Test
     public void testArrayEmbedTo3dMixedTensor_missingDimensionArgument() {
         var tester = new EmbeddingScriptTester(Map.of("emb1", new EmbeddingScriptTester.MockMixedEmbedder("myDocument.mySparseTensor")));
@@ -242,16 +245,17 @@ public class EmbeddingScriptTestCase {
         adapter.createField(new Field("mySparseTensor", new TensorDataType(tensorType)));
 
         try {
-            expression.verify(new VerificationContext(adapter));
+            expression.resolve(new TypeContext(adapter));
             fail("Expected exception");
-        }
-        catch (VerificationException e) {
-            assertEquals("When the embedding target field is a 3d tensor the name of the tensor dimension that corresponds to the input array elements must be given as a second argument to embed, e.g: ... | embed colbert paragraph | ...",
+        } catch (VerificationException e) {
+            assertEquals("Invalid expression 'embed emb1': When the embedding target field is a 3d tensor the name of the tensor dimension that corresponds to the input array elements must be given as a second argument to embed, e.g: ... | embed colbert paragraph | ...",
                          e.getMessage());
         }
     }
 
-    /** Multiple paragraphs, and each paragraph leading to multiple vectors (ColBert style) */
+    /**
+     * Multiple paragraphs, and each paragraph leading to multiple vectors (ColBert style)
+     */
     @Test
     public void testArrayEmbedTo3dMixedTensor_wrongDimensionArgument() {
         var tester = new EmbeddingScriptTester(Map.of("emb1", new EmbeddingScriptTester.MockMixedEmbedder("myDocument.mySparseTensor")));
@@ -264,11 +268,10 @@ public class EmbeddingScriptTestCase {
         adapter.createField(new Field("mySparseTensor", new TensorDataType(tensorType)));
 
         try {
-            expression.verify(new VerificationContext(adapter));
+            expression.resolve(new TypeContext(adapter));
             fail("Expected exception");
-        }
-        catch (VerificationException e) {
-            assertEquals("The dimension 'd' given to embed is not a sparse dimension of the target type tensor(d[3],passage{},token{})",
+        } catch (VerificationException e) {
+            assertEquals("Invalid expression 'embed emb1 d': The dimension 'd' given to embed is not a sparse dimension of the target type tensor(d[3],passage{},token{})",
                          e.getMessage());
         }
     }
@@ -291,22 +294,22 @@ public class EmbeddingScriptTestCase {
         adapter.setValue("text", text);
         expression.setStatementOutput(new DocumentType("myDocument"), tensorField);
 
-        // Necessary to resolve output type
-        VerificationContext verificationContext = new VerificationContext(adapter);
-        assertEquals(new TensorDataType(tensorType), expression.verify(verificationContext));
+        expression.resolve(new TypeContext(adapter));
 
         ExecutionContext context = new ExecutionContext(adapter);
         context.setCurrentValue(text);
         expression.execute(context);
         assertTrue(adapter.values.containsKey("mySparseTensor"));
-        var sparseTensor = (TensorFieldValue)adapter.values.get("mySparseTensor");
+        var sparseTensor = (TensorFieldValue) adapter.values.get("mySparseTensor");
         assertEquals(Tensor.from(tensorType, "tensor(t{}):{97:97.0, 98:98.0, 99:99.0}"),
                      sparseTensor.getTensor().get());
         assertEquals("Cached value always set by MockMappedEmbedder is present",
                      "myCachedValue", context.getCachedValue("myCacheKey"));
     }
 
-    /** Multiple paragraphs with sparse encoding (splade style) */
+    /**
+     * Multiple paragraphs with sparse encoding (splade style)
+     */
     @Test
     public void testArrayEmbedTo2dMappedTensor_wrongDimensionArgument() {
         var tester = new EmbeddingScriptTester(Map.of("emb1", new EmbeddingScriptTester.MockMappedEmbedder("myDocument.my2DSparseTensor")));
@@ -319,16 +322,17 @@ public class EmbeddingScriptTestCase {
         adapter.createField(new Field("my2DSparseTensor", new TensorDataType(tensorType)));
 
         try {
-            expression.verify(new VerificationContext(adapter));
+            expression.resolve(new TypeContext(adapter));
             fail("Expected exception");
-        }
-        catch (VerificationException e) {
-            assertEquals("The dimension 'doh' given to embed is not a sparse dimension of the target type tensor(passage{},token{})",
+        } catch (VerificationException e) {
+            assertEquals("Invalid expression 'embed emb1 doh': The dimension 'doh' given to embed is not a sparse dimension of the target type tensor(passage{},token{})",
                          e.getMessage());
         }
     }
 
-    /** Multiple paragraphs with sparse encoding (splade style) */
+    /**
+     * Multiple paragraphs with sparse encoding (splade style)
+     */
     @Test
     @SuppressWarnings("OptionalGetWithoutIsPresent")
     public void testArrayEmbedTo2MappedTensor() {
@@ -349,23 +353,366 @@ public class EmbeddingScriptTestCase {
         adapter.setValue("myTextArray", array);
         expression.setStatementOutput(new DocumentType("myDocument"), tensorField);
 
-        assertEquals(new TensorDataType(tensorType), expression.verify(new VerificationContext(adapter)));
+        expression.resolve(new TypeContext(adapter));
 
         ExecutionContext context = new ExecutionContext(adapter);
         context.setCurrentValue(array);
         expression.execute(context);
         assertTrue(adapter.values.containsKey("my2DSparseTensor"));
-        var sparse2DTensor = (TensorFieldValue)adapter.values.get("my2DSparseTensor");
+        var sparse2DTensor = (TensorFieldValue) adapter.values.get("my2DSparseTensor");
         assertEquals(Tensor.from(
-                        tensorType,
-                        "tensor(passage{},token{}):" +
-                                "{{passage:0,token:97}:97.0, " +
-                                "{passage:0,token:98}:98.0, " +
-                                "{passage:0,token:99}:99.0, " +
-                                "{passage:1,token:100}:100.0, " +
-                                "{passage:1,token:101}:101.0, " +
-                                "{passage:1,token:99}:99.0}"),
-                sparse2DTensor.getTensor().get());
+                             tensorType,
+                             "tensor(passage{},token{}):" +
+                             "{{passage:0,token:97}:97.0, " +
+                             "{passage:0,token:98}:98.0, " +
+                             "{passage:0,token:99}:99.0, " +
+                             "{passage:1,token:100}:100.0, " +
+                             "{passage:1,token:101}:101.0, " +
+                             "{passage:1,token:99}:99.0}"),
+                     sparse2DTensor.getTensor().get());
+    }
+
+    @Test
+    public void testIt() {
+        var tester = new EmbeddingScriptTester(Map.of("emb1", new EmbeddingScriptTester.MockMappedEmbedder("myDocument.sections_embeddings")));
+        var expression = tester.expressionFrom("input sections | for_each { ( _ || \"\") } | embed emb1 passage | attribute sections_embeddings | index sections_embeddings");
+
+        SimpleTestAdapter adapter = new SimpleTestAdapter();
+        adapter.createField(new Field("sections", new ArrayDataType(DataType.STRING)));
+        TensorType tensorType = TensorType.fromSpec("tensor(passage{}, token{})");
+        var tensorField = new Field("sections_embeddings", new TensorDataType(tensorType));
+        adapter.createField(tensorField);
+
+        expression.resolve(new TypeContext(adapter));
+    }
+
+    @Test
+    public void binarizeFromSeparateField() {
+        /*
+        field text_embeddings type tensor<float>(c{},x[768]) {
+            indexing: attribute | summary
+            attribute: paged
+        }
+        field text_embeddings_quant_binary type tensor<int8>(c{},x[96]) {
+            indexing: input text_embeddings | binarize | pack_bits | attribute | index
+            attribute {
+                distance-metric: hamming
+            }
+        }
+        */
+
+        var tester = new EmbeddingScriptTester(Map.of("emb1", new EmbeddingScriptTester.MockMappedEmbedder("myDocument.my2DSparseTensor")));
+
+        SimpleTestAdapter adapter = new SimpleTestAdapter();
+        TensorType textEmbeddingsType = TensorType.fromSpec("tensor<float>(c{},x[768])");
+        adapter.createField(new Field("text_embeddings", new TensorDataType(textEmbeddingsType)));
+
+        TensorType textEmbeddingsQuantBinaryType = TensorType.fromSpec("tensor<int8>(c{},x[96])");
+        adapter.createField(new Field("text_embeddings_quant_binary", new TensorDataType(textEmbeddingsQuantBinaryType)));
+
+        var text_embeddings_expression = (StatementExpression) tester.expressionFrom("input text_embeddings | summary text_embeddings | attribute text_embeddings");
+        var text_embeddings_quant_binary_expression = (StatementExpression) tester.expressionFrom("input text_embeddings | binarize | pack_bits | attribute text_embeddings_quant_binary | index text_embeddings_quant_binary");
+
+        var script = new ScriptExpression(text_embeddings_expression, text_embeddings_quant_binary_expression);
+        script.resolve(adapter);
+    }
+
+    @Test
+    public void embeddingMultivalueToSingleValueCausesException() {
+        try {
+            var tester = new EmbeddingScriptTester(Map.of("emb1", new EmbeddingScriptTester.MockMappedEmbedder("myDocument.my2DSparseTensor")));
+
+            SimpleTestAdapter adapter = new SimpleTestAdapter();
+            adapter.createField(new Field("text", DataType.getArray(DataType.STRING)));
+            adapter.createField(new Field("text_embeddings", new TensorDataType(TensorType.fromSpec("tensor<float>(x[768])"))));
+
+            var expression = tester.expressionFrom("input text | embed emb1 | attribute text_embeddings");
+            expression.resolve(adapter);
+            fail();
+        }
+        catch (VerificationException expected) {
+            assertEquals("Invalid expression 'embed emb1': Input is an array, so output must be a rank 2 or 3 tensor with at least one mapped dimension, but got tensor<float>(x[768])",
+                         expected.getMessage());
+        }
+    }
+
+    @Test
+    public void embeddingSingleValueToRank3CausesException() {
+        try {
+            var tester = new EmbeddingScriptTester(Map.of("emb1", new EmbeddingScriptTester.MockMappedEmbedder("myDocument.my2DSparseTensor")));
+
+            SimpleTestAdapter adapter = new SimpleTestAdapter();
+            adapter.createField(new Field("text", DataType.STRING));
+            adapter.createField(new Field("text_embeddings", new TensorDataType(TensorType.fromSpec("tensor<float>(chunk{},token{},x[768])"))));
+
+            var expression = tester.expressionFrom("input text | embed emb1 chunk | attribute text_embeddings");
+            expression.resolve(adapter);
+            fail();
+        }
+        catch (VerificationException expected) {
+            assertEquals("Invalid expression 'embed emb1 chunk': Input is a string, so output must be a rank 1 tensor, or a rank 2 tensor with one mapped dimension, but got tensor<float>(chunk{},token{},x[768])",
+                         expected.getMessage());
+        }
+    }
+
+    @Test
+    public void testArrayEmbedUsesBatchMethod() {
+        var mockEmbedder = new EmbeddingScriptTester.MockBatchAwareEmbedder("myDocument.mySparseTensor");
+        var tester = new EmbeddingScriptTester(Map.of("emb1", mockEmbedder));
+
+        var tensorType = TensorType.fromSpec("tensor(passage{}, d[4])");
+        var expression = tester.expressionFrom("input myTextArray | embed | attribute 'mySparseTensor'");
+
+        var adapter = new SimpleTestAdapter();
+        adapter.createField(new Field("myTextArray", new ArrayDataType(DataType.STRING)));
+
+        var tensorField = new Field("mySparseTensor", new TensorDataType(tensorType));
+        adapter.createField(tensorField);
+
+        var array = new Array<StringFieldValue>(new ArrayDataType(DataType.STRING));
+        array.add(new StringFieldValue("first"));
+        array.add(new StringFieldValue("second"));
+        array.add(new StringFieldValue("third"));
+        adapter.setValue("myTextArray", array);
+        expression.setStatementOutput(new DocumentType("myDocument"), tensorField);
+        expression.resolve(new TypeContext(adapter));
+
+        var context = new ExecutionContext(adapter);
+        context.setCurrentValue(array);
+        expression.execute(context);
+
+        // Verify batch method was called once with all texts, not individual embed calls
+        assertEquals(1, mockEmbedder.batchCallCount);
+        assertEquals(0, mockEmbedder.singleCallCount);
+    }
+
+    @Test
+    public void testBlankSingleValueReturnsNull() {
+        var tester = new EmbeddingScriptTester(Map.of("emb1", new EmbeddingScriptTester.MockIndexedEmbedder("myDocument.myTensor")));
+
+        var tensorType = TensorType.fromSpec("tensor(d[4])");
+        var expression = tester.expressionFrom("input myText | embed | attribute 'myTensor'");
+
+        var adapter = new SimpleTestAdapter();
+        adapter.createField(new Field("myText", DataType.STRING));
+        var tensorField = new Field("myTensor", new TensorDataType(tensorType));
+        adapter.createField(tensorField);
+        expression.setStatementOutput(new DocumentType("myDocument"), tensorField);
+        expression.resolve(new TypeContext(adapter));
+
+        // Test empty string
+        adapter.setValue("myText", new StringFieldValue(""));
+        var context = new ExecutionContext(adapter);
+        expression.execute(context);
+        assertFalse(adapter.values.containsKey("myTensor")); // Empty string should not produce tensor
+
+        // Test whitespace-only string
+        adapter.values.clear();
+        adapter.setValue("myText", new StringFieldValue("   "));
+        context = new ExecutionContext(adapter);
+        expression.execute(context);
+        assertFalse(adapter.values.containsKey("myTensor")); // Whitespace-only string should not produce tensor
+    }
+
+    @Test
+    public void testBlankArrayElementsSkipped_2dMixedTensor() {
+        var tester = new EmbeddingScriptTester(Map.of("emb1", new EmbeddingScriptTester.MockIndexedEmbedder("myDocument.mySparseTensor")));
+
+        var tensorType = TensorType.fromSpec("tensor(passage{}, d[5])");
+        var expression = tester.expressionFrom("input myTextArray | embed | attribute 'mySparseTensor'");
+
+        var adapter = new SimpleTestAdapter();
+        adapter.createField(new Field("myTextArray", new ArrayDataType(DataType.STRING)));
+
+        var tensorField = new Field("mySparseTensor", new TensorDataType(tensorType));
+        adapter.createField(tensorField);
+
+        // Array with blank elements at index 1 and 3
+        var array = new Array<StringFieldValue>(new ArrayDataType(DataType.STRING));
+        array.add(new StringFieldValue("first"));  // index 0
+        array.add(new StringFieldValue(""));       // index 1 - blank
+        array.add(new StringFieldValue("third"));  // index 2
+        array.add(new StringFieldValue("   "));    // index 3 - whitespace only
+        array.add(new StringFieldValue("fifth"));  // index 4
+        adapter.setValue("myTextArray", array);
+        expression.setStatementOutput(new DocumentType("myDocument"), tensorField);
+        expression.resolve(new TypeContext(adapter));
+
+        var context = new ExecutionContext(adapter);
+        context.setCurrentValue(array);
+        expression.execute(context);
+
+        assertTrue(adapter.values.containsKey("mySparseTensor"));
+        var sparseTensor = (TensorFieldValue) adapter.values.get("mySparseTensor");
+        // Should have indexes 0, 2, 4 (skipping 1 and 3)
+        assertEquals(Tensor.from(tensorType, "{ '0':[102, 105, 114, 115, 116], '2':[116, 104, 105, 114, 100], '4':[102, 105, 102, 116, 104]}"),
+                     sparseTensor.getTensor().get());
+    }
+
+    @Test
+    public void testAllBlankArrayElements_2dMixedTensor() {
+        var tester = new EmbeddingScriptTester(Map.of("emb1", new EmbeddingScriptTester.MockIndexedEmbedder("myDocument.mySparseTensor")));
+
+        var tensorType = TensorType.fromSpec("tensor(passage{}, d[4])");
+        var expression = tester.expressionFrom("input myTextArray | embed | attribute 'mySparseTensor'");
+
+        var adapter = new SimpleTestAdapter();
+        adapter.createField(new Field("myTextArray", new ArrayDataType(DataType.STRING)));
+
+        var tensorField = new Field("mySparseTensor", new TensorDataType(tensorType));
+        adapter.createField(tensorField);
+
+        // Array with only blank elements
+        var array = new Array<StringFieldValue>(new ArrayDataType(DataType.STRING));
+        array.add(new StringFieldValue(""));
+        array.add(new StringFieldValue("   "));
+        adapter.setValue("myTextArray", array);
+        expression.setStatementOutput(new DocumentType("myDocument"), tensorField);
+        expression.resolve(new TypeContext(adapter));
+
+        var context = new ExecutionContext(adapter);
+        context.setCurrentValue(array);
+        expression.execute(context);
+
+        assertTrue(adapter.values.containsKey("mySparseTensor"));
+        var sparseTensor = (TensorFieldValue) adapter.values.get("mySparseTensor");
+        // Should be an empty tensor
+        assertEquals(Tensor.from(tensorType, "{}"), sparseTensor.getTensor().get());
+    }
+
+    @Test
+    @SuppressWarnings("OptionalGetWithoutIsPresent")
+    public void testBlankArrayElementsSkipped_2dMappedTensor() {
+        var tester = new EmbeddingScriptTester(Map.of("emb1", new EmbeddingScriptTester.MockMappedEmbedder("myDocument.my2DSparseTensor")));
+
+        var tensorType = TensorType.fromSpec("tensor(passage{}, token{})");
+        var expression = tester.expressionFrom("input myTextArray | embed emb1 passage | attribute 'my2DSparseTensor'");
+
+        var adapter = new SimpleTestAdapter();
+        adapter.createField(new Field("myTextArray", new ArrayDataType(DataType.STRING)));
+        var tensorField = new Field("my2DSparseTensor", new TensorDataType(tensorType));
+        adapter.createField(tensorField);
+
+        // Array with blank element at index 1
+        var array = new Array<StringFieldValue>(new ArrayDataType(DataType.STRING));
+        array.add(new StringFieldValue("abc"));  // index 0
+        array.add(new StringFieldValue(""));     // index 1 - blank
+        array.add(new StringFieldValue("cde"));  // index 2
+        adapter.setValue("myTextArray", array);
+        expression.setStatementOutput(new DocumentType("myDocument"), tensorField);
+        expression.resolve(new TypeContext(adapter));
+
+        var context = new ExecutionContext(adapter);
+        context.setCurrentValue(array);
+        expression.execute(context);
+
+        assertTrue(adapter.values.containsKey("my2DSparseTensor"));
+        var sparse2DTensor = (TensorFieldValue) adapter.values.get("my2DSparseTensor");
+        // Should have passage indexes 0 and 2 (skipping 1)
+        assertEquals(Tensor.from(
+                             tensorType,
+                             "tensor(passage{},token{}):" +
+                             "{{passage:0,token:97}:97.0, " +
+                             "{passage:0,token:98}:98.0, " +
+                             "{passage:0,token:99}:99.0, " +
+                             "{passage:2,token:100}:100.0, " +
+                             "{passage:2,token:101}:101.0, " +
+                             "{passage:2,token:99}:99.0}"),
+                     sparse2DTensor.getTensor().get());
+    }
+
+    @Test
+    public void testBlankArrayElementsSkipped_3dMixedTensor() {
+        var tester = new EmbeddingScriptTester(Map.of("emb1", new EmbeddingScriptTester.MockMixedEmbedder("myDocument.mySparseTensor")));
+
+        var tensorType = TensorType.fromSpec("tensor(passage{}, token{}, d[3])");
+        var expression = tester.expressionFrom("input myTextArray | embed emb1 passage | attribute 'mySparseTensor'");
+
+        var adapter = new SimpleTestAdapter();
+        adapter.createField(new Field("myTextArray", new ArrayDataType(DataType.STRING)));
+        var tensorField = new Field("mySparseTensor", new TensorDataType(tensorType));
+        adapter.createField(tensorField);
+
+        // Array with blank element at index 0
+        var array = new Array<StringFieldValue>(new ArrayDataType(DataType.STRING));
+        array.add(new StringFieldValue(""));      // index 0 - blank
+        array.add(new StringFieldValue("first")); // index 1
+        array.add(new StringFieldValue("sec"));   // index 2
+        adapter.setValue("myTextArray", array);
+        expression.setStatementOutput(new DocumentType("myDocument"), tensorField);
+        expression.resolve(new TypeContext(adapter));
+
+        var context = new ExecutionContext(adapter);
+        context.setCurrentValue(array);
+        expression.execute(context);
+
+        assertTrue(adapter.values.containsKey("mySparseTensor"));
+        var sparseTensor = (TensorFieldValue) adapter.values.get("mySparseTensor");
+        // Should have passage indexes 1 and 2 (skipping 0)
+        assertEquals(Tensor.from(tensorType,
+                                 """
+                                 {
+                                 {passage:1, token:0, d:0}: 101,
+                                 {passage:1, token:0, d:1}: 102,
+                                 {passage:1, token:0, d:2}: 103,
+                                 {passage:1, token:1, d:0}: 104,
+                                 {passage:1, token:1, d:1}: 105,
+                                 {passage:1, token:1, d:2}: 106,
+                                 {passage:1, token:2, d:0}: 113,
+                                 {passage:1, token:2, d:1}: 114,
+                                 {passage:1, token:2, d:2}: 115,
+                                 {passage:1, token:3, d:0}: 114,
+                                 {passage:1, token:3, d:1}: 115,
+                                 {passage:1, token:3, d:2}: 116,
+                                 {passage:1, token:4, d:0}: 115,
+                                 {passage:1, token:4, d:1}: 116,
+                                 {passage:1, token:4, d:2}: 117,
+                                 {passage:2, token:0, d:0}: 114,
+                                 {passage:2, token:0, d:1}: 115,
+                                 {passage:2, token:0, d:2}: 116,
+                                 {passage:2, token:1, d:0}: 100,
+                                 {passage:2, token:1, d:1}: 101,
+                                 {passage:2, token:1, d:2}: 102,
+                                 {passage:2, token:2, d:0}:  98,
+                                 {passage:2, token:2, d:1}:  99,
+                                 {passage:2, token:2, d:2}: 100
+                                 }
+                                 """),
+                     sparseTensor.getTensor().get());
+    }
+
+    @Test
+    public void testBatchingConfigFromEmbedder() {
+        var mockEmbedder = new EmbeddingScriptTester.MockBatchingEmbedder("myDocument.myTensor");
+        var tester = new EmbeddingScriptTester(Map.of("emb1", mockEmbedder));
+
+        tester.testStatement("input myText | embed emb1 | attribute 'myTensor'", "input text", "[105, 110, 112, 117]");
+        assertEquals(0, mockEmbedder.singleCallCount);
+        assertEquals(1, mockEmbedder.batchCallCount);
+    }
+
+    @Test
+    public void testBatchMetricsEmitted() {
+        var metricReceiver = new MetricReceiver.MockReceiver();
+        var mockEmbedder = new EmbeddingScriptTester.MockBatchingEmbedder("myDocument.myTensor");
+        var tester = new EmbeddingScriptTester(Map.of("emb1", mockEmbedder), metricReceiver);
+
+        tester.testStatement("input myText | embed emb1 | attribute 'myTensor'", "input text", "[105, 110, 112, 117]");
+
+        var snapshot = metricReceiver.getSnapshot();
+        var metrics = snapshot.getValuesByMetricName();
+
+        var batchSizeEntries = metrics.get("embedder.batch.size");
+        assertEquals(1, batchSizeEntries.size());
+        assertEquals(1.0, batchSizeEntries.get(0).getValue().getLast(), 0.001);
+
+        var batchCountEntries = metrics.get("embedder.batch.count");
+        assertEquals(1, batchCountEntries.size());
+        assertEquals(1, batchCountEntries.get(0).getValue().getCount());
+
+        var queueTimeEntries = metrics.get("embedder.batch.queue_time");
+        assertEquals(1, queueTimeEntries.size());
+        assertTrue(queueTimeEntries.get(0).getValue().getLast() >= 0);
     }
 
 }

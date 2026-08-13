@@ -19,15 +19,16 @@ public class SoftTimeout implements Cloneable {
     /** The type representing the property arguments consumed by this */
     private static final QueryProfileType argumentType;
 
+    public static final String SOFTTIMEOUT = "softtimeout";
     public static final String ENABLE = "enable";
     public static final String FACTOR = "factor";
     public static final String TAILCOST = "tailcost";
 
     /** The full property name for turning softtimeout on or off */
-    public static final CompoundName enableProperty = CompoundName.from(Ranking.RANKING + "." + Ranking.SOFTTIMEOUT + "." + ENABLE);
+    public static final CompoundName enableProperty = CompoundName.fromComponents(Ranking.RANKING, SOFTTIMEOUT, ENABLE);
 
     static {
-        argumentType = new QueryProfileType(Ranking.SOFTTIMEOUT);
+        argumentType = new QueryProfileType(SOFTTIMEOUT);
         argumentType.setStrict(true);
         argumentType.setBuiltin(true);
         argumentType.addField(new FieldDescription(ENABLE, "boolean"));
@@ -93,19 +94,14 @@ public class SoftTimeout implements Cloneable {
 
     @Override
     public int hashCode() {
-        int hash = 0;
-        if (enabled != null) hash += 11;
-        if (factor != null) hash += 13 * factor.hashCode();
-        if (tailcost != null) hash += 17 * tailcost.hashCode();
-        return hash;
+        return Objects.hash(enabled, factor, tailcost);
     }
 
     @Override
     public boolean equals(Object o) {
         if (o == this) return true;
-        if ( ! (o instanceof SoftTimeout)) return false;
+        if ( ! (o instanceof SoftTimeout other)) return false;
 
-        SoftTimeout other = (SoftTimeout)o;
         if ( ! Objects.equals(this.enabled, other.enabled)) return false;
         if ( ! Objects.equals(this.factor, other.factor)) return false;
         if ( ! Objects.equals(this.tailcost, other.tailcost)) return false;

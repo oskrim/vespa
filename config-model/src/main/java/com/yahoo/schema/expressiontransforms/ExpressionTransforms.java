@@ -23,14 +23,14 @@ public class ExpressionTransforms {
 
     public ExpressionTransforms() {
         transforms =
-                List.of(new TensorFlowFeatureConverter(),
-                        new OnnxFeatureConverter(),
+                List.of(new OnnxFeatureConverter(),
                         new OnnxModelTransformer(),
                         new XgboostFeatureConverter(),
                         new LightGBMFeatureConverter(),
                         new TokenTransformer(),
                         new ConstantDereferencer(),
                         new ConstantTensorTransformer(),
+                        new SwitchTransformer(),
                         new FunctionInliner(),
                         new FunctionShadower(),
                         new TensorMaxMinTransformer(),

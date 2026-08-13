@@ -2,6 +2,8 @@
 package com.yahoo.prelude;
 
 import java.util.Calendar;
+import java.util.Locale;
+import java.util.TimeZone;
 
 import static com.yahoo.text.Lowercase.toLowerCase;
 
@@ -51,7 +53,7 @@ public class Freshness {
 
     /** Calculates the current time since epoch in seconds */
     public long getSystemTimeInSecondsSinceEpoch() {
-        long msSinceEpochNow = Calendar.getInstance().getTimeInMillis();
+        long msSinceEpochNow = Calendar.getInstance(TimeZone.getTimeZone("UTC"), Locale.ROOT).getTimeInMillis();
         return (msSinceEpochNow/1000);
     }
 
@@ -62,7 +64,7 @@ public class Freshness {
     @Override
     public String toString() {
         StringBuilder ser = new StringBuilder();
-        /** convert long value to string */
+        // convert long value to string
         String dateTime = Long.toString(refSecondsSinceEpoch);
         ser.append(dateTime);
         return ser.toString().trim();

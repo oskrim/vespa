@@ -17,6 +17,7 @@ import com.yahoo.search.query.profile.QueryProfileRegistry;
 import com.yahoo.search.query.profile.compiled.CompiledQueryProfile;
 import com.yahoo.search.query.profile.compiled.ValueWithSource;
 import com.yahoo.search.searchchain.Execution;
+import com.yahoo.search.yql.MinimalQueryInserter;
 import com.yahoo.yolean.trace.TraceNode;
 import org.junit.jupiter.api.Test;
 
@@ -25,7 +26,12 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 /**
  * Tests untyped query profiles
@@ -346,6 +352,30 @@ public class QueryProfileTestCase {
         assertEquals("de", query.getModel().getLanguage().languageCode());
     }
 
+    @Test
+    void testEscaping() {
+        QueryProfile profile = new QueryProfile("test");
+        var q = """
+        select * from sources * where
+        (
+            rank(
+                {grammar:"tokenize"}userInput(@query),
+                {grammar:"tokenize",defaultIndex:'url_text'}userInput(@query)
+            )
+        )
+        """;
+        profile.set("yql", q, null);
+
+        String userQuery = "(from -r requirements.txt (line 11)) ";
+        var request = HttpRequest.createTestRequest("", Method.GET, null, Map.of("query", userQuery));
+        var query = new Query(request, profile.compile(null));
+        var searcher = new MinimalQueryInserter();
+        var execution = new Execution(searcher, Execution.Context.createContextStub());
+        var result = execution.search(query);
+        assertNull(result.hits().getError());
+    }
+
+
     /** Tests that the ref: here is not mistaken for a query profile reference. */
     @Test
     void testReferenceAsQueryString() {
@@ -358,7 +388,7 @@ public class QueryProfileTestCase {
         registry.register(profile);
         var query = new Query("?query=ref:", registry.compile().findQueryProfile("test"));
         query.getModel().setExecution(new Execution(Execution.Context.createContextStub(facts)));
-        assertEquals("WEAKAND(100) ref", query.getModel().getQueryTree().getRoot().toString());
+        assertEquals("WEAKAND ref", query.getModel().getQueryTree().getRoot().toString());
     }
 
     /** Dots are followed when setting overridability, also with variants */

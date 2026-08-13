@@ -20,6 +20,7 @@ vespa_add_library(searchlib_tensor OBJECT
     hash_set_visited_tracker.cpp
     hnsw_graph.cpp
     hnsw_index.cpp
+    hnsw_index_explorer.cpp
     hnsw_index_saver.cpp
     hnsw_multi_best_neighbors.cpp
     hnsw_nodeid_mapping.cpp
@@ -38,6 +39,7 @@ vespa_add_library(searchlib_tensor OBJECT
     subspace_type.cpp
     temporary_vector_store.cpp
     tensor_attribute.cpp
+    tensor_attribute_explorer.cpp
     tensor_attribute_loader.cpp
     tensor_attribute_saver.cpp
     tensor_buffer_operations.cpp
@@ -45,6 +47,7 @@ vespa_add_library(searchlib_tensor OBJECT
     tensor_buffer_type_mapper.cpp
     tensor_deserialize.cpp
     tensor_ext_attribute.cpp
+    tensor_quantization.cpp
     tensor_store.cpp
     DEPENDS
 )

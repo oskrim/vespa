@@ -4,15 +4,15 @@ package com.yahoo.schema.processing;
 import com.yahoo.config.application.api.ApplicationFile;
 import com.yahoo.config.application.api.ApplicationPackage;
 import com.yahoo.config.model.test.MockApplicationPackage;
-import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.TenantName;
 import com.yahoo.io.IOUtils;
 import com.yahoo.io.reader.NamedReader;
 import com.yahoo.path.Path;
 import com.yahoo.search.query.profile.QueryProfileRegistry;
-import com.yahoo.schema.FeatureNames;
+import com.yahoo.searchlib.ranking.features.FeatureNames;
 import com.yahoo.schema.parser.ParseException;
 import com.yahoo.tensor.TensorType;
+import com.yahoo.text.Utf8;
 import com.yahoo.yolean.Exceptions;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -25,7 +25,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.fail;
 
 public class RankingExpressionWithOnnxTestCase {
 
@@ -402,7 +405,8 @@ public class RankingExpressionWithOnnxTestCase {
         StoringApplicationPackage(Path applicationPackageWritableRoot, String queryProfile, String queryProfileType) {
             super(new File(applicationPackageWritableRoot.toString()),
                   null, null, List.of(), Map.of(), null,
-                  null, null, false, queryProfile, queryProfileType, TenantName.defaultName());
+                  null, null, null,
+                  false, queryProfile, queryProfileType, TenantName.defaultName());
         }
 
         @Override
@@ -418,7 +422,7 @@ public class RankingExpressionWithOnnxTestCase {
             for (File file : files) {
                 if ( ! file.getName().endsWith(suffix)) continue;
                 try {
-                    readers.add(new NamedReader(file.getName(), new FileReader(file)));
+                    readers.add(new NamedReader(file.getName(), new FileReader(file, java.nio.charset.StandardCharsets.UTF_8)));
                 }
                 catch (IOException e) {
                     throw new UncheckedIOException(e);

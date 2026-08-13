@@ -5,6 +5,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"io"
 	"testing"
 
@@ -45,7 +46,7 @@ func TestStatusCommandMultiCluster(t *testing.T) {
 	client.NextStatus(400) // One cluster is unavilable
 	assert.NotNil(t, cli.Run("status"))
 	assert.Equal(t, `Container bar at http://127.0.0.1:8080 is ready
-Container foo at http://127.0.0.1:8080 is not ready: unhealthy container foo: status 400 at http://127.0.0.1:8080/status.html: aborting wait: got status 400
+Container foo at http://127.0.0.1:8080 is not ready: unhealthy container foo: status 400 at http://127.0.0.1:8080/status.html: got status 400
 `, stdout.String())
 	assert.Equal(t,
 		"Error: services not ready: foo\n",
@@ -64,9 +65,10 @@ func TestStatusCommandMultiClusterWait(t *testing.T) {
 	cli.retryInterval = 0
 	mockServiceStatus(client, "foo", "bar")
 	client.NextStatus(400)
+	client.NextStatus(400)
 	assert.NotNil(t, cli.Run("status", "--cluster", "foo", "--wait", "10"))
-	assert.Equal(t, "Waiting up to 10s for cluster discovery...\nWaiting up to 10s for container foo...\n"+
-		"Error: unhealthy container foo after waiting up to 10s: status 400 at http://127.0.0.1:8080/status.html: aborting wait: got status 400\n", stderr.String())
+	assert.Equal(t, "Waiting up to 10s for container foo...\n"+
+		"Error: unhealthy container foo after waiting up to 10s: status 400 at http://127.0.0.1:8080/status.html: got status 400\n", stderr.String())
 }
 
 func TestStatusCommandWithUrlTarget(t *testing.T) {
@@ -121,11 +123,13 @@ func TestStatusLocalDeployment(t *testing.T) {
 	// Latest generation without convergence
 	resp.Body = []byte(`{"currentGeneration": 42, "converged": false}`)
 	client.NextResponse(resp)
+	client.NextResponse(resp)
 	assert.NotNil(t, cli.Run("status", "deployment"))
 	assert.Equal(t, "Warning: deployment not converged on latest generation: wait deadline reached\nHint: Consider using the --wait flag to increase the wait period\nHint: --wait 120 will make this command wait for completion up to 2 minutes\n", stderr.String())
 
 	// Explicit generation
 	stderr.Reset()
+	client.NextResponse(resp)
 	client.NextResponse(resp)
 	assert.NotNil(t, cli.Run("status", "deployment", "41"))
 	assert.Equal(t, "Warning: deployment not converged on generation 41: wait deadline reached\nHint: Consider using the --wait flag to increase the wait period\nHint: --wait 120 will make this command wait for completion up to 2 minutes\n", stderr.String())
@@ -142,29 +146,29 @@ func TestStatusCloudDeployment(t *testing.T) {
 	client := &mock.HTTPClient{}
 	cli.httpClient = client
 	// Deployment in progress, with implicit fast wait
-	client.NextResponse(mock.HTTPResponse{
+	latestRun := mock.HTTPResponse{
 		URI:    "/application/v4/tenant/t1/application/a1/instance/i1/job/dev-us-north-1?limit=1",
 		Status: 200,
 		Body:   []byte(`{"runs": [{"id": 1337}]}`),
-	})
-	client.NextResponse(mock.HTTPResponse{
+	}
+	client.NextResponse(latestRun)
+	client.NextResponse(latestRun)
+	running := mock.HTTPResponse{
 		URI:    "/application/v4/tenant/t1/application/a1/instance/i1/job/dev-us-north-1/run/1337?after=-1",
 		Status: 200,
 		Body:   []byte(`{"active": true, "status": "running"}`),
-	})
+	}
+	client.NextResponse(running)
 	assert.NotNil(t, cli.Run("status", "deployment"))
 	assert.Equal(t, `Deployment is still running. See https://console.vespa-cloud.com/tenant/t1/application/a1/dev/instance/i1/job/dev-us-north-1/run/1337 for more details
-Warning: deployment run 1337 not yet complete after waiting up to 3s: wait deadline reached
+Warning: wait deadline reached
 Hint: Consider using the --wait flag to increase the wait period
 Hint: --wait 120 will make this command wait for completion up to 2 minutes
 `, stderr.String())
 	assert.Equal(t, "", stdout.String())
 	// Latest run
-	client.NextResponse(mock.HTTPResponse{
-		URI:    "/application/v4/tenant/t1/application/a1/instance/i1/job/dev-us-north-1?limit=1",
-		Status: 200,
-		Body:   []byte(`{"runs": [{"id": 1337}]}`),
-	})
+	client.NextResponse(latestRun)
+	client.NextResponse(latestRun)
 	client.NextResponse(mock.HTTPResponse{
 		URI:    "/application/v4/tenant/t1/application/a1/instance/i1/job/dev-us-north-1/run/1337?after=-1",
 		Status: 200,
@@ -178,13 +182,14 @@ Hint: --wait 120 will make this command wait for completion up to 2 minutes
 		"Deployment run 1337 has completed\nSee https://console.vespa-cloud.com/tenant/t1/application/a1/dev/instance/i1/job/dev-us-north-1/run/1337 for more details\n",
 		stdout.String())
 	// Explicit run ID and wait period
-	client.NextResponse(mock.HTTPResponse{
+	run := mock.HTTPResponse{
 		URI:    "/application/v4/tenant/t1/application/a1/instance/i1/job/dev-us-north-1/run/42?after=-1",
 		Status: 200,
 		Body:   []byte(`{"active": false, "status": "failure"}`),
-	})
+	}
+	client.NextResponse(run)
 	assert.NotNil(t, cli.Run("status", "deployment", "42", "-w", "10"))
-	assert.Equal(t, "Waiting up to 10s for deployment to converge...\nWarning: deployment run 42 not yet complete after waiting up to 10s: aborting wait: deployment failed: run 42 ended with unsuccessful status: failure\n", stderr.String())
+	assert.Equal(t, "Waiting up to 10s for deployment to converge...\nWarning: deployment failed: run 42 ended with unsuccessful status: failure\n", stderr.String())
 }
 
 func isLocalTarget(args []string) bool {
@@ -247,4 +252,285 @@ func assertStatus(expectedTarget string, args []string, t *testing.T) {
 	stdout.Reset()
 	assert.Nil(t, cli.Run(append(statusArgs, args...)...))
 	assert.Equal(t, expectedTarget+"\n", stdout.String())
+}
+
+func TestStatusNoVerify(t *testing.T) {
+	client := &mock.HTTPClient{}
+	cli, stdout, _ := newTestCLI(t)
+	cli.httpClient = client
+	cli.retryInterval = 0
+
+	mockServiceStatus(client, "foo")
+	// Note: No status.html response queued - verifying we don't call Wait()
+
+	assert.Nil(t, cli.Run("status", "--no-verify"))
+	// Should show endpoint without status check
+	assert.Equal(t, "Container foo at http://127.0.0.1:8080\n", stdout.String())
+	// Verify only the serviceconverge request was made (control plane), not status.html (data plane)
+	assert.Contains(t, client.LastRequest.URL.Path, "/serviceconverge")
+}
+
+func TestStatusEndpointCommand(t *testing.T) {
+	client := &mock.HTTPClient{}
+	cli, stdout, _ := newTestCLI(t)
+	cli.httpClient = client
+	cli.retryInterval = 0
+
+	mockServiceStatus(client, "foo", "bar")
+	// Note: No status.html responses queued - verifying we don't call Wait()
+
+	assert.Nil(t, cli.Run("status", "endpoint"))
+	// Should show endpoints without status checks
+	assert.Equal(t, "Container bar at http://127.0.0.1:8080\nContainer foo at http://127.0.0.1:8080\n", stdout.String())
+	// Verify only the serviceconverge request was made (control plane), not status.html (data plane)
+	assert.Contains(t, client.LastRequest.URL.Path, "/serviceconverge")
+}
+
+func TestStatusEndpointCommandWithCluster(t *testing.T) {
+	client := &mock.HTTPClient{}
+	cli, stdout, _ := newTestCLI(t)
+	cli.httpClient = client
+	cli.retryInterval = 0
+
+	mockServiceStatus(client, "foo", "bar")
+
+	assert.Nil(t, cli.Run("status", "endpoint", "--cluster", "foo"))
+	// Should show only the specified cluster endpoint
+	assert.Equal(t, "Container foo at http://127.0.0.1:8080\n", stdout.String())
+	// Verify only the serviceconverge request was made (control plane), not status.html (data plane)
+	assert.Contains(t, client.LastRequest.URL.Path, "/serviceconverge")
+}
+
+func TestStatusEndpointCommandPlainFormat(t *testing.T) {
+	client := &mock.HTTPClient{}
+	cli, stdout, _ := newTestCLI(t)
+	cli.httpClient = client
+	cli.retryInterval = 0
+
+	mockServiceStatus(client, "default")
+
+	assert.Nil(t, cli.Run("status", "endpoint", "--format", "plain"))
+	// Should show only the URL in plain format
+	assert.Equal(t, "http://127.0.0.1:8080\n", stdout.String())
+	// Verify only the serviceconverge request was made (control plane), not status.html (data plane)
+	assert.Contains(t, client.LastRequest.URL.Path, "/serviceconverge")
+}
+
+func TestStatusNoVerifyNotAvailableOnSubcommands(t *testing.T) {
+	client := &mock.HTTPClient{}
+	cli, _, stderr := newTestCLI(t)
+	cli.httpClient = client
+
+	// --no-verify should not be available on "status deploy"
+	err := cli.Run("status", "deploy", "--no-verify")
+	assert.NotNil(t, err)
+	assert.Contains(t, stderr.String(), "unknown flag: --no-verify")
+
+	stderr.Reset()
+
+	// --no-verify should not be available on "status deployment"
+	err = cli.Run("status", "deployment", "--no-verify")
+	assert.NotNil(t, err)
+	assert.Contains(t, stderr.String(), "unknown flag: --no-verify")
+
+	stderr.Reset()
+
+	// --no-verify should not be available on "status endpoint"
+	err = cli.Run("status", "endpoint", "--no-verify")
+	assert.NotNil(t, err)
+	assert.Contains(t, stderr.String(), "unknown flag: --no-verify")
+}
+
+func TestStatusJSONFormat(t *testing.T) {
+	client := &mock.HTTPClient{}
+	cli, stdout, _ := newTestCLI(t)
+	cli.httpClient = client
+	cli.retryInterval = 0
+
+	mockServiceStatus(client, "foo")
+	client.NextResponse(mock.HTTPResponse{URI: "/status.html", Status: 200})
+
+	assert.Nil(t, cli.Run("status", "--format", "json"))
+
+	// Parse and verify JSON output
+	var output map[string]interface{}
+	err := json.Unmarshal([]byte(stdout.String()), &output)
+	assert.Nil(t, err, "Should produce valid JSON")
+	assert.Equal(t, "container", output["type"])
+	assert.Equal(t, "foo", output["name"])
+	assert.Equal(t, "http://127.0.0.1:8080", output["url"])
+	assert.Equal(t, true, output["ready"])
+	_, hasError := output["error"]
+	assert.False(t, hasError, "Should not have error field when ready")
+}
+
+func TestStatusJSONFormatNotReady(t *testing.T) {
+	client := &mock.HTTPClient{}
+	cli, stdout, _ := newTestCLI(t)
+	cli.httpClient = client
+	cli.retryInterval = 0
+
+	mockServiceStatus(client, "foo")
+	client.NextStatus(500)
+
+	assert.NotNil(t, cli.Run("status", "--format", "json"))
+
+	// Parse and verify JSON output
+	var output map[string]interface{}
+	err := json.Unmarshal([]byte(stdout.String()), &output)
+	assert.Nil(t, err, "Should produce valid JSON")
+	assert.Equal(t, "container", output["type"])
+	assert.Equal(t, "foo", output["name"])
+	assert.Equal(t, "http://127.0.0.1:8080", output["url"])
+	assert.Equal(t, false, output["ready"])
+	assert.NotEmpty(t, output["error"], "Should have error field when not ready")
+}
+
+func TestStatusJSONFormatNoVerify(t *testing.T) {
+	client := &mock.HTTPClient{}
+	cli, stdout, _ := newTestCLI(t)
+	cli.httpClient = client
+	cli.retryInterval = 0
+
+	mockServiceStatus(client, "foo")
+	// Note: No status.html response queued - verifying we don't call Wait()
+
+	assert.Nil(t, cli.Run("status", "--format", "json", "--no-verify"))
+
+	// Parse and verify JSON output
+	var output map[string]interface{}
+	err := json.Unmarshal([]byte(stdout.String()), &output)
+	assert.Nil(t, err, "Should produce valid JSON")
+	assert.Equal(t, "container", output["type"])
+	assert.Equal(t, "foo", output["name"])
+	assert.Equal(t, "http://127.0.0.1:8080", output["url"])
+	_, hasReady := output["ready"]
+	assert.False(t, hasReady, "Should not have ready field when skipping service status")
+	_, hasError := output["error"]
+	assert.False(t, hasError, "Should not have error field when skipping service status")
+}
+
+func TestStatusWithPrivateServicesHumanFormat(t *testing.T) {
+	client := &mock.HTTPClient{}
+	cli, stdout, _ := newTestCLI(t)
+	cli.httpClient = client
+	cli.retryInterval = 0
+
+	// Create a service with private service info
+	service := &vespa.Service{
+		BaseURL:    "http://127.0.0.1:8080",
+		Name:       "default",
+		AuthMethod: "mtls",
+		PrivateService: &vespa.PrivateServiceInfo{
+			ServiceID: "com.amazonaws.vpce.us-east-1.vpce-svc-1a2b3c4d5e6f7g8h9",
+			Type:      "aws-private-link",
+			AllowedUrns: []vespa.AllowedUrn{
+				{Type: "aws-private-link", Urn: "arn:aws:iam::123456789012:root"},
+			},
+			AuthMethods: []string{"mtls"},
+			Endpoints:   []string{},
+		},
+	}
+
+	waiter := cli.waiter(0, nil)
+	result := printServiceStatus(service, "human", waiter, cli, true)
+	assert.True(t, result)
+
+	expected := `Container default at http://127.0.0.1:8080 (mtls)
+  Private service: com.amazonaws.vpce.us-east-1.vpce-svc-1a2b3c4d5e6f7g8h9
+  Type: aws-private-link
+  Allowed URNs:
+    - aws-private-link: arn:aws:iam::123456789012:root
+  Auth methods: mtls
+`
+	assert.Equal(t, expected, stdout.String())
+}
+
+func TestStatusWithPrivateServicesJSONFormat(t *testing.T) {
+	client := &mock.HTTPClient{}
+	cli, stdout, _ := newTestCLI(t)
+	cli.httpClient = client
+	cli.retryInterval = 0
+
+	// Create a service with private service info
+	service := &vespa.Service{
+		BaseURL:    "http://127.0.0.1:8080",
+		Name:       "default",
+		AuthMethod: "mtls",
+		PrivateService: &vespa.PrivateServiceInfo{
+			ServiceID: "com.amazonaws.vpce.us-east-1.vpce-svc-1a2b3c4d5e6f7g8h9",
+			Type:      "aws-private-link",
+			AllowedUrns: []vespa.AllowedUrn{
+				{Type: "aws-private-link", Urn: "arn:aws:iam::123456789012:root"},
+			},
+			AuthMethods: []string{"mtls"},
+			Endpoints:   []string{"endpoint1.com", "endpoint2.com"},
+		},
+	}
+
+	waiter := cli.waiter(0, nil)
+	result := printServiceStatus(service, "json", waiter, cli, true)
+	assert.True(t, result)
+
+	// Parse and verify JSON output
+	var output map[string]interface{}
+	err := json.Unmarshal([]byte(stdout.String()), &output)
+	assert.Nil(t, err, "Should produce valid JSON")
+	assert.Equal(t, "container", output["type"])
+	assert.Equal(t, "default", output["name"])
+	assert.Equal(t, "http://127.0.0.1:8080", output["url"])
+	assert.Equal(t, "mtls", output["authMethod"])
+
+	// Verify private service info
+	privateService, hasPrivateService := output["privateService"].(map[string]interface{})
+	assert.True(t, hasPrivateService, "Should have privateService field")
+	assert.Equal(t, "com.amazonaws.vpce.us-east-1.vpce-svc-1a2b3c4d5e6f7g8h9", privateService["serviceId"])
+	assert.Equal(t, "aws-private-link", privateService["type"])
+
+	allowedUrns := privateService["allowedUrns"].([]interface{})
+	assert.Equal(t, 1, len(allowedUrns))
+	firstUrn := allowedUrns[0].(map[string]interface{})
+	assert.Equal(t, "aws-private-link", firstUrn["type"])
+	assert.Equal(t, "arn:aws:iam::123456789012:root", firstUrn["urn"])
+
+	authMethods := privateService["authMethods"].([]interface{})
+	assert.Equal(t, 1, len(authMethods))
+	assert.Equal(t, "mtls", authMethods[0])
+
+	endpoints := privateService["endpoints"].([]interface{})
+	assert.Equal(t, 2, len(endpoints))
+	assert.Equal(t, "endpoint1.com", endpoints[0])
+	assert.Equal(t, "endpoint2.com", endpoints[1])
+}
+
+func TestStatusWithoutPrivateServices(t *testing.T) {
+	client := &mock.HTTPClient{}
+	cli, stdout, _ := newTestCLI(t)
+	cli.httpClient = client
+	cli.retryInterval = 0
+
+	// Create a service without private service info
+	service := &vespa.Service{
+		BaseURL:    "http://127.0.0.1:8080",
+		Name:       "default",
+		AuthMethod: "mtls",
+	}
+
+	waiter := cli.waiter(0, nil)
+	result := printServiceStatus(service, "human", waiter, cli, true)
+	assert.True(t, result)
+
+	expected := "Container default at http://127.0.0.1:8080 (mtls)\n"
+	assert.Equal(t, expected, stdout.String())
+
+	// Test JSON format
+	stdout.Reset()
+	result = printServiceStatus(service, "json", waiter, cli, true)
+	assert.True(t, result)
+
+	var output map[string]interface{}
+	err := json.Unmarshal([]byte(stdout.String()), &output)
+	assert.Nil(t, err, "Should produce valid JSON")
+	_, hasPrivateService := output["privateService"]
+	assert.False(t, hasPrivateService, "Should not have privateService field when not configured")
 }

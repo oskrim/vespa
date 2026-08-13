@@ -4,6 +4,8 @@ package com.yahoo.vespa.indexinglanguage.expressions;
 import com.yahoo.document.DataType;
 import com.yahoo.document.datatypes.FieldValue;
 
+import java.util.Objects;
+
 /**
  * @author Simon Thoresen Hult
  */
@@ -13,13 +15,29 @@ final class SimpleExpression extends Expression {
     private boolean hasVerifyValue = false;
     private FieldValue executeValue;
     private DataType verifyValue;
+    private final DataType requiredInput;
     private DataType createdOutput;
 
     public SimpleExpression() {
-        super(null);
+        this(null);
     }
+
     public SimpleExpression(DataType requiredInput) {
-        super(requiredInput);
+        this.requiredInput = requiredInput;
+    }
+
+    public SimpleExpression(DataType requiredInput, DataType createdOutput) {
+        this.requiredInput = requiredInput;
+        this.createdOutput = createdOutput;
+    }
+
+    @Override
+    public boolean requiresInput() { return requiredInput != null; }
+
+    public SimpleExpression setVerifyValue(DataType verifyValue) {
+        this.hasVerifyValue = true;
+        this.verifyValue = verifyValue;
+        return this;
     }
 
     public SimpleExpression setExecuteValue(FieldValue executeValue) {
@@ -28,15 +46,21 @@ final class SimpleExpression extends Expression {
         return this;
     }
 
-    public SimpleExpression setVerifyValue(DataType verifyValue) {
-        this.hasVerifyValue = true;
-        this.verifyValue = verifyValue;
-        return this;
-    }
-
     public SimpleExpression setCreatedOutput(DataType createdOutput) {
         this.createdOutput = createdOutput;
         return this;
+    }
+
+    @Override
+    public DataType setInputType(DataType inputType, TypeContext context) {
+        super.setInputType(inputType, requiredInput, context);
+        return createdOutput;
+    }
+
+    @Override
+    public DataType setOutputType(DataType outputType, TypeContext context) {
+        super.setOutputType(createdOutput, outputType, null, context);
+        return requiredInput;
     }
 
     @Override
@@ -47,31 +71,18 @@ final class SimpleExpression extends Expression {
     }
 
     @Override
-    protected void doVerify(VerificationContext context) {
-        if (hasVerifyValue) {
-            context.setCurrentType(verifyValue);
-        }
-    }
-
-    @Override
-    public DataType createdOutputType() {
-        return createdOutput;
-    }
-
-    @Override
     public int hashCode() {
-        return hashCode(executeValue) + hashCode(verifyValue) + hashCode(requiredInputType()) + hashCode(createdOutput);
+        return hashCode(executeValue) + hashCode(verifyValue) + hashCode(createdOutput);
     }
 
     @Override
     public boolean equals(Object o) {
         if (!(o instanceof SimpleExpression other)) return false;
         if (hasExecuteValue != other.hasExecuteValue) return false;
-        if (!equals(executeValue, other.executeValue)) return false;
+        if (!Objects.equals(executeValue, other.executeValue)) return false;
         if (hasVerifyValue != other.hasVerifyValue) return false;
-        if (!equals(verifyValue, other.verifyValue)) return false;
-        if (!equals(requiredInputType(), other.requiredInputType())) return false;
-        if (!equals(createdOutput, other.createdOutput)) return false;
+        if (!Objects.equals(verifyValue, other.verifyValue)) return false;
+        if (!Objects.equals(createdOutput, other.createdOutput)) return false;
         return true;
     }
 
@@ -99,4 +110,5 @@ final class SimpleExpression extends Expression {
     private static int hashCode(Object obj) {
         return obj != null ? obj.hashCode() : 0;
     }
+
 }

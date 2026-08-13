@@ -15,18 +15,18 @@
     <packaging>pom</packaging>
     <name>${project.artifactId}</name>
     <dependencies>
-	<dependency>
-	    <groupId>com.yahoo.vespa</groupId>
-	    <artifactId>jdisc_core</artifactId>
+        <dependency>
+            <groupId>com.yahoo.vespa</groupId>
+            <artifactId>jdisc_core</artifactId>
             <version>${project.version}</version>
-	    <scope>provided</scope>
-	</dependency>
-    <dependency>
-        <groupId>com.yahoo.vespa</groupId>
-        <artifactId>annotations</artifactId>
-        <version>${project.version}</version>
-        <scope>provided</scope>
-    </dependency>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.yahoo.vespa</groupId>
+            <artifactId>annotations</artifactId>
+            <version>${project.version}</version>
+            <scope>provided</scope>
+        </dependency>
     </dependencies>
     <build>
         <plugins>
@@ -35,13 +35,12 @@
                 <artifactId>maven-compiler-plugin</artifactId>
             </plugin>
             <plugin>
-                <!-- Trick to package bundles before test phase to allow running 'mvn test' -->
                 <groupId>org.apache.felix</groupId>
                 <artifactId>maven-bundle-plugin</artifactId>
                 <executions>
                     <execution>
                         <id>package-test-bundles</id>
-                        <phase>process-classes</phase>
+                        <phase>pre-integration-test</phase>
                         <goals>
                             <goal>bundle</goal>
                         </goals>

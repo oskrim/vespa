@@ -1,7 +1,7 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.search.yql;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -41,6 +41,8 @@ public class FieldFilterTestCase {
         result.hits().add(createHit("hit2", .1d, true, FIELD_A, FIELD_B, FIELD_C));
 
         DocumentSourceSearcher mockBackend = new DocumentSourceSearcher();
+        mockBackend.addSummaryClass("default", Set.of("matchfeatures", "rankfeatures", "summaryfeatures",
+                                                      FIELD_A, FIELD_B, FIELD_C));
         mockBackend.addResult(query, result);
 
         searchChain = new Chain<>(new FieldFilter(), mockBackend);
@@ -76,8 +78,7 @@ public class FieldFilterTestCase {
         execution.fill(result);
         assertEquals(2, result.getConcreteHitCount());
         assertEquals(Set.of(FIELD_B), result.hits().get(0).fieldKeys());
-        assertEquals(Set.of(FIELD_B, "matchfeatures", "rankfeatures", "summaryfeatures"),
-                     result.hits().get(1).fieldKeys());
+        assertEquals(Set.of(FIELD_B), result.hits().get(1).fieldKeys());
     }
 
     @Test

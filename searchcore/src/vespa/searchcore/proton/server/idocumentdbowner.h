@@ -2,16 +2,23 @@
 
 #pragma once
 
-#include <memory>
 #include <cstdint>
+#include <memory>
+
+namespace vespalib {
+class SharedOperationThrottler;
+}
 
 namespace proton {
 
 class IDocumentDBReferenceRegistry;
-namespace matching { class SessionManager; }
+class MaintenanceJobTokenSource;
 
-class IDocumentDBOwner
-{
+namespace matching {
+class SessionManager;
+}
+
+class IDocumentDBOwner {
 public:
     using SessionManager = matching::SessionManager;
     virtual ~IDocumentDBOwner();
@@ -19,7 +26,9 @@ public:
     virtual bool isInitializing() const = 0;
     virtual uint32_t getDistributionKey() const = 0;
     virtual uint32_t getNumThreadsPerSearch() const = 0;
-    virtual SessionManager & session_manager() = 0;
+    virtual SessionManager& session_manager() = 0;
+    virtual std::shared_ptr<MaintenanceJobTokenSource> get_lid_space_compaction_job_token_source() = 0;
+    virtual std::shared_ptr<vespalib::SharedOperationThrottler> shared_replay_throttler() const = 0;
     virtual std::shared_ptr<IDocumentDBReferenceRegistry> getDocumentDBReferenceRegistry() const = 0;
 };
 

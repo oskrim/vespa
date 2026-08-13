@@ -27,7 +27,11 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 /**
  * Tests query profiles with/and types
@@ -449,8 +453,8 @@ public class QueryProfileTypeTestCase {
         }
         catch (IllegalArgumentException e) {
             assertEquals("Could not set 'ranking.features.query(myTensor1)' to 'tensor(x[3]):[0.1, 0.2, 0.3]': " +
-                    "Require a tensor of type tensor(a{},b{})",
-                    Exceptions.toMessageString(e));
+                         "Require a tensor of type tensor(a{},b{})",
+                         Exceptions.toMessageString(e));
         }
         try {
             query.properties().set("ranking.features.query(myTensor1)", Tensor.from(tensorString));
@@ -458,8 +462,8 @@ public class QueryProfileTypeTestCase {
         }
         catch (IllegalArgumentException e) {
             assertEquals("Could not set 'ranking.features.query(myTensor1)' to 'tensor(x[3]):[0.1, 0.2, 0.3]': " +
-                    "Require a tensor of type tensor(a{},b{})",
-                    Exceptions.toMessageString(e));
+                         "Require a tensor of type tensor(a{},b{})",
+                         Exceptions.toMessageString(e));
         }
     }
 
@@ -824,13 +828,13 @@ public class QueryProfileTypeTestCase {
         }
 
         @Override
-        public List<Integer> embed(String text, Embedder.Context context) {
+        public List<Integer> embed(String text, Context context) {
             fail("Unexpected call");
             return null;
         }
 
         @Override
-        public Tensor embed(String text, Embedder.Context context, TensorType tensorType) {
+        public Tensor embed(String text, Context context, TensorType tensorType) {
             assertEquals(expectedText, text);
             assertEquals(expectedLanguage, context.getLanguage());
             assertEquals(tensorToReturn.type(), tensorType);

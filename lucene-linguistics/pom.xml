@@ -10,6 +10,7 @@
     <version>8-SNAPSHOT</version>
     <relativePath>../parent/pom.xml</relativePath>
   </parent>
+  <name>${project.artifactId}</name>
 
   <artifactId>lucene-linguistics</artifactId>
   <packaging>container-plugin</packaging>
@@ -17,6 +18,8 @@
 
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <!-- Override with -DluceneLinguistics.bundleVersion=999.0.0 to test local changes -->
+    <luceneLinguistics.bundleVersion>${project.version}</luceneLinguistics.bundleVersion>
   </properties>
 
   <dependencies>
@@ -73,6 +76,8 @@
         <configuration>
           <bundleType>CORE</bundleType>
           <suppressWarningMissingImportPackages>true</suppressWarningMissingImportPackages>
+          <!-- Useful for testing changes locally -->
+          <Bundle-Version>${luceneLinguistics.bundleVersion}</Bundle-Version>
         </configuration>
       </plugin>
       <plugin>

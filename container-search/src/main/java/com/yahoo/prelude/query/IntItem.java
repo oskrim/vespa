@@ -1,11 +1,11 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.prelude.query;
 
+import ai.vespa.searchlib.searchprotocol.protobuf.SearchProtocol;
 
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.util.Objects;
-
 
 /**
  * This represents either
@@ -200,6 +200,11 @@ public class IntItem extends TermItem {
         this.expression = toExpression(from, to, hitLimit);
     }
 
+    /** Returns this as a wordItem */
+    public WordItem asWord() {
+        return new WordItem(stringValue(), getIndexName(), isFromQuery());
+    }
+
     @Override
     public String getRawWord() {
         return getNumber();
@@ -254,8 +259,8 @@ public class IntItem extends TermItem {
     }
 
     @Override
-    protected void encodeThis(ByteBuffer buffer) {
-        super.encodeThis(buffer); // takes care of index bytes
+    protected void encodeThis(ByteBuffer buffer, SerializationContext context) {
+        super.encodeThis(buffer, context); // takes care of index bytes
         putString(getEncodedInt(), buffer);
     }
 
@@ -290,6 +295,75 @@ public class IntItem extends TermItem {
             return new IntItem(from, to, indexName);
         else {
             return new RangeItem(from, to, hitLimit, indexName, false);
+        }
+    }
+
+    private static boolean needsFloatingPoint(Number num) {
+        double d = num.doubleValue();
+        long l = num.longValue();
+        double dFromL = l;
+        // NOTE: cannot use > Long.MAX_VALUE here, because that converts to > 0x1.0p63
+        if (d < -0x1.0p63 || d >= 0x1.0p63) return true;
+        return (d != dFromL);
+    }
+
+    @Override
+    SearchProtocol.QueryTreeItem toProtobuf(SerializationContext context) {
+        // Check if this is a range or a simple term
+        if (!from.equals(to)) {
+            // This is a range
+            Number fromNum = from.number();
+            Number toNum = to.number();
+
+            // Do we need floating point, or can we send it as an integer?
+            if (needsFloatingPoint(fromNum) || needsFloatingPoint(toNum)) {
+                var builder = SearchProtocol.ItemFloatingPointRangeTerm.newBuilder();
+                builder.setProperties(ToProtobuf.buildTermProperties(this, getIndexName()));
+                builder.setLowerLimit(fromNum.doubleValue());
+                builder.setUpperLimit(toNum.doubleValue());
+                builder.setLowerInclusive(from.isInclusive());
+                builder.setUpperInclusive(to.isInclusive());
+                if (hitLimit != 0) {
+                    builder.setHasRangeLimit(true);
+                    builder.setRangeLimit(hitLimit);
+                }
+                return SearchProtocol.QueryTreeItem.newBuilder()
+                        .setItemFloatingPointRangeTerm(builder.build())
+                        .build();
+            } else {
+                var builder = SearchProtocol.ItemIntegerRangeTerm.newBuilder();
+                builder.setProperties(ToProtobuf.buildTermProperties(this, getIndexName()));
+                builder.setLowerLimit(fromNum.longValue());
+                builder.setUpperLimit(toNum.longValue());
+                builder.setLowerInclusive(from.isInclusive());
+                builder.setUpperInclusive(to.isInclusive());
+                if (hitLimit != 0) {
+                    builder.setHasRangeLimit(true);
+                    builder.setRangeLimit(hitLimit);
+                }
+                return SearchProtocol.QueryTreeItem.newBuilder()
+                        .setItemIntegerRangeTerm(builder.build())
+                        .build();
+            }
+        } else {
+            // This is a simple term
+            Number num = from.number();
+
+            if (needsFloatingPoint(num)) {
+                var builder = SearchProtocol.ItemFloatingPointTerm.newBuilder();
+                builder.setProperties(ToProtobuf.buildTermProperties(this, getIndexName()));
+                builder.setNumber(num.doubleValue());
+                return SearchProtocol.QueryTreeItem.newBuilder()
+                        .setItemFloatingPointTerm(builder.build())
+                        .build();
+            } else {
+                var builder = SearchProtocol.ItemIntegerTerm.newBuilder();
+                builder.setProperties(ToProtobuf.buildTermProperties(this, getIndexName()));
+                builder.setNumber(num.longValue());
+                return SearchProtocol.QueryTreeItem.newBuilder()
+                        .setItemIntegerTerm(builder.build())
+                        .build();
+            }
         }
     }
 

@@ -1,7 +1,6 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.search.schema;
 
-import com.yahoo.api.annotations.Beta;
 import com.yahoo.component.annotation.Inject;
 import com.yahoo.container.QrSearchersConfig;
 import com.yahoo.search.Query;
@@ -35,7 +34,6 @@ import java.util.stream.Collectors;
 // NOTES:
 // This should replace IndexFacts, and probably DocumentDatabase.
 // It replicates the schema resolution mechanism in IndexFacts, but does not yet contain complete field information.
-@Beta
 public class SchemaInfo {
 
     private static final SchemaInfo empty = new SchemaInfo(List.of(), List.of());
@@ -45,14 +43,6 @@ public class SchemaInfo {
     private final Map<String, Cluster> clusters;
 
     private final ParserSettings parserSettings;
-
-    private static ParserSettings extractLQP(QrSearchersConfig qrSearchersConfig) {
-        var cfg = qrSearchersConfig.parserSettings();
-        return new ParserSettings(cfg.keepImplicitAnds(),
-                                  cfg.markSegmentAnds(),
-                                  cfg.keepSegmentAnds(),
-                                  cfg.keepIdeographicPunctuation());
-    }
 
     @Inject
     public SchemaInfo(SchemaInfoConfig schemaInfoConfig,
@@ -64,11 +54,6 @@ public class SchemaInfo {
 
     public SchemaInfo(List<Schema> schemas, List<Cluster> clusters) {
         this(schemas, clusters, new ParserSettings());
-    }
-
-    /** only for unit tests */
-    public static SchemaInfo createStub(ParserSettings lqp) {
-        return new SchemaInfo(List.of(), List.of(), lqp);
     }
 
     private SchemaInfo(List<Schema> schemas, List<Cluster> clusters, ParserSettings lqp) {
@@ -109,6 +94,19 @@ public class SchemaInfo {
     @Override
     public int hashCode() { return Objects.hash(schemas, clusters); }
 
+    private static ParserSettings extractLQP(QrSearchersConfig qrSearchersConfig) {
+        var cfg = qrSearchersConfig.parserSettings();
+        return new ParserSettings(cfg.keepImplicitAnds(),
+                                  cfg.markSegmentAnds(),
+                                  cfg.keepSegmentAnds(),
+                                  cfg.keepIdeographicPunctuation());
+    }
+
+    /** only for unit tests */
+    public static SchemaInfo createStub(ParserSettings lqp) {
+        return new SchemaInfo(List.of(), List.of(), lqp);
+    }
+
     /** The schema information resolved to be relevant to this session. */
     public static class Session {
 
@@ -127,6 +125,10 @@ public class SchemaInfo {
         public boolean isStreaming() { return isStreaming; }
 
         public Collection<Schema> schemas() { return schemas; }
+
+        public Optional<Schema> schema(String name) {
+            return schemas.stream().filter(schema -> schema.name().equals(name)).findAny();
+        }
 
         /**
          * Looks up a field or field set by the given name or alias

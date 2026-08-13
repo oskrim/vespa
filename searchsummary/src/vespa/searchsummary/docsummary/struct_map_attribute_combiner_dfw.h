@@ -4,7 +4,9 @@
 
 #include "attribute_combiner_dfw.h"
 
-namespace search::attribute { class IAttributeContext; }
+namespace search::attribute {
+class IAttributeContext;
+}
 
 namespace search::docsummary {
 
@@ -15,19 +17,17 @@ class StructFieldsResolver;
  * This class reads values from multiple struct field attributes and
  * inserts them as a map of struct.
  */
-class StructMapAttributeCombinerDFW : public AttributeCombinerDFW
-{
+class StructMapAttributeCombinerDFW : public AttributeCombinerDFW {
     std::string              _keyAttributeName;
     std::vector<std::string> _valueFields;
     std::vector<std::string> _valueAttributeNames;
 
-    DocsumFieldWriterState* allocFieldWriterState(search::attribute::IAttributeContext &context, vespalib::Stash& stash, const MatchingElements* matching_elements) const override;
+    DocsumFieldWriterState* allocFieldWriterState(search::attribute::IAttributeContext& context,
+                                                  vespalib::Stash&                      stash) const override;
+
 public:
-    StructMapAttributeCombinerDFW(const std::string &fieldName,
-                                  const StructFieldsResolver& fields_resolver,
-                                  bool filter_elements,
-                                  std::shared_ptr<MatchingElementsFields> matching_elems_fields);
+    StructMapAttributeCombinerDFW(const StructFieldsResolver& fields_resolver);
     ~StructMapAttributeCombinerDFW() override;
 };
 
-}
+} // namespace search::docsummary

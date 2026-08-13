@@ -9,6 +9,7 @@ import com.yahoo.vespa.config.ConnectionPool;
 import com.yahoo.vespa.defaults.Defaults;
 import java.io.File;
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
@@ -50,10 +51,6 @@ public class FileDownloader implements AutoCloseable {
         this(connectionPool, supervisor, defaultDownloadDirectory, timeout, backoffInitialTime);
     }
 
-    public FileDownloader(ConnectionPool connectionPool, Supervisor supervisor, File downloadDirectory, Duration timeout) {
-        this(connectionPool, supervisor, downloadDirectory, timeout, backoffInitialTime);
-    }
-
     public FileDownloader(ConnectionPool connectionPool,
                           Supervisor supervisor,
                           File downloadDirectory,
@@ -65,11 +62,27 @@ public class FileDownloader implements AutoCloseable {
         this.timeout = timeout;
         // Needed to receive RPC receiveFile* calls from server after starting download of file reference
         new FileReceiver(supervisor, downloads, downloadDirectory);
-        this.fileReferenceDownloader = new FileReferenceDownloader(connectionPool,
-                                                                   downloads,
-                                                                   timeout,
-                                                                   backoffInitialTime,
-                                                                   downloadDirectory);
+        this.fileReferenceDownloader = new FileReferenceDownloader(connectionPool, downloads, timeout,
+                                                                    backoffInitialTime, downloadDirectory);
+        if (forceDownload)
+            log.log(Level.INFO, "Force download of file references (download even if file reference exists on disk)");
+    }
+
+    public FileDownloader(ConnectionPool connectionPool,
+                          Supervisor supervisor,
+                          File downloadDirectory,
+                          Duration timeout,
+                          Duration backoffInitialTime,
+                          int maxTimeoutsBeforeClose) {
+        this.connectionPool = connectionPool;
+        this.supervisor = supervisor;
+        this.downloadDirectory = downloadDirectory;
+        this.timeout = timeout;
+        // Needed to receive RPC receiveFile* calls from server after starting download of file reference
+        new FileReceiver(supervisor, downloads, downloadDirectory);
+        this.fileReferenceDownloader = new FileReferenceDownloader(connectionPool, downloads, timeout,
+                                                                    backoffInitialTime, downloadDirectory,
+                                                                    maxTimeoutsBeforeClose);
         if (forceDownload)
             log.log(Level.INFO, "Force download of file references (download even if file reference exists on disk)");
     }
@@ -157,7 +170,7 @@ public class FileDownloader implements AutoCloseable {
     }
 
     /** Start downloading, the future returned will be complete()d by receiving method in {@link FileReceiver} */
-    private synchronized CompletableFuture<Optional<File>> startDownload(FileReferenceDownload fileReferenceDownload) {
+    private CompletableFuture<Optional<File>> startDownload(FileReferenceDownload fileReferenceDownload) {
         return fileReferenceDownloader.startDownload(fileReferenceDownload);
     }
 
@@ -183,6 +196,9 @@ public class FileDownloader implements AutoCloseable {
 
         @Override
         public int getSize() { return 0; }
+
+        @Override
+        public List<Connection> connections() { return List.of(); }
 
     }
 

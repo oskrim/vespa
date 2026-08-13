@@ -1,7 +1,10 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.searchlib.rankingexpression;
 
+import com.yahoo.searchlib.ranking.features.FeatureNames;
+import com.yahoo.searchlib.rankingexpression.evaluation.NamedStringValue;
 import com.yahoo.searchlib.rankingexpression.parser.ParseException;
+import com.yahoo.searchlib.rankingexpression.rule.ConstantNode;
 import com.yahoo.searchlib.rankingexpression.rule.OperationNode;
 import com.yahoo.searchlib.rankingexpression.rule.Operator;
 import com.yahoo.searchlib.rankingexpression.rule.CompositeNode;
@@ -12,16 +15,19 @@ import com.yahoo.searchlib.rankingexpression.rule.ReferenceNode;
 import com.yahoo.searchlib.rankingexpression.rule.SerializationContext;
 import com.yahoo.searchlib.rankingexpression.rule.TensorFunctionNode;
 import com.yahoo.tensor.functions.Reduce;
+import com.yahoo.text.Utf8;
 import org.junit.Test;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.fail;
 
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileReader;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -95,9 +101,10 @@ public class RankingExpressionTestCase {
         List<ExpressionFunction> functions = new ArrayList<>();
         functions.add(new ExpressionFunction("foo", null, new RankingExpression("foo")));
 
-        RankingExpression exp = new RankingExpression("foo");
+        RankingExpression exp = new RankingExpression("first-phase", "foo");
         try {
             exp.getRankProperties(new SerializationContext(functions, Optional.empty()));
+            fail("Expected exception");
         } catch (RuntimeException e) {
             assertEquals("Cycle in ranking expression function 'foo' called from: [foo[]]", e.getMessage());
         }
@@ -109,9 +116,10 @@ public class RankingExpressionTestCase {
         functions.add(new ExpressionFunction("foo", null, new RankingExpression("bar")));
         functions.add(new ExpressionFunction("bar", null, new RankingExpression("foo")));
 
-        RankingExpression exp = new RankingExpression("foo");
+        RankingExpression exp = new RankingExpression("first-phase", "foo");
         try {
             exp.getRankProperties(new SerializationContext(functions, Optional.empty()));
+            fail("Expected exception");
         } catch (RuntimeException e) {
             assertEquals("Cycle in ranking expression function 'foo' called from: [foo[], bar[]]", e.getMessage());
         }
@@ -161,6 +169,14 @@ public class RankingExpressionTestCase {
                             "tensor(x[3]):[1.0, 2.0, 3]");
         assertSerialization("tensor(x[3]):{{x:0}:1.0,{x:1}:(reduce(tensor0 * tensor1, sum)),{x:2}:3}",
                             "tensor(x[3]):[1.0, sum(tensor0*tensor1), 3]");
+    }
+
+    @Test
+    public void testTensorLabelReordering() throws ParseException {
+        assertEquals(
+                new RankingExpression("tensor(a[2],b[3]):[[1,2,3],[4,5,6]]").toString(),
+                new RankingExpression("tensor(b[3],a[2]):[[1,4],[2,5],[3,6]]").toString());
+
     }
 
     @Test
@@ -242,7 +258,7 @@ public class RankingExpressionTestCase {
 
     @Test
     public void testParse() throws ParseException, IOException {
-        BufferedReader reader = new BufferedReader(new FileReader("src/tests/rankingexpression/rankingexpressionlist"));
+        BufferedReader reader = new BufferedReader(Utf8.createReader("src/tests/rankingexpression/rankingexpressionlist"));
         String line;
         int lineNumber = 0;
         while ((line = reader.readLine()) != null) {
@@ -301,6 +317,37 @@ public class RankingExpressionTestCase {
     }
 
     @Test
+    public void testSwitch() throws ParseException {
+        RankingExpression expression = new RankingExpression("switch(x) { case 1: a, case 2: b, default: c }");
+        assertTrue(expression.getRoot() instanceof com.yahoo.searchlib.rankingexpression.rule.SwitchNode);
+    }
+
+    @Test
+    public void testSwitchSerialization() throws ParseException {
+        assertParse("switch(x) { case 1: 2, default: 3 }",
+                    "switch(x) { case 1: 2, default: 3 }");
+        assertParse("switch(x) { case 1: 2, case 3: 4, default: 5 }",
+                    "switch(x) { case 1: 2, case 3: 4, default: 5 }");
+        assertParse("switch(query(model)) { case \"a\": 1, case \"b\": 2, default: 0 }",
+                    "switch(query(model)) { case \"a\": 1, case \"b\": 2, default: 0 }");
+    }
+
+    @Test
+    public void testSwitchModelSelection() throws ParseException {
+        // Issue #33096 use case - multiple model selection
+        RankingExpression expression = new RankingExpression(
+            "switch(query(l2_rel_model)) { " +
+            "  case \"model1\": xgboost(\"model1.json\"), " +
+            "  case \"model2\": xgboost(\"model2.json\"), " +
+            "  case \"model3\": xgboost(\"model3.json\"), " +
+            "  default: 0 " +
+            "}");
+        assertTrue(expression.getRoot() instanceof com.yahoo.searchlib.rankingexpression.rule.SwitchNode);
+        assertEquals("switch(query(l2_rel_model)) { case \"model1\": xgboost(\"model1.json\"), case \"model2\": xgboost(\"model2.json\"), case \"model3\": xgboost(\"model3.json\"), default: 0 }",
+                     expression.toString());
+    }
+
+    @Test
     public void testFileImporting() throws ParseException {
         RankingExpression expression = new RankingExpression(new File("src/test/files/simple.expression"));
         assertEquals("simple: a + b", expression.toString());
@@ -353,6 +400,80 @@ public class RankingExpressionTestCase {
         ExpressionNode isNan = comparison.children().get(0);
         assertTrue(isNan instanceof FunctionNode);
         assertEquals("isNan(attribute(foo))", isNan.toString());
+    }
+
+    @Test
+    public void testBm25TaggedArguments() throws ParseException {
+        assertParse("bm25(\"field:myfield\",\"label:mylabel\")", "bm25(field: myfield, label: mylabel)");
+        assertParse("bm25(myfield,\"label:mylabel\")", "bm25(myfield, label: mylabel)");
+        assertParse("bm25(\"field:myfield\",\"label:title-terms\")", "bm25(field: myfield, label: \"title-terms\")");
+        assertParse("bm25(\"field:myfield\",\"label:hello: world\")",
+                    "bm25(field: myfield, label: \"hello: world\")");
+        assertParse("bm25(\"field:myfield\",\"label:quote\\\"back\")",
+                    "bm25(field: myfield, label: \"quote\\\"back\")");
+        assertParse("bm25(\"field:myfield\",\"label:mylabel\")",
+                    "bm25( field : myfield , label : mylabel )");
+        assertParse("bm25(\"field:myfield\",\"label:123\")", "bm25(field: myfield, label: 123)");
+        assertParse("bm25(\"field:myfield\",\"label:-123\")", "bm25(field: myfield, label: -123)");
+
+        ReferenceNode parsed = (ReferenceNode)new RankingExpression("bm25(field: myfield, label: mylabel)").getRoot();
+        ConstantNode labelArgument = (ConstantNode)parsed.getArguments().expressions().get(1);
+        assertTrue(labelArgument.getValue() instanceof NamedStringValue);
+        NamedStringValue labelValue = (NamedStringValue)labelArgument.getValue();
+        assertEquals("label", labelValue.name());
+        assertEquals("mylabel", labelValue.value());
+        assertEquals("label:mylabel", labelValue.asString());
+
+        String canonical = "bm25(\"field:myfield\",\"label:mylabel\")";
+        assertEquals(canonical, new RankingExpression(canonical).toString());
+
+        assertParseFails("bm25(field:, label: mylabel)");
+        assertParseFails("bm25(field: myfield, label: title-terms)");
+        assertParseFails("bm25(field: myfield, label: 1.25)");
+        assertParseFails("bm25(field: myfield, label: mylabel + 1)");
+        assertParse("bm25(\"field:title\",\"label:mylabel\")", "bm25(field: \"title\", label: mylabel)");
+        assertParse("bm25(\"field:title\",\"label:mylabel\")", "bm25(field: title, label: \"mylabel\")");
+    }
+
+    private static void assertParseFails(String expression) {
+        try {
+            new RankingExpression(expression);
+            fail("Expected parse failure for: " + expression);
+        } catch (ParseException e) {
+            // expected
+        }
+    }
+
+    @Test
+    public void attributeNameCanContainDot() throws ParseException {
+        for (String name : List.of("foo.bar", "foo.bar.baz")) {
+            Reference ref = referenceOf("attribute(" + name + ")");
+            assertTrue(FeatureNames.isAttributeFeature(ref));
+            assertEquals(name, ref.simpleArgument().get());
+            assertNull(ref.output());
+            assertEquals("attribute(" + name + ")", ref.toString());
+        }
+    }
+
+    @Test
+    public void attributeNameWithDotCanHaveOutput() throws ParseException {
+        Reference ref = referenceOf("attribute(foo.bar).count");
+        assertTrue(ref.isSimple());
+        assertEquals("foo.bar", ref.simpleArgument().get());
+        assertEquals("count", ref.output());
+        assertEquals("attribute(foo.bar).count", ref.toString());
+    }
+
+    /** Only the "foo.bar" name form is special cased: other arguments are left alone */
+    @Test
+    public void attributeArgumentCanBeAnExpression() throws ParseException {
+        assertParse("attribute(myfunc(a,b))", "attribute(myfunc(a,b))");
+        assertParse("attribute(myfunc(a + 1))", "attribute(myfunc(a+1))");
+        assertParse("attribute(foo) + attribute(bar)", "attribute(foo)+attribute(bar)");
+    }
+
+    private static Reference referenceOf(String expression) throws ParseException {
+        return ((ReferenceNode)new RankingExpression(expression).getRoot()).reference();
     }
 
     protected static void assertParse(String expected, String expression) throws ParseException {

@@ -2,17 +2,14 @@
 #pragma once
 
 #include <vespa/fastlib/text/wordfolder.h>
+
 #include <string>
 
 class SummaryConfig;
 
-class DocsumParams
-{
+class DocsumParams {
 public:
-    enum {
-        FALLBACK_NONE,
-        FALLBACK_PREFIX
-    };
+    enum { FALLBACK_NONE, FALLBACK_PREFIX };
 
     DocsumParams();
 
@@ -35,23 +32,21 @@ public:
     int Fallback() const;
 
 private:
-    bool _enabled;
+    bool   _enabled;
     size_t _length;
     size_t _min_length;
     size_t _max_matches;
     size_t _surround_max;
-    int _fallback;
+    int    _fallback;
 };
 
-
-class MatcherParams
-{
+class MatcherParams {
 public:
     MatcherParams();
     MatcherParams(const MatcherParams&) = delete;
     MatcherParams(MatcherParams&&) = delete;
-    MatcherParams &operator=(const MatcherParams&) = delete;
-    MatcherParams &operator=(MatcherParams&&) = delete;
+    MatcherParams& operator=(const MatcherParams&) = delete;
+    MatcherParams& operator=(MatcherParams&&) = delete;
 
     MatcherParams& SetMatchWindowSize(size_t winsize);
     size_t MatchWindowSize() const;
@@ -74,15 +69,13 @@ public:
     double ProximityFactor() const noexcept { return _proximity_factor; };
 
 private:
-    size_t _match_winsize;
-    double _match_winsize_fallback_multiplier;
-    size_t _max_match_candidates;
-    size_t _stem_min;
-    size_t _stem_extend;
+    size_t                 _match_winsize;
+    double                 _match_winsize_fallback_multiplier;
+    size_t                 _max_match_candidates;
+    size_t                 _stem_min;
+    size_t                 _stem_extend;
     const Fast_WordFolder* _wordfolder; // The wordfolder object needed as 1st parameter to folderfun
-    double _proximity_factor;
+    double                 _proximity_factor;
 };
 
-
 bool operator==(MatcherParams& mp1, MatcherParams& mp2);
-

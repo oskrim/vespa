@@ -13,19 +13,10 @@ import com.yahoo.schema.derived.SchemaInfo;
 import com.yahoo.vespa.config.search.AttributesConfig;
 import com.yahoo.prelude.fastsearch.DocumentdbInfoConfig;
 import com.yahoo.search.config.IndexInfoConfig;
-import com.yahoo.vespa.config.search.RankProfilesConfig;
-import com.yahoo.vespa.config.search.SummaryConfig;
-import com.yahoo.vespa.config.search.core.OnnxModelsConfig;
-import com.yahoo.vespa.config.search.core.RankingConstantsConfig;
-import com.yahoo.vespa.config.search.core.RankingExpressionsConfig;
-import com.yahoo.vespa.config.search.summary.JuniperrcConfig;
-import com.yahoo.vespa.config.search.vsm.VsmfieldsConfig;
-import com.yahoo.vespa.config.search.vsm.VsmsummaryConfig;
 import com.yahoo.vespa.configdefinition.IlscriptsConfig;
 import com.yahoo.config.model.producer.AnyConfigProducer;
 import com.yahoo.config.model.producer.TreeConfigProducer;
 
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
@@ -50,35 +41,6 @@ public abstract class SearchCluster extends TreeConfigProducer<AnyConfigProducer
     private final Map<String, SchemaInfo> schemas = new LinkedHashMap<>();
     private final Map<String, DocumentDatabase> documentDbs = new LinkedHashMap<>();
     private final Map<String, AttributesProducer> documentDBProducerForStreaming = new HashMap<>();
-    private final List<LegacyStreamingProxy> legacyproxy = new ArrayList<>();
-
-    private static class LegacyStreamingProxy extends TreeConfigProducer<AnyConfigProducer> implements
-            AttributesConfig.Producer,
-            RankProfilesConfig.Producer,
-            RankingConstantsConfig.Producer,
-            RankingExpressionsConfig.Producer,
-            OnnxModelsConfig.Producer,
-            JuniperrcConfig.Producer,
-            SummaryConfig.Producer,
-            VsmsummaryConfig.Producer,
-            VsmfieldsConfig.Producer
-    {
-        private final DocumentDatabase db;
-        LegacyStreamingProxy(TreeConfigProducer<AnyConfigProducer> parent, String clusterName,
-                             String schemaName, DerivedConfiguration derived) {
-            super(parent, "cluster." + clusterName + "." + schemaName);
-            this.db = new DocumentDatabase(this, schemaName, derived);
-        }
-        @Override public void getConfig(SummaryConfig.Builder builder) { db.getConfig(builder); }
-        @Override public void getConfig(AttributesConfig.Builder builder) { db.getConfig(builder); }
-        @Override public void getConfig(OnnxModelsConfig.Builder builder) { db.getConfig(builder); }
-        @Override public void getConfig(RankingConstantsConfig.Builder builder) { db.getConfig(builder); }
-        @Override public void getConfig(RankProfilesConfig.Builder builder) { db.getConfig(builder); }
-        @Override public void getConfig(RankingExpressionsConfig.Builder builder) { db.getConfig(builder); }
-        @Override public void getConfig(JuniperrcConfig.Builder builder) { db.getConfig(builder); }
-        @Override public void getConfig(VsmfieldsConfig.Builder builder) { db.getConfig(builder); }
-        @Override public void getConfig(VsmsummaryConfig.Builder builder) { db.getConfig(builder); }
-    }
 
     private static class AttributesProducer extends AnyConfigProducer implements AttributesConfig.Producer {
         private final DerivedConfiguration derived;
@@ -128,13 +90,13 @@ public abstract class SearchCluster extends TreeConfigProducer<AnyConfigProducer
     public void deriveFromSchemas(DeployState deployState) {
         for (SchemaInfo spec : schemas().values()) {
             if (spec.fullSchema() instanceof DocumentOnlySchema) continue; // TODO verify if this special handling is necessary
+
             String schemaName = spec.fullSchema().getName();
             var derived = new DerivedConfiguration(deployState, spec.fullSchema(), spec.getIndexMode());
             documentDbs.put(schemaName, new DocumentDatabase(this, schemaName, derived));
             if (spec.getIndexMode() == SchemaInfo.IndexMode.STREAMING) {
                 var parent = (TreeConfigProducer<AnyConfigProducer>)getParent();
                 documentDBProducerForStreaming.put(schemaName, new AttributesProducer(parent, schemaName, derived));
-                legacyproxy.add(new LegacyStreamingProxy(parent, clusterName, schemaName, derived));
             }
         }
     }
@@ -144,7 +106,7 @@ public abstract class SearchCluster extends TreeConfigProducer<AnyConfigProducer
         return documentDbs.values().stream().toList();
     }
 
-    public String getClusterName()              { return clusterName; }
+    public String getClusterName() { return clusterName; }
     public final boolean hasStreaming() {
         return schemas().values().stream().anyMatch(schema -> schema.getIndexMode() == SchemaInfo.IndexMode.STREAMING);
     }

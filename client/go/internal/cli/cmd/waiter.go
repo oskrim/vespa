@@ -2,6 +2,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
@@ -31,8 +32,8 @@ func (w *Waiter) DeployService(target vespa.Target) (*vespa.Service, error) {
 	return s, nil
 }
 
-// Service returns the service identified by cluster ID, available on target.
-func (w *Waiter) Service(target vespa.Target, cluster string) (*vespa.Service, error) {
+// ServiceWithAuthMethod returns the service identified by cluster ID and authentication method, available on target.
+func (w *Waiter) ServiceWithAuthMethod(target vespa.Target, cluster string, authMethod string) (*vespa.Service, error) {
 	targetType, err := w.cli.targetType(anyTarget)
 	if err != nil {
 		return nil, err
@@ -44,9 +45,28 @@ func (w *Waiter) Service(target vespa.Target, cluster string) (*vespa.Service, e
 	if err != nil {
 		return nil, err
 	}
-	service, err := vespa.FindService(cluster, services)
+	service, err := vespa.FindService(cluster, authMethod, services)
 	if err != nil {
-		return nil, errHint(err, "The --cluster option specifies the service to use")
+		hint := "The --cluster option specifies the service to use"
+		if authMethod == "token" {
+			tokenHint := "Token authentication requires a token endpoint to be set up in services.xml"
+			return nil, errHint(err, tokenHint, hint)
+		}
+		authHint := fmt.Sprintf("No endpoint found for authentication method %s", authMethod)
+		return nil, errHint(err, authHint, hint)
+	}
+	// When talking to Vespa Cloud over mTLS the data-plane client certificate is
+	// required. Without it the TLS handshake is terminated by the load balancer
+	// and Go reports a generic "unexpected EOF", which gives the user no clue
+	// that a certificate is missing. Fail early with an actionable hint.
+	if (target.Type() == vespa.TargetCloud || target.Type() == vespa.TargetPublicCD) &&
+		authMethod == "mtls" && len(service.TLSOptions.KeyPair) == 0 {
+		return nil, errHint(
+			fmt.Errorf("no data-plane certificate configured for %s", target.Deployment().Application),
+			"Run 'vespa auth cert' to create a self-signed certificate for this application",
+			"Or set VESPA_CLI_DATA_PLANE_CERT_FILE and VESPA_CLI_DATA_PLANE_KEY_FILE to existing PEM files",
+			"Or set VESPA_CLI_DATA_PLANE_TOKEN to use token authentication",
+		)
 	}
 	if err := w.maybeWaitFor(service); err != nil {
 		return nil, err
@@ -56,27 +76,47 @@ func (w *Waiter) Service(target vespa.Target, cluster string) (*vespa.Service, e
 
 // Services returns all container services available on target.
 func (w *Waiter) Services(target vespa.Target) ([]*vespa.Service, error) {
+	return w.NamedServices("", target)
+}
+
+// NamedServices returns services matching the given name on target, or all services if name is empty.
+func (w *Waiter) NamedServices(name string, target vespa.Target) ([]*vespa.Service, error) {
 	services, err := w.services(target)
 	if err != nil {
 		return nil, err
 	}
+	result := make([]*vespa.Service, 0, len(services))
 	for _, s := range services {
+		if name == "" || name == s.Name {
+			result = append(result, s)
+		}
+	}
+	for _, s := range result {
 		if err := w.maybeWaitFor(s); err != nil {
 			return nil, err
 		}
 	}
-	return services, nil
+	return result, nil
 }
 
 func (w *Waiter) maybeWaitFor(service *vespa.Service) error {
-	if w.Timeout > 0 {
-		w.cli.printInfo("Waiting up to ", color.CyanString(w.Timeout.String()), " for ", service.Description(), "...")
-		return service.Wait(w.Timeout)
+	if w.Timeout <= 0 {
+		return nil
 	}
-	return nil
+	// Send probe request to determine if we need to wait at all
+	if err := service.Wait(0); err == nil {
+		return err
+	}
+	w.cli.printInfo("Waiting up to ", color.CyanString(w.Timeout.String()), " for ", service.Description(), "...")
+	return service.Wait(w.Timeout)
 }
 
 func (w *Waiter) services(target vespa.Target) ([]*vespa.Service, error) {
+	// Send probe request to determine if we need to wait at all
+	services, err := target.ContainerServices(0)
+	if err == nil {
+		return services, err
+	}
 	if w.Timeout > 0 {
 		w.cli.printInfo("Waiting up to ", color.CyanString(w.Timeout.String()), " for cluster discovery...")
 	}
@@ -90,14 +130,21 @@ func (w *Waiter) FastWaitOn(target vespa.Target) bool {
 
 // Deployment waits for a deployment to become ready, returning the ID of the converged deployment.
 func (w *Waiter) Deployment(target vespa.Target, wantedID int64) (int64, error) {
+	// Send probe request to determine if we need to wait at all
+	id, err := target.AwaitDeployment(wantedID, 0)
+	if err == nil {
+		return id, err
+	}
 	timeout := w.Timeout
-	fastWait := w.FastWaitOn(target)
 	if timeout > 0 {
 		w.cli.printInfo("Waiting up to ", color.CyanString(timeout.String()), " for deployment to converge...")
-	} else if fastWait {
+	} else if w.FastWaitOn(target) {
 		// If --wait is not explicitly given, we always wait a few seconds in Cloud to catch fast failures, e.g.
 		// invalid application package
 		timeout = 3 * time.Second
+	}
+	if errors.Is(err, vespa.ErrDeployment) {
+		return id, err
 	}
 	return target.AwaitDeployment(wantedID, timeout)
 }

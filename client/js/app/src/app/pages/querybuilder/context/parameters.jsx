@@ -8,7 +8,7 @@ function param(name, type, props = {}) {
   return Object.assign({ name, type }, children && { children }, props);
 }
 
-// https://docs.vespa.ai/en/reference/query-api-reference.html
+// https://docs.vespa.ai/en/reference/querying/yql.html
 export default param('root', [
   param('yql', 'String'),
 
@@ -57,6 +57,9 @@ export default param('root', [
       param('termwiseLimit', 'Float', { min: 0, max: 1 }),
       param('postFilterThreshold', 'Float', { min: 0, max: 1 }),
       param('approximateThreshold', 'Float', { min: 0, max: 1 }),
+      param('filterFirstThreshold', 'Float', { min: 0, max: 1 }),
+      param('filterFirstExploration', 'Float', { min: 0, max: 1 }),
+      param('explorationSlack', 'Float', { min: 0, max: 1 }),
     ]),
     param('matchPhase', [
       param('attribute', 'String'),

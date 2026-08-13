@@ -9,7 +9,10 @@ import com.yahoo.vespa.indexinglanguage.SimpleTestAdapter;
 import org.junit.Test;
 
 import static com.yahoo.vespa.indexinglanguage.expressions.ExpressionAssert.assertVerify;
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertSame;
+import static org.junit.Assert.fail;
 
 /**
  * @author Simon Thoresen Hult
@@ -35,10 +38,7 @@ public class SetValueTestCase {
 
     @Test
     public void requireThatExpressionCanBeVerified() {
-        Expression exp = new ConstantExpression(new StringFieldValue("foo"));
-        assertVerify(null, exp, DataType.STRING);
-        assertVerify(DataType.INT, exp, DataType.STRING);
-        assertVerify(DataType.STRING, exp, DataType.STRING);
+        assertVerify(AnyDataType.instance, new ConstantExpression(new StringFieldValue("foo")), DataType.STRING);
     }
 
     @Test

@@ -2,6 +2,7 @@
 vespa_add_executable(searchcore_attribute_test_app TEST
     SOURCES
     attribute_test.cpp
+    reserved_memory_for_attribute_load_calculator_test.cpp
     DEPENDS
     searchcore_server
     searchcore_attribute
@@ -9,7 +10,7 @@ vespa_add_executable(searchcore_attribute_test_app TEST
     searchcore_pcommon
     searchcore_test
     searchlib_test
-    GTest::GTest
+    GTest::gtest
 )
 vespa_add_test(NAME searchcore_attribute_test_app COMMAND searchcore_attribute_test_app)
 

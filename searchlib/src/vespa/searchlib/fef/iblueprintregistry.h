@@ -12,8 +12,7 @@ class Blueprint;
  * This is an interface used during plugin setup to register blueprint
  * prototypes.
  **/
-class IBlueprintRegistry
-{
+class IBlueprintRegistry {
 public:
     /**
      * Add a blueprint prototype to the registry.
@@ -23,7 +22,7 @@ public:
     /**
      * Virtual destructor to allow safe subclassing.
      **/
-    virtual ~IBlueprintRegistry() {}
+    virtual ~IBlueprintRegistry() = default;
 };
 
-}
+} // namespace search::fef

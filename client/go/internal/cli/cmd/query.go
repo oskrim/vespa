@@ -5,11 +5,14 @@
 package cmd
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -22,132 +25,246 @@ import (
 	"github.com/vespa-engine/vespa/client/go/internal/vespa"
 )
 
+// queryAcceptHeader specifies the preferred response formats for query requests.
+// CBOR is preferred for efficiency, with JSON as fallback for backward compatibility.
+const queryAcceptHeader = "application/cbor, application/json;q=0.9"
+
+type queryOptions struct {
+	printCurl        bool
+	queryTimeoutSecs int
+	waitSecs         int
+	format           string
+	postFile         string
+	headers          []string
+	profile          bool
+	profileFile      string
+}
+
 func newQueryCmd(cli *CLI) *cobra.Command {
-	var (
-		printCurl        bool
-		queryTimeoutSecs int
-		waitSecs         int
-		format           string
-		headers          []string
-	)
+	opts := queryOptions{}
 	cmd := &cobra.Command{
 		Use:   "query query-parameters",
 		Short: "Issue a query to Vespa",
-		Example: `$ vespa query "yql=select * from music where album contains 'head'" hits=5
-$ vespa query --format=plain "yql=select * from music where album contains 'head'" hits=5
-$ vespa query --header="X-First-Name: Joe" "yql=select * from music where album contains 'head'" hits=5`,
+		Example: `$ vespa query 'yql=select * from music where album contains "head"' hits=5
+$ vespa query --format=plain 'yql=select * from music where album contains "head"' hits=5
+$ vespa query --file q-vector.json
+$ vespa query --header='X-First-Name: Joe' 'yql=select * from music where album contains "head"' hits=5`,
 		Long: `Issue a query to Vespa.
 
-Any parameter from https://docs.vespa.ai/en/reference/query-api-reference.html
+Any parameter from https://docs.vespa.ai/en/reference/api/query.html
 can be set by the syntax [parameter-name]=[value].`,
 		// TODO: Support referencing a query json file
 		DisableAutoGenTag: true,
 		SilenceUsage:      true,
-		Args:              cobra.MinimumNArgs(1),
+		Args:              cobra.MinimumNArgs(0),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			waiter := cli.waiter(time.Duration(waitSecs)*time.Second, cmd)
-			return query(cli, args, queryTimeoutSecs, printCurl, format, headers, waiter)
+			if len(args) == 0 && opts.postFile == "" {
+				return fmt.Errorf("requires at least 1 arg")
+			}
+			waiter := cli.waiter(time.Duration(opts.waitSecs)*time.Second, cmd)
+			return query(cli, args, &opts, waiter)
 		},
 	}
-	cmd.Flags().BoolVarP(&printCurl, "verbose", "v", false, "Print the equivalent curl command for the query")
-	cmd.Flags().StringVarP(&format, "format", "", "human", "Output format. Must be 'human' (human-readable) or 'plain' (no formatting)")
-	cmd.Flags().StringSliceVarP(&headers, "header", "", nil, "Add a header to the HTTP request, on the format 'Header: Value'. This can be specified multiple times")
-	cmd.Flags().IntVarP(&queryTimeoutSecs, "timeout", "T", 10, "Timeout for the query in seconds")
-	cli.bindWaitFlag(cmd, 0, &waitSecs)
+	cmd.Flags().BoolVarP(&opts.printCurl, "verbose", "v", false, "Print the equivalent curl command for the query")
+	cmd.Flags().StringVarP(&opts.postFile, "file", "", "", "Read query parameters from the given JSON file and send a POST request, with overrides from arguments")
+	cmd.Flags().StringVarP(&opts.format, "format", "", "human", "Output format. Must be 'human' (human-readable) or 'plain' (no formatting)")
+	cmd.Flags().StringSliceVarP(&opts.headers, "header", "", nil, "Add a header to the HTTP request, on the format 'Header: Value'. This can be specified multiple times")
+	cmd.Flags().IntVarP(&opts.queryTimeoutSecs, "timeout", "T", 10, "Timeout for the query in seconds")
+	cmd.Flags().BoolVarP(&opts.profile, "profile", "", false, "Enable profiling mode (Note: this feature is experimental)")
+	cmd.Flags().StringVarP(&opts.profileFile, "profile-file", "", "vespa_query_profile_result.json", "Profiling result file. Use '-' for stdout.")
+	cmd.Flags().MarkHidden("profile")
+	cmd.Flags().MarkHidden("profile-file")
+	cli.bindWaitFlag(cmd, 0, &opts.waitSecs)
 	return cmd
 }
 
-func printCurl(stderr io.Writer, url string, service *vespa.Service) error {
-	cmd, err := curl.RawArgs(url)
+func printCurl(stderr io.Writer, req *http.Request, postFile string, service *vespa.Service) error {
+	cmd, err := curl.RawArgs(req.URL.String())
 	if err != nil {
 		return err
 	}
-	cmd.Certificate = service.TLSOptions.CertificateFile
-	cmd.PrivateKey = service.TLSOptions.PrivateKeyFile
+	cmd.Method = req.Method
+	if postFile != "" {
+		cmd.WithBodyFile(postFile)
+	}
+	for k, vl := range req.Header {
+		for _, v := range vl {
+			cmd.Header(k, v)
+		}
+	}
+	if service.AuthMethod == "mtls" {
+		cmd.Certificate = service.TLSOptions.CertificateFile
+		cmd.PrivateKey = service.TLSOptions.PrivateKeyFile
+	}
 	_, err = io.WriteString(stderr, cmd.String()+"\n")
 	return err
 }
 
-func query(cli *CLI, arguments []string, timeoutSecs int, curl bool, format string, headers []string, waiter *Waiter) error {
+// readResponseBodyAsJSON reads the response body and returns it as JSON string,
+// handling both CBOR and JSON content types appropriately.
+func readResponseBodyAsJSON(body io.Reader, contentType string) string {
+	contentType = strings.Split(contentType, ";")[0]
+	if contentType == "application/cbor" {
+		data, err := io.ReadAll(body)
+		if err != nil {
+			return fmt.Sprintf("<read error: %v>", err)
+		}
+		jsonStr, err := ioutil.CBORToJSON(data)
+		if err != nil {
+			return fmt.Sprintf("<CBOR decode error: %v>", err)
+		}
+		return jsonStr
+	}
+	return ioutil.ReaderToJSON(body)
+}
+
+func query(cli *CLI, arguments []string, opts *queryOptions, waiter *Waiter) error {
 	target, err := cli.target(targetOptions{})
 	if err != nil {
 		return err
 	}
-	service, err := waiter.Service(target, cli.config.cluster())
+	authMethod := cli.selectAuthMethod()
+	service, err := waiter.ServiceWithAuthMethod(target, cli.config.cluster(), authMethod)
 	if err != nil {
 		return err
 	}
-	switch format {
+
+	switch opts.format {
 	case "plain", "human":
 	default:
-		return fmt.Errorf("invalid format: %s", format)
+		return fmt.Errorf("invalid format: %s", opts.format)
 	}
-	url, _ := url.Parse(service.BaseURL + "/search/")
+	url, _ := url.Parse(strings.TrimSuffix(service.BaseURL, "/") + "/search/")
 	urlQuery := url.Query()
 	for i := range len(arguments) {
 		key, value := splitArg(arguments[i])
 		urlQuery.Set(key, value)
 	}
+	if opts.profile {
+		opts.format = "plain"
+		opts.queryTimeoutSecs *= 2
+		urlQuery.Set("trace.level", "1")
+		urlQuery.Set("trace.explainLevel", "1")
+		urlQuery.Set("trace.profileDepth", "100")
+		urlQuery.Set("trace.timestamps", "true")
+		urlQuery.Set("presentation.timing", "true")
+	}
 	queryTimeout := urlQuery.Get("timeout")
 	if queryTimeout == "" {
 		// No timeout set by user, use the timeout option
-		queryTimeout = fmt.Sprintf("%ds", timeoutSecs)
+		queryTimeout = fmt.Sprintf("%ds", opts.queryTimeoutSecs)
 		urlQuery.Set("timeout", queryTimeout)
 	}
-	url.RawQuery = urlQuery.Encode()
 	deadline, err := time.ParseDuration(queryTimeout)
 	if err != nil {
 		return fmt.Errorf("invalid query timeout: %w", err)
 	}
-	if curl {
-		if err := printCurl(cli.Stderr, url.String(), service); err != nil {
-			return err
-		}
-	}
-	header, err := httputil.ParseHeader(headers)
+	header, err := httputil.ParseHeader(opts.headers)
 	if err != nil {
 		return err
 	}
-	response, err := service.Do(&http.Request{Header: header, URL: url}, deadline+time.Second) // Slightly longer than query timeout
+	if authMethod == "token" {
+		err = cli.addBearerToken(&header)
+		if err != nil {
+			return err
+		}
+		service.TLSOptions.CertificateFile = ""
+		service.TLSOptions.PrivateKeyFile = ""
+	}
+	if header.Get("Accept") == "" {
+		header.Set("Accept", queryAcceptHeader)
+	}
+	hReq := &http.Request{Header: header, URL: url}
+	if opts.postFile != "" {
+		json, err := getJsonFrom(opts.postFile, urlQuery)
+		if err != nil {
+			return fmt.Errorf("bad JSON in postFile '%s': %w", opts.postFile, err)
+		}
+		header.Set("Content-Type", "application/json")
+		hReq.Method = "POST"
+		hReq.Body = io.NopCloser(bytes.NewBuffer(bytes.Clone(json)))
+		if err != nil {
+			return fmt.Errorf("bad postFile '%s': %w", opts.postFile, err)
+		}
+	}
+	url.RawQuery = urlQuery.Encode()
+	if opts.printCurl {
+		if err := printCurl(cli.Stderr, hReq, opts.postFile, service); err != nil {
+			return err
+		}
+	}
+	response, err := service.Do(hReq, deadline+time.Second) // Slightly longer than query timeout
 	if err != nil {
+		// Hint for timeout exception in cloud
+		if err, ok := err.(net.Error); ok && err.Timeout() && target.IsCloud() {
+			return errHint(err, "No nodes are responsive", "Check application status in the console")
+		}
 		return fmt.Errorf("request failed: %w", err)
 	}
 	defer response.Body.Close()
 
-	if response.StatusCode == 200 {
-		if err := printResponse(response.Body, response.Header.Get("Content-Type"), format, cli); err != nil {
+	switch {
+	case response.StatusCode == 200:
+		var output io.Writer = cli.Stdout
+		if opts.profile {
+			if opts.profileFile == "-" {
+				output = cli.Stdout
+			} else {
+				profileFile, err := os.Create(opts.profileFile)
+				if err != nil {
+					return fmt.Errorf("failed to create profile file %s: %w", opts.profileFile, err)
+				}
+				defer profileFile.Close()
+				fmt.Fprintf(cli.Stderr, "writing profiling results to: %s\n", opts.profileFile)
+				output = profileFile
+			}
+		}
+		if err := printResponse(response.Body, response.Header.Get("Content-Type"), opts.format, output); err != nil {
 			return err
 		}
-	} else if response.StatusCode/100 == 4 {
-		return fmt.Errorf("invalid query: %s\n%s", response.Status, ioutil.ReaderToJSON(response.Body))
-	} else {
-		return fmt.Errorf("%s from container at %s\n%s", response.Status, color.CyanString(url.Host), ioutil.ReaderToJSON(response.Body))
+	case response.StatusCode/100 == 4:
+		err := fmt.Errorf("invalid query: %s\n%s", response.Status, readResponseBodyAsJSON(response.Body, response.Header.Get("Content-Type")))
+		if response.StatusCode == 403 && authMethod == "token" {
+			return errHint(err, "Make sure the VESPA_CLI_DATA_PLANE_TOKEN environment variable is set to a valid token")
+		}
+		return err
+	default:
+		return fmt.Errorf("%s from container at %s\n%s", response.Status, color.CyanString(url.Host), readResponseBodyAsJSON(response.Body, response.Header.Get("Content-Type")))
 	}
 	return nil
 }
 
-func printResponse(body io.Reader, contentType, format string, cli *CLI) error {
+func printResponse(body io.Reader, contentType, format string, output io.Writer) error {
 	contentType = strings.Split(contentType, ";")[0]
-	if contentType == "text/event-stream" {
+	switch contentType {
+	case "text/event-stream":
 		return printResponseBody(body, printOptions{
 			plainStream: format == "plain",
 			tokenStream: format == "human",
-		}, cli)
+		}, output)
+	case "application/cbor":
+		return printResponseBody(body, printOptions{
+			parseCBOR: true,
+			parseJSON: format == "human",
+		}, output)
+	default:
+		return printResponseBody(body, printOptions{parseJSON: format == "human"}, output)
 	}
-	return printResponseBody(body, printOptions{parseJSON: format == "human"}, cli)
 }
 
 type printOptions struct {
 	plainStream bool
 	tokenStream bool
 	parseJSON   bool
+	parseCBOR   bool
 }
 
-func printResponseBody(body io.Reader, options printOptions, cli *CLI) error {
-	if options.plainStream {
-		_, err := io.Copy(cli.Stdout, body)
+func printResponseBody(body io.Reader, options printOptions, output io.Writer) error {
+	switch {
+	case options.plainStream:
+		_, err := io.Copy(output, body)
 		return err
-	} else if options.tokenStream {
+	case options.tokenStream:
 		bufSize := 1024 * 1024 // Handle events up to this size
 		dec := sse.NewDecoderSize(body, bufSize)
 		writingLine := false
@@ -169,29 +286,45 @@ func printResponseBody(body io.Reader, options printOptions, cli *CLI) error {
 				if err := json.Unmarshal([]byte(event.Data), &token); err == nil {
 					value = token.Value
 				}
-				fmt.Fprint(cli.Stdout, value)
+				fmt.Fprint(output, value)
 			} else if !event.IsEnd() {
 				if writingLine {
-					fmt.Fprintln(cli.Stdout)
+					fmt.Fprintln(output)
 				}
 				event.Data = ioutil.StringToJSON(event.Data) // Optimistically pretty-print JSON
-				fmt.Fprint(cli.Stdout, event.String())
+				fmt.Fprint(output, event.String())
 			} else {
-				fmt.Fprintln(cli.Stdout)
+				fmt.Fprintln(output)
 				break
 			}
 		}
 		return nil
-	} else if options.parseJSON {
-		text := ioutil.ReaderToJSON(body) // Optimistic, returns body as the raw string if it cannot be parsed to JSON
-		fmt.Fprintln(cli.Stdout, text)
+	case options.parseCBOR:
+		data, err := io.ReadAll(body)
+		if err != nil {
+			return err
+		}
+		var text string
+		if options.parseJSON {
+			text, err = ioutil.CBORToJSON(data)
+		} else {
+			text, err = ioutil.CBORToJSONCompact(data)
+		}
+		if err != nil {
+			return fmt.Errorf("failed to decode CBOR response: %w", err)
+		}
+		fmt.Fprintln(output, text)
 		return nil
-	} else {
+	case options.parseJSON:
+		text := ioutil.ReaderToJSON(body) // Optimistic, returns body as the raw string if it cannot be parsed to JSON
+		fmt.Fprintln(output, text)
+		return nil
+	default:
 		b, err := io.ReadAll(body)
 		if err != nil {
 			return err
 		}
-		fmt.Fprintln(cli.Stdout, string(b))
+		fmt.Fprintln(output, string(b))
 		return nil
 	}
 }
@@ -206,4 +339,38 @@ func splitArg(argument string) (string, string) {
 		return "yql", argument
 	}
 	return parts[0], parts[1]
+}
+
+func getJsonFrom(fn string, query url.Values) ([]byte, error) {
+	parsed := make(map[string]any)
+	f, err := os.Open(fn)
+	if err != nil {
+		return nil, err
+	}
+	body, err := io.ReadAll(f)
+	if err != nil {
+		return nil, err
+	}
+	for i, v := range body {
+		if v == '\n' || v == '\t' {
+			body[i] = ' '
+		}
+	}
+	err = json.Unmarshal(body, &parsed)
+	if err != nil {
+		return nil, err
+	}
+	for k, vl := range query {
+		if len(vl) == 1 {
+			parsed[k] = vl[0]
+		} else {
+			parsed[k] = vl
+		}
+		query.Del(k)
+	}
+	b, err := json.Marshal(parsed)
+	if err != nil {
+		return nil, err
+	}
+	return b, nil
 }

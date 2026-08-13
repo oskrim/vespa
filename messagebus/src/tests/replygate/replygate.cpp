@@ -5,7 +5,7 @@
 #include <vespa/messagebus/replygate.h>
 #include <vespa/messagebus/routablequeue.h>
 #include <vespa/messagebus/testlib/simplemessage.h>
-#include <vespa/vespalib/testkit/test_kit.h>
+#include <vespa/vespalib/gtest/gtest.h>
 
 using namespace mbus;
 
@@ -15,13 +15,9 @@ struct MyGate : public ReplyGate {
     static int ctorCnt;
     static int dtorCnt;
 
-    MyGate(IMessageHandler &sender) : ReplyGate(sender) {
-        ++ctorCnt;
-    }
+    MyGate(IMessageHandler& sender) : ReplyGate(sender) { ++ctorCnt; }
 
-    ~MyGate() override {
-        ++dtorCnt;
-    }
+    ~MyGate() override { ++dtorCnt; }
 };
 
 int MyGate::ctorCnt = 0;
@@ -31,13 +27,9 @@ struct MyReply : public EmptyReply {
     static int ctorCnt;
     static int dtorCnt;
 
-    MyReply() : EmptyReply() {
-        ++ctorCnt;
-    }
+    MyReply() : EmptyReply() { ++ctorCnt; }
 
-    ~MyReply() override {
-        ++dtorCnt;
-    }
+    ~MyReply() override { ++dtorCnt; }
 };
 
 int MyReply::ctorCnt = 0;
@@ -49,17 +41,17 @@ struct MySender : public IMessageHandler {
     void handleMessage(Message::UP msg) override {
         auto reply = std::make_unique<MyReply>();
         msg->swapState(*reply);
-        IReplyHandler &handler = reply->getCallStack().pop(*reply);
+        IReplyHandler& handler = reply->getCallStack().pop(*reply);
         handler.handleReply(std::move(reply));
     }
 };
-}
+} // namespace
 
-TEST("replygate_test") {
+TEST(ReplyGateTest, replygate_test) {
     {
         RoutableQueue q;
         MySender      sender;
-        auto gate = vespalib::make_ref_counted<MyGate>(sender);
+        auto          gate = vespalib::make_ref_counted<MyGate>(sender);
         {
             auto msg = std::make_unique<SimpleMessage>("test");
             msg->pushHandler(q);
@@ -87,4 +79,4 @@ TEST("replygate_test") {
     EXPECT_TRUE(MyReply::dtorCnt == 2);
 }
 
-TEST_MAIN() { TEST_RUN_ALL(); }
+GTEST_MAIN_RUN_ALL_TESTS()

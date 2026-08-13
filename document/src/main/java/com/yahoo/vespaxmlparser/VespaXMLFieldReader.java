@@ -10,7 +10,24 @@ import com.yahoo.document.Field;
 import com.yahoo.document.MapDataType;
 import com.yahoo.document.PositionDataType;
 import com.yahoo.document.annotation.AnnotationReference;
-import com.yahoo.document.datatypes.*;
+import com.yahoo.document.datatypes.Array;
+import com.yahoo.document.datatypes.BoolFieldValue;
+import com.yahoo.document.datatypes.ByteFieldValue;
+import com.yahoo.document.datatypes.CollectionFieldValue;
+import com.yahoo.document.datatypes.DoubleFieldValue;
+import com.yahoo.document.datatypes.FieldValue;
+import com.yahoo.document.datatypes.FloatFieldValue;
+import com.yahoo.document.datatypes.IntegerFieldValue;
+import com.yahoo.document.datatypes.LongFieldValue;
+import com.yahoo.document.datatypes.MapFieldValue;
+import com.yahoo.document.datatypes.PredicateFieldValue;
+import com.yahoo.document.datatypes.Raw;
+import com.yahoo.document.datatypes.ReferenceFieldValue;
+import com.yahoo.document.datatypes.StringFieldValue;
+import com.yahoo.document.datatypes.Struct;
+import com.yahoo.document.datatypes.StructuredFieldValue;
+import com.yahoo.document.datatypes.TensorFieldValue;
+import com.yahoo.document.datatypes.WeightedSet;
 import com.yahoo.document.predicate.Predicate;
 import com.yahoo.document.serialization.DeserializationException;
 import com.yahoo.document.serialization.FieldReader;
@@ -21,6 +38,7 @@ import javax.xml.stream.XMLStreamException;
 import javax.xml.stream.XMLStreamReader;
 import java.io.InputStream;
 import java.math.BigInteger;
+import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.Optional;
 
@@ -30,6 +48,7 @@ import java.util.Optional;
  * All read methods assume that the stream is currently positioned at the start element of the relevant field.
  *
  */
+@SuppressWarnings({"deprecation", "removal"})
 public class VespaXMLFieldReader extends VespaXMLReader implements FieldReader {
     private static final BigInteger UINT_MAX = new BigInteger("4294967296");
     private static final BigInteger ULONG_MAX = new BigInteger("18446744073709551616");
@@ -411,7 +430,7 @@ public class VespaXMLFieldReader extends VespaXMLReader implements FieldReader {
             if (isBase64EncodedElement(reader)) {
                 value.assign(Base64.getMimeDecoder().decode(reader.getElementText()));
             } else {
-                value.assign(reader.getElementText().getBytes());
+                value.assign(reader.getElementText().getBytes(StandardCharsets.UTF_8));
             }
         } catch (XMLStreamException e) {
             throw newException(field, e);
@@ -466,7 +485,6 @@ public class VespaXMLFieldReader extends VespaXMLReader implements FieldReader {
         value.deserialize(field instanceof Field ? (Field)field : null, this);
     }
 
-    /***********************************************************************/
     /*                   UNUSED METHODS                                    */
     /***********************************************************************/
 

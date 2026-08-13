@@ -1,6 +1,7 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.document.datatypes;
 
+import java.nio.charset.StandardCharsets;
 import com.yahoo.document.DataType;
 import com.yahoo.document.Document;
 import com.yahoo.document.DocumentType;
@@ -15,7 +16,11 @@ import com.yahoo.document.annotation.Span;
 import com.yahoo.document.annotation.SpanList;
 import com.yahoo.document.annotation.SpanNode;
 import com.yahoo.document.annotation.SpanTree;
-import com.yahoo.document.serialization.*;
+import com.yahoo.document.serialization.DocumentDeserializer;
+import com.yahoo.document.serialization.DocumentDeserializerFactory;
+import com.yahoo.document.serialization.DocumentSerializer;
+import com.yahoo.document.serialization.DocumentSerializerFactory;
+import com.yahoo.document.serialization.SerializationException;
 import com.yahoo.io.GrowableByteBuffer;
 import com.yahoo.vespa.objects.BufferSerializer;
 import org.junit.Test;
@@ -30,6 +35,7 @@ import static org.junit.Assert.fail;
 /**
  * @author Einar M R Rosenvinge
  */
+@SuppressWarnings({"deprecation", "removal"})
 public class StringTestCase extends AbstractTypesTest {
 
     @Test
@@ -42,7 +48,7 @@ public class StringTestCase extends AbstractTypesTest {
         data.put((byte)0);
         data.put((byte)(foo.length() + 1));
 
-        data.put(foo.getBytes());
+        data.put(foo.getBytes(StandardCharsets.UTF_8));
         data.put((byte)0);
 
         int positionAfterPut = data.position();
@@ -50,7 +56,7 @@ public class StringTestCase extends AbstractTypesTest {
         data.position(0);
 
         StringFieldValue tmp = new StringFieldValue();
-        DocumentDeserializer deser = DocumentDeserializerFactory.create6(null, data);
+        DocumentDeserializer deser = DocumentDeserializerFactory.createHead(null, data);
         tmp.deserialize(deser);
         java.lang.String foo2 = tmp.getString();
 
@@ -102,7 +108,7 @@ public class StringTestCase extends AbstractTypesTest {
         data.put((byte)0);
         data.putInt(length | 0x80000000);
 
-        data.put(blah.getBytes());
+        data.put(blah.getBytes(StandardCharsets.UTF_8));
         data.put((byte)0);
 
         positionAfterPut = data.position();
@@ -111,7 +117,7 @@ public class StringTestCase extends AbstractTypesTest {
 
         tmp = new StringFieldValue();
 
-        deser = DocumentDeserializerFactory.create6(null, data);
+        deser = DocumentDeserializerFactory.createHead(null, data);
         tmp.deserialize(deser);
         java.lang.String blah2 = tmp.getString();
 
@@ -129,7 +135,7 @@ public class StringTestCase extends AbstractTypesTest {
         data.getBuf().position(0);
 
         StringFieldValue tmp = new StringFieldValue();
-        DocumentDeserializer deser = DocumentDeserializerFactory.create6(null, data.getBuf());
+        DocumentDeserializer deser = DocumentDeserializerFactory.createHead(null, data.getBuf());
         tmp.deserialize(deser);
         java.lang.String test2 = tmp.getString();
         assertEquals(test, test2);
@@ -146,11 +152,11 @@ public class StringTestCase extends AbstractTypesTest {
         Field f = new Field("text", DataType.STRING);
 
         GrowableByteBuffer buffer = new GrowableByteBuffer(1024);
-        DocumentSerializer serializer = DocumentSerializerFactory.create6(buffer);
+        DocumentSerializer serializer = DocumentSerializerFactory.createHead(buffer);
         serializer.write(f, stringFieldValue);
         buffer.flip();
 
-        DocumentDeserializer deserializer = DocumentDeserializerFactory.create6(man, buffer);
+        DocumentDeserializer deserializer = DocumentDeserializerFactory.createHead(man, buffer);
         StringFieldValue stringFieldValue2 = new StringFieldValue();
         deserializer.read(f, stringFieldValue2);
 
@@ -183,7 +189,7 @@ public class StringTestCase extends AbstractTypesTest {
         innerTree.annotate(innerSpan, new Annotation(type));
 
         GrowableByteBuffer buffer = new GrowableByteBuffer(1024);
-        DocumentSerializer serializer = DocumentSerializerFactory.create6(buffer);
+        DocumentSerializer serializer = DocumentSerializerFactory.createHead(buffer);
 
         try {
             serializer.write(null, outerString);
@@ -216,11 +222,11 @@ public class StringTestCase extends AbstractTypesTest {
 
     private Document serializeAndDeserialize(Document doc, DocumentTypeManager manager) {
         GrowableByteBuffer buffer = new GrowableByteBuffer(1024);
-        DocumentSerializer serializer = DocumentSerializerFactory.create6(buffer);
+        DocumentSerializer serializer = DocumentSerializerFactory.createHead(buffer);
         serializer.write(doc);
         buffer.flip();
 
-        DocumentDeserializer deserializer = DocumentDeserializerFactory.create6(manager, buffer);
+        DocumentDeserializer deserializer = DocumentDeserializerFactory.createHead(manager, buffer);
         return new Document(deserializer);
     }
 

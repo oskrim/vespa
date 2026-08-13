@@ -5,14 +5,17 @@
 package cmd
 
 import (
+	"bytes"
 	"encoding/json"
-	"fmt"
+	"errors"
+	"io"
 	"os"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/vespa-engine/vespa/client/go/internal/ioutil"
+	"github.com/stretchr/testify/require"
 	"github.com/vespa-engine/vespa/client/go/internal/mock"
 	"github.com/vespa-engine/vespa/client/go/internal/vespa"
 )
@@ -77,6 +80,51 @@ func TestDocumentRemoveWithoutIdArgVerbose(t *testing.T) {
 		"remove", "DELETE", "id:mynamespace:music::a-head-full-of-dreams", "", t)
 }
 
+func TestDocumentSendPutFromStdin(t *testing.T) {
+	client := &mock.HTTPClient{}
+	cli, stdout, stderr := newTestCLI(t)
+	cli.httpClient = client
+	doc, err := os.ReadFile("testdata/A-Head-Full-of-Dreams-Put.json")
+	require.Nil(t, err)
+	var stdin bytes.Buffer
+	stdin.Write(doc)
+	cli.Stdin = &stdin
+	assert.Nil(t, cli.Run("-t", "http://127.0.0.1:8080", "document", "put", "-"))
+	assert.Equal(t, "Success: put id:mynamespace:music::a-head-full-of-dreams\n", stdout.String())
+	assert.Equal(t, "", stderr.String())
+	body, err := io.ReadAll(client.LastRequest.Body)
+	require.Nil(t, err)
+	assertFieldsEqual(t, doc, body)
+}
+
+func TestDocumentSendPutWithData(t *testing.T) {
+	client := &mock.HTTPClient{}
+	cli, stdout, stderr := newTestCLI(t)
+	cli.httpClient = client
+	doc, err := os.ReadFile("testdata/A-Head-Full-of-Dreams-Put.json")
+	require.Nil(t, err)
+	assert.Nil(t, cli.Run("-t", "http://127.0.0.1:8080", "document", "put", "--data", string(doc)))
+	assert.Equal(t, "Success: put id:mynamespace:music::a-head-full-of-dreams\n", stdout.String())
+	assert.Equal(t, "", stderr.String())
+	body, err := io.ReadAll(client.LastRequest.Body)
+	require.Nil(t, err)
+	assertFieldsEqual(t, doc, body)
+}
+
+func TestDocumentSendPutWithDataAndId(t *testing.T) {
+	client := &mock.HTTPClient{}
+	cli, stdout, stderr := newTestCLI(t)
+	cli.httpClient = client
+	doc, err := os.ReadFile("testdata/A-Head-Full-of-Dreams-Without-Operation.json")
+	require.Nil(t, err)
+	assert.Nil(t, cli.Run("-t", "http://127.0.0.1:8080", "document", "put", "id:mynamespace:music::a-head-full-of-dreams", "--data", string(doc)))
+	assert.Equal(t, "Success: put id:mynamespace:music::a-head-full-of-dreams\n", stdout.String())
+	assert.Equal(t, "", stderr.String())
+	body, err := io.ReadAll(client.LastRequest.Body)
+	require.Nil(t, err)
+	assertFieldsEqual(t, doc, body)
+}
+
 func TestDocumentSendMissingId(t *testing.T) {
 	cli, _, stderr := newTestCLI(t)
 	assert.NotNil(t, cli.Run("-t", "http://127.0.0.1:8080", "document", "put", "testdata/A-Head-Full-of-Dreams-Without-Operation.json"))
@@ -108,14 +156,31 @@ func TestDocumentPutTransportError(t *testing.T) {
 func TestDocumentGet(t *testing.T) {
 	client := &mock.HTTPClient{}
 	assertDocumentGet(client, []string{"document", "get", "id:mynamespace:music::a-head-full-of-dreams"},
-		"id:mynamespace:music::a-head-full-of-dreams", t)
+		[]string{"id:mynamespace:music::a-head-full-of-dreams"}, t)
+}
+
+func TestDocumentGetIgnoreMissing(t *testing.T) {
+	client := &mock.HTTPClient{}
+	client.NextResponseString(404, "{\"message\":\"not found\"}")
+	cli, stdout, stderr := newTestCLI(t)
+	cli.httpClient = client
+	assert.Nil(t, cli.Run("document", "get", "-t", "http://127.0.0.1:8080", "--ignore-missing",
+		"id:mynamespace:music::no-such-doc-1", "id:mynamespace:music::a-head-full-of-dreams"))
+	assert.Equal(t, "Success: Read id:mynamespace:music::a-head-full-of-dreams\n", stdout.String())
+	assert.Equal(t, "Error: Invalid document operation: Status 404\n{\n    \"message\": \"not found\"\n}\n", stderr.String())
 }
 
 func TestDocumentGetWithHeader(t *testing.T) {
 	client := &mock.HTTPClient{}
 	assertDocumentGet(client, []string{"document", "get", "--header", "X-Foo: Bar", "id:mynamespace:music::a-head-full-of-dreams"},
-		"id:mynamespace:music::a-head-full-of-dreams", t)
+		[]string{"id:mynamespace:music::a-head-full-of-dreams"}, t)
 	assert.Equal(t, "Bar", client.LastRequest.Header.Get("X-Foo"))
+}
+
+func TestDocumentGetWithMultipleIds(t *testing.T) {
+	client := &mock.HTTPClient{}
+	assertDocumentGet(client, []string{"document", "get", "id:mynamespace:music::a-head-full-of-dreams", "id:mynamespace:music::everyday-life"},
+		[]string{"id:mynamespace:music::a-head-full-of-dreams", "id:mynamespace:music::everyday-life"}, t)
 }
 
 func assertDocumentSend(args []string, expectedOperation string, expectedMethod string, expectedDocumentId string, expectedPayloadFile string, t *testing.T) {
@@ -150,42 +215,55 @@ func assertDocumentSend(args []string, expectedOperation string, expectedMethod 
 	assert.Equal(t, expectedMethod, client.LastRequest.Method)
 
 	if expectedPayloadFile != "" {
-		data, err := os.ReadFile(expectedPayloadFile)
+		expected, err := os.ReadFile(expectedPayloadFile)
 		assert.Nil(t, err)
-		var expectedPayload struct {
-			Fields json.RawMessage `json:"fields"`
-		}
-		assert.Nil(t, json.Unmarshal(data, &expectedPayload))
-		assert.Equal(t, `{"fields":`+string(expectedPayload.Fields)+"}", ioutil.ReaderToString(client.LastRequest.Body))
+		actual, err := io.ReadAll(client.LastRequest.Body)
+		assert.Nil(t, err)
+		assertFieldsEqual(t, expected, actual)
 	} else {
 		assert.Nil(t, client.LastRequest.Body)
 	}
 }
 
-func assertDocumentGet(client *mock.HTTPClient, args []string, documentId string, t *testing.T) {
+func assertFieldsEqual(t *testing.T, a, b []byte) {
+	t.Helper()
+	var document struct {
+		Fields json.RawMessage `json:"fields"`
+	}
+	assert.Nil(t, json.Unmarshal(a, &document))
+	fieldsA := string(document.Fields)
+	document.Fields = nil
+	assert.Nil(t, json.Unmarshal(b, &document))
+	fieldsB := string(document.Fields)
+	assert.Equal(t, fieldsA, fieldsB)
+}
+
+func assertDocumentGet(client *mock.HTTPClient, args []string, documentIds []string, t *testing.T) {
 	documentURL := "http://127.0.0.1:8080"
-	client.NextResponseString(200, "{\"fields\":{\"foo\":\"bar\"}}")
+	for range documentIds {
+		client.NextResponseString(200, "{\"fields\":{\"foo\":\"bar\"}}")
+	}
 	cli, stdout, _ := newTestCLI(t)
 	cli.httpClient = client
 	finalArgs := []string{"-t", documentURL}
 	finalArgs = append(finalArgs, args...)
 	assert.Nil(t, cli.Run(finalArgs...))
-	assert.Equal(t,
-		`{
+	assert.Equal(t, strings.Repeat(`{
     "fields": {
         "foo": "bar"
     }
 }
-`,
+`, len(documentIds)),
 		stdout.String())
-	expectedPath, _ := vespa.IdToURLPath(documentId)
+	// Can only check last request values with current mock
+	expectedPath, _ := vespa.IdToURLPath(documentIds[len(documentIds)-1])
 	assert.Equal(t, documentURL+"/document/v1/"+expectedPath, client.LastRequest.URL.String())
 	assert.Equal(t, "GET", client.LastRequest.Method)
 }
 
 func assertDocumentTransportError(t *testing.T, errorMessage string) {
 	client := &mock.HTTPClient{}
-	client.NextResponseError(fmt.Errorf(errorMessage))
+	client.NextResponseError(errors.New(errorMessage))
 	cli, _, stderr := newTestCLI(t)
 	cli.httpClient = client
 	assert.NotNil(t, cli.Run("-t", "http://127.0.0.1:8080", "document", "put",

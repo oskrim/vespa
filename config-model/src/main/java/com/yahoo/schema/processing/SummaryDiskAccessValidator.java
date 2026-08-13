@@ -52,8 +52,8 @@ public class SummaryDiskAccessValidator extends Processor {
                         implicitDiskFields.add(summaryField.getName());
                 }
                 if ( ! implicitDiskFields.isEmpty())
-                    deployLogger.logApplicationPackage(Level.WARNING, "In " + schema + ", " + summary +
-                                                                      ": Fields " + implicitDiskFields + " references " +
+                    deployLogger.logApplicationPackage(Level.WARNING, "In " + summary + ": " +
+                                                                      "Fields " + implicitDiskFields + " references " +
                                                                       "non-attribute fields: Using this " +
                                                                       "summary will cause disk accesses. " +
                                                                       "Set 'from-disk' on this document-summary to silence this warning.");
@@ -63,10 +63,13 @@ public class SummaryDiskAccessValidator extends Processor {
     }
 
     private boolean isInMemory(ImmutableSDField field, SummaryField summaryField) {
-        if (field == null) return false; // For DOCUMENT_ID_FIELD, which may be implicit, but is then not in memory
+        if (field == null) {
+            // For DOCUMENT_ID_FIELD, which implicitly is a field.
+            // Whether it is in memory or not depends on the setting in the schema.
+            return schema.documentIdAttributeEnabled();
+        }
         if (isComplexFieldWithOnlyStructFieldAttributes(field) &&
-                (summaryField.getTransform() == SummaryTransform.ATTRIBUTECOMBINER ||
-                        summaryField.getTransform() == SummaryTransform.MATCHED_ATTRIBUTE_ELEMENTS_FILTER)) {
+                (summaryField.getTransform() == SummaryTransform.ATTRIBUTECOMBINER)) {
             return true;
         }
         return field.doesAttributing();

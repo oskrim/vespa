@@ -10,6 +10,7 @@ import com.yahoo.component.provider.ComponentRegistry;
 import com.yahoo.config.subscription.ConfigSourceSet;
 import com.yahoo.container.Container;
 import com.yahoo.container.core.config.HandlersConfigurerDi;
+import com.yahoo.container.di.Container.ComponentGraphResult;
 import com.yahoo.container.di.CloudSubscriberFactory;
 import com.yahoo.container.di.ComponentDeconstructor;
 import com.yahoo.container.handler.threadpool.ContainerThreadPool;
@@ -62,7 +63,6 @@ public class HandlersConfigurerTestWrapper {
             "container-mbus.cfg",
             "specialtokens.cfg",
             "documentdb-info.cfg",
-            "qr-search.cfg",
             "query-profiles.cfg"
     };
     private final Set<File> createdFiles = new LinkedHashSet<>();
@@ -85,7 +85,7 @@ public class HandlersConfigurerTestWrapper {
 
     // TODO: Remove once tests use ConfigSet rather than dir:
     private void createIfNotExists(String dir, String file) throws IOException {
-        final File f = new File(dir + "/" + file);
+        File f = new File(dir + "/" + file);
         if (f.createNewFile()) {
             createdFiles.add(f);
         }
@@ -120,8 +120,9 @@ public class HandlersConfigurerTestWrapper {
 
     public void reloadConfig() {
         configurer.reloadConfig(++lastGeneration);
-        Runnable cleanupTask = configurer.waitForNextGraphGeneration(guiceInjector(), false);
-        cleanupTask.run();
+        ComponentGraphResult result = configurer.waitForNextGraphGeneration(guiceInjector(), false);
+        if (result.failed()) throw new RuntimeException("Unexpected failure in reloadConfig", result.failure());
+        result.oldComponentsCleanupTask().run();
     }
 
     public void shutdown() {

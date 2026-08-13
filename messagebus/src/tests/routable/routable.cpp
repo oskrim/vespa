@@ -1,44 +1,43 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
+#include <vespa/messagebus/error.h>
+#include <vespa/messagebus/errorcode.h>
+#include <vespa/messagebus/message.h>
+#include <vespa/messagebus/reply.h>
 #include <vespa/messagebus/testlib/receptor.h>
 #include <vespa/messagebus/testlib/simplemessage.h>
 #include <vespa/messagebus/testlib/simplereply.h>
-#include <vespa/messagebus/message.h>
-#include <vespa/messagebus/reply.h>
-#include <vespa/messagebus/errorcode.h>
-#include <vespa/messagebus/error.h>
-
-#include <vespa/vespalib/testkit/test_kit.h>
+#include <vespa/vespalib/gtest/gtest.h>
 
 using namespace mbus;
 using namespace std::chrono_literals;
 
-TEST("routable_test") {
+TEST(RoutableTest, routable_test) {
 
     {
         // Test message swap state.
         SimpleMessage foo("foo");
-        Route fooRoute = Route::parse("foo");
+        Route         fooRoute = Route::parse("foo");
         foo.setRoute(fooRoute);
         foo.setRetry(1);
         foo.setTimeReceivedNow();
         foo.setTimeRemaining(2ms);
 
         SimpleMessage bar("bar");
-        Route barRoute = Route::parse("bar");
+        Route         barRoute = Route::parse("bar");
         bar.setRoute(barRoute);
         bar.setRetry(3);
         bar.setTimeReceivedNow();
         bar.setTimeRemaining(4ms);
 
         foo.swapState(bar);
-        EXPECT_EQUAL(barRoute.toString(), foo.getRoute().toString());
-        EXPECT_EQUAL(fooRoute.toString(), bar.getRoute().toString());
-        EXPECT_EQUAL(3u, foo.getRetry());
-        EXPECT_EQUAL(1u, bar.getRetry());
+        EXPECT_EQ(barRoute.toString(), foo.getRoute().toString());
+        EXPECT_EQ(fooRoute.toString(), bar.getRoute().toString());
+        EXPECT_EQ(3u, foo.getRetry());
+        EXPECT_EQ(1u, bar.getRetry());
         EXPECT_TRUE(foo.getTimeReceived() >= bar.getTimeReceived());
-        EXPECT_EQUAL(4ms, foo.getTimeRemaining());
-        EXPECT_EQUAL(2ms, bar.getTimeRemaining());
+        EXPECT_EQ(4ms, foo.getTimeRemaining());
+        EXPECT_EQ(2ms, bar.getTimeRemaining());
     }
     {
         // Test reply swap state.
@@ -54,16 +53,16 @@ TEST("routable_test") {
         bar.addError(Error(ErrorCode::ERROR_LIMIT, "err"));
 
         foo.swapState(bar);
-        EXPECT_EQUAL("bar", static_cast<SimpleMessage&>(*foo.getMessage()).getValue());
-        EXPECT_EQUAL("foo", static_cast<SimpleMessage&>(*bar.getMessage()).getValue());
-        EXPECT_EQUAL(2.0, foo.getRetryDelay());
-        EXPECT_EQUAL(1.0, bar.getRetryDelay());
-        EXPECT_EQUAL(1u, foo.getNumErrors());
-        EXPECT_EQUAL(2u, bar.getNumErrors());
+        EXPECT_EQ("bar", static_cast<SimpleMessage&>(*foo.getMessage()).getValue());
+        EXPECT_EQ("foo", static_cast<SimpleMessage&>(*bar.getMessage()).getValue());
+        EXPECT_EQ(2.0, foo.getRetryDelay());
+        EXPECT_EQ(1.0, bar.getRetryDelay());
+        EXPECT_EQ(1u, foo.getNumErrors());
+        EXPECT_EQ(2u, bar.getNumErrors());
     }
     {
         // Test message discard logic.
-        Receptor handler;
+        Receptor      handler;
         SimpleMessage msg("foo");
         msg.pushHandler(handler);
         msg.discard();
@@ -73,7 +72,7 @@ TEST("routable_test") {
     }
     {
         // Test reply discard logic.
-        Receptor handler;
+        Receptor      handler;
         SimpleMessage msg("foo");
         msg.pushHandler(handler);
 
@@ -86,4 +85,4 @@ TEST("routable_test") {
     }
 }
 
-TEST_MAIN() { TEST_RUN_ALL(); }
+GTEST_MAIN_RUN_ALL_TESTS()

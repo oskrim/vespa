@@ -3,9 +3,12 @@ package com.yahoo.config.provision;
 
 import com.yahoo.cloud.config.ConfigserverConfig;
 import com.yahoo.component.annotation.Inject;
+import com.yahoo.config.provision.zone.ZoneId;
 import com.yahoo.config.provisioning.CloudConfig;
 
+import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 
 /**
  * The zone (environment + region) of this runtime, and some other information.
@@ -19,7 +22,8 @@ public class Zone {
     private final Cloud cloud;
     private final SystemName systemName;
     private final Environment environment;
-    private final RegionName region;
+    private final RegionName   region;
+    private final List<AzName> availabilityZones;
 
     @Inject
     public Zone(ConfigserverConfig configserverConfig, CloudConfig cloudConfig) {
@@ -27,13 +31,15 @@ public class Zone {
                   .name(CloudName.from(configserverConfig.cloud()))
                   .dynamicProvisioning(cloudConfig.dynamicProvisioning())
                   .allowHostSharing(cloudConfig.allowHostSharing())
-                  .allowEnclave(configserverConfig.cloud().equals("aws") || configserverConfig.cloud().equals("gcp"))
+                  .allowEnclave(Set.of("aws", "azure", "gcp").contains(configserverConfig.cloud()))
                   .requireAccessControl(cloudConfig.requireAccessControl())
                   .account(CloudAccount.from(cloudConfig.account()))
+                  .snapshotPrivateKeySecretName(cloudConfig.snapshotPrivateKeySecretName())
                   .build(),
              SystemName.from(configserverConfig.system()),
              Environment.from(configserverConfig.environment()),
-             RegionName.from(configserverConfig.region()));
+             RegionName.from(configserverConfig.region()),
+             configserverConfig.availabilityZone().stream().map(AzName::from).toList());
     }
 
     /** Create from environment and region. Use for testing.  */
@@ -46,13 +52,27 @@ public class Zone {
         this(Cloud.defaultCloud(), systemName, environment, region);
     }
 
-    /** Create from cloud, system, environment and region. Also used for testing. */
+    /** Create from cloud, system, environment and region. Use for testing. */
     public Zone(Cloud cloud, SystemName systemName, Environment environment, RegionName region) {
+        this(cloud, systemName, environment, region, List.of());
+    }
+
+    /** Create from cloud, system, environment, region and az names. Use for testing. */
+    public Zone(Cloud cloud, SystemName systemName, Environment environment,
+                RegionName region, List<AzName> availabilityZones) {
         this.cloud = cloud;
         this.systemName = systemName;
         this.environment = environment;
         this.region = region;
+        this.availabilityZones = availabilityZones;
     }
+
+    /**
+     * Returns the ZoneId constructed from the environment and region.
+     *
+     * <p>WARNING: The controller zone may have the same ZoneId as another non-controller zone.</p>
+     */
+    public ZoneId id() { return ZoneId.from(environment, region); }
 
     /** Returns the current cloud */
     public Cloud cloud() { return cloud; }
@@ -68,6 +88,11 @@ public class Zone {
     /** Returns the current region */
     public RegionName region() {
         return region;
+    }
+
+    /** Returns the availability zones this contains, or the empty list if this is a single-az region */
+    public List<AzName> availabilityZones() {
+        return availabilityZones;
     }
 
     /** Returns the string "environment.region" */

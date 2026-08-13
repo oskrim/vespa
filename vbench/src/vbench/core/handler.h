@@ -9,11 +9,9 @@ namespace vbench {
 /**
  * A Handler is a component to whom you can pass an object.
  **/
-template <typename T>
-struct Handler
-{
+template <typename T> struct Handler {
     virtual void handle(std::unique_ptr<T> obj) = 0;
-    virtual ~Handler() {}
+    virtual ~Handler() = default;
 };
 
 } // namespace vbench

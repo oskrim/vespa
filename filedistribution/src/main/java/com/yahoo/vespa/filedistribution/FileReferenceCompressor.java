@@ -1,14 +1,15 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.filedistribution;
 
-import io.airlift.compress.zstd.ZstdInputStream;
 import com.yahoo.compress.ZstdOutputStream;
+import io.airlift.compress.zstd.ZstdInputStream;
 import net.jpountz.lz4.LZ4BlockInputStream;
 import net.jpountz.lz4.LZ4BlockOutputStream;
 import org.apache.commons.compress.archivers.ArchiveEntry;
 import org.apache.commons.compress.archivers.ArchiveOutputStream;
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream;
 import org.apache.commons.compress.archivers.tar.TarArchiveOutputStream;
+
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -71,20 +72,27 @@ public class FileReferenceCompressor {
         ArchiveEntry entry;
         while ((entry = archiveInputStream.getNextEntry()) != null) {
             File outFile = new File(outputFile, entry.getName());
+            File canonicalOutFile = outFile.getCanonicalFile();
+            File canonicalOutputDir = outputFile.getCanonicalFile();
+
+            if (!canonicalOutFile.toPath().startsWith(canonicalOutputDir.toPath())) {
+                throw new IOException("Invalid archive entry: " + entry.getName());
+            }
+
             if (entry.isDirectory()) {
-                if (!(outFile.exists() && outFile.isDirectory())) {
-                    log.log(Level.FINE, () -> "Creating dir: " + outFile.getAbsolutePath());
-                    if (!outFile.mkdirs()) {
+                if (!(canonicalOutFile.exists() && canonicalOutFile.isDirectory())) {
+                    log.log(Level.FINE, () -> "Creating dir: " + canonicalOutFile.getAbsolutePath());
+                    if (!canonicalOutFile.mkdirs()) {
                         log.log(Level.WARNING, "Could not create dir " + entry.getName());
                     }
                 }
             } else {
                 // Create parent dir if necessary
-                File parent = new File(outFile.getParent());
+                File parent = new File(canonicalOutFile.getParent());
                 if (!parent.exists() && !parent.mkdirs()) {
                     log.log(Level.WARNING, "Could not create dir " + parent.getAbsolutePath());
                 }
-                try (FileOutputStream fos = new FileOutputStream(outFile)) {
+                try (FileOutputStream fos = new FileOutputStream(canonicalOutFile)) {
                     archiveInputStream.transferTo(fos);
                 }
             }
@@ -120,17 +128,20 @@ public class FileReferenceCompressor {
             case compressed -> switch (compressionType) {
                 case gzip -> new GZIPOutputStream(new FileOutputStream(outputFile));
                 case lz4 -> new LZ4BlockOutputStream(new FileOutputStream(outputFile));
+                case none -> new FileOutputStream(outputFile);
                 case zstd -> new ZstdOutputStream(new FileOutputStream(outputFile));
             };
             case file -> new FileOutputStream(outputFile);
         };
     }
 
+    @SuppressWarnings("deprecation")
     private InputStream decompressedInputStream(File inputFile) throws IOException {
         return switch (type) {
             case compressed -> switch (compressionType) {
                 case gzip -> new GZIPInputStream(new FileInputStream(inputFile));
                 case lz4 -> new LZ4BlockInputStream(new FileInputStream(inputFile));
+                case none -> new FileInputStream(inputFile);
                 case zstd -> new ZstdInputStream(new FileInputStream(inputFile));
             };
             case file -> new FileInputStream(inputFile);

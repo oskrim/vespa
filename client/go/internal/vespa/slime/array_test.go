@@ -3,27 +3,38 @@
 package slime
 
 import (
-	"github.com/stretchr/testify/assert"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
+
+func leafTestValues() []Value {
+	return []Value{
+		Empty,
+		Bool(true),
+		Long(5),
+		Double(5.5),
+		String("foo"),
+		Data([]byte{1, 2, 3}),
+	}
+}
 
 func TestArray(t *testing.T) {
 	arr := Array()
-	actual := []Value{
-		arr.Add(Empty),
-		arr.Add(Bool(true)),
-		arr.Add(Long(5)),
-		arr.Add(Double(5.5)),
-		arr.Add(String("foo")),
-		arr.Add(Data([]byte{1, 2, 3}))}
+	input := leafTestValues()
+	actual := make([]Value, len(input))
+	for i, v := range input {
+		actual[i] = arr.Add(v)
+	}
 
 	expect := []expectLeaf{
-		expectLeaf{mytype: EMPTY},
-		expectLeaf{mytype: BOOL, boolVal: true},
-		expectLeaf{mytype: LONG, longVal: 5, doubleVal: 5},
-		expectLeaf{mytype: DOUBLE, longVal: 5, doubleVal: 5.5},
-		expectLeaf{mytype: STRING, stringVal: "foo"},
-		expectLeaf{mytype: DATA, dataVal: []byte{1, 2, 3}}}
+		{mytype: EMPTY},
+		{mytype: BOOL, boolVal: true},
+		{mytype: LONG, longVal: 5, doubleVal: 5},
+		{mytype: DOUBLE, longVal: 5, doubleVal: 5.5},
+		{mytype: STRING, stringVal: "foo"},
+		{mytype: DATA, dataVal: []byte{1, 2, 3}},
+	}
 
 	var expectIndex int
 	var collect []Value

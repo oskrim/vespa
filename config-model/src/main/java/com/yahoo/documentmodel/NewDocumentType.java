@@ -29,6 +29,7 @@ import java.util.Set;
 /**
  * @author baldersheim
  */
+@SuppressWarnings({"deprecation", "removal"})
 public final class NewDocumentType extends StructuredDataType implements DataTypeCollection {
 
     private final Name name;
@@ -38,7 +39,7 @@ public final class NewDocumentType extends StructuredDataType implements DataTyp
     private final StructDataType contentStruct;
     private final Set<FieldSet> fieldSets = new LinkedHashSet<>();
     private final Set<Name> documentReferences;
-    // Imported fields are virtual and therefore exist outside of the SD's document field definition
+    // Imported fields are virtual and therefore exist outside the SD's document field definition
     // block itself. But for features like imported fields in a non-search context (e.g. GC selections)
     // it is necessary to know that certain identifiers refer to imported fields instead of being unknown
     // document fields. To achieve this, we track the names of imported fields as part of the document
@@ -180,6 +181,9 @@ public final class NewDocumentType extends StructuredDataType implements DataTyp
         return field;
     }
 
+    // XXX - if an inherited field is redeclared you will get both the
+    // inherited one and then the active version of the field.
+    // This is probably not intentional.
     public Collection<Field> getAllFields() {
         Collection<Field> collection = new LinkedList<>();
 
@@ -354,6 +358,11 @@ public final class NewDocumentType extends StructuredDataType implements DataTyp
             refToThis = new NewDocumentReferenceDataType(this);
         }
         return refToThis;
+    }
+
+    @Override
+    public String toString() {
+        return "document type '" + getName() + "'";
     }
 
 }

@@ -2,7 +2,6 @@
 package com.yahoo.vespa.indexinglanguage.expressions;
 
 import com.yahoo.document.DataType;
-import com.yahoo.document.TensorDataType;
 import com.yahoo.document.datatypes.LongFieldValue;
 
 import java.util.Base64;
@@ -12,25 +11,16 @@ import java.util.Base64;
  */
 public final class Base64DecodeExpression extends Expression {
 
-    public Base64DecodeExpression() {
-        super(DataType.STRING);
-    }
-
     @Override
-    public DataType setInputType(DataType inputType, VerificationContext context) {
+    public DataType setInputType(DataType inputType, TypeContext context) {
         super.setInputType(inputType, DataType.STRING, context);
         return DataType.LONG;
     }
 
     @Override
-    public DataType setOutputType(DataType outputType, VerificationContext context) {
-        super.setOutputType(outputType, DataType.LONG, context);
+    public DataType setOutputType(DataType outputType, TypeContext context) {
+        super.setOutputType(DataType.LONG, outputType, null, context);
         return DataType.STRING;
-    }
-
-    @Override
-    protected void doVerify(VerificationContext context) {
-        context.setCurrentType(createdOutputType());
     }
 
     @Override
@@ -53,9 +43,6 @@ public final class Base64DecodeExpression extends Expression {
         }
         context.setCurrentValue(new LongFieldValue(output));
     }
-
-    @Override
-    public DataType createdOutputType() { return DataType.LONG; }
 
     @Override
     public String toString() { return "base64decode"; }

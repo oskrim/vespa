@@ -5,6 +5,7 @@ import com.yahoo.component.ComponentId;
 import com.yahoo.config.model.api.EndpointCertificateSecrets;
 import com.yahoo.config.model.builder.xml.test.DomBuilderTest;
 import com.yahoo.config.model.deploy.DeployState;
+import com.yahoo.config.model.deploy.TestDeployState;
 import com.yahoo.config.model.deploy.TestProperties;
 import com.yahoo.config.model.test.MockApplicationPackage;
 import com.yahoo.config.provision.AthenzDomain;
@@ -380,7 +381,7 @@ public class AccessControlTest extends ContainerModelBuilderTestBase {
         assertEquals("KEY", connectorConfig.ssl().privateKey());
         assertEquals(4443, connectorConfig.listenPort());
 
-        assertEquals("/opt/yahoo/share/ssl/certs/athenz_certificate_bundle.pem",
+        assertEquals("/opt/yahoo/share/ssl/certs/athenz_tw_certificate_bundle.pem",
                 connectorConfig.ssl().caCertificateFile(),
                 "Connector must use Athenz truststore in a non-public system.");
         assertTrue(connectorConfig.ssl().caCertificate().isEmpty());
@@ -398,7 +399,7 @@ public class AccessControlTest extends ContainerModelBuilderTestBase {
                 .zone(new Zone(SystemName.Public, Environment.prod, RegionName.defaultName()))
                 .build();
         RuntimeException e = assertThrows(RuntimeException.class, () -> createModel(root, state, null, clusterElem));
-        assertEquals("Client certificate authority security/clients.pem is missing - see: https://cloud.vespa.ai/en/security/guide#data-plane",
+        assertEquals("Client certificate authority security/clients.pem is missing - see: https://docs.vespa.ai/en/security/guide.html#data-plane",
                 e.getMessage());
     }
 
@@ -411,7 +412,7 @@ public class AccessControlTest extends ContainerModelBuilderTestBase {
         applicationPackage.getFile(Path.fromString("security")).createDirectory();
         applicationPackage.getFile(Path.fromString("security/clients.pem")).writeFile(new StringReader("I am a very nice certificate"));
 
-        var deployState = DeployState.createTestState(applicationPackage);
+        var deployState = TestDeployState.create(applicationPackage);
 
         Element clusterElem = DomBuilderTest.parse("<container version='1.0' />");
 
@@ -514,7 +515,7 @@ public class AccessControlTest extends ContainerModelBuilderTestBase {
         assertEquals("KEY", connectorConfig.ssl().privateKey());
         assertEquals(4443, connectorConfig.listenPort());
 
-        assertEquals("/opt/yahoo/share/ssl/certs/athenz_certificate_bundle.pem",
+        assertEquals("/opt/yahoo/share/ssl/certs/athenz_tw_certificate_bundle.pem",
                 connectorConfig.ssl().caCertificateFile(),
                 "Connector must use Athenz truststore in a non-public system.");
         assertTrue(connectorConfig.ssl().caCertificate().isEmpty());

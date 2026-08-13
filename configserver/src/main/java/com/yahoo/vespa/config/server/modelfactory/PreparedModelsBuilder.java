@@ -19,7 +19,6 @@ import com.yahoo.config.model.api.ModelFactory;
 import com.yahoo.config.model.api.OnnxModelCost;
 import com.yahoo.config.model.api.Provisioned;
 import com.yahoo.config.model.api.ValidationParameters;
-import com.yahoo.config.model.api.ValidationParameters.IgnoreValidationErrors;
 import com.yahoo.config.model.application.provider.FilesApplicationPackage;
 import com.yahoo.config.model.deploy.DeployState;
 import com.yahoo.config.provision.AllocatedHosts;
@@ -27,7 +26,6 @@ import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.DockerImage;
 import com.yahoo.config.provision.NodeAllocationException;
 import com.yahoo.config.provision.Zone;
-import com.yahoo.container.jdisc.secretstore.SecretStore;
 import com.yahoo.vespa.config.server.application.Application;
 import com.yahoo.vespa.config.server.application.ApplicationCuratorDatabase;
 import com.yahoo.vespa.config.server.application.ApplicationVersions;
@@ -39,7 +37,6 @@ import com.yahoo.vespa.curator.Curator;
 import com.yahoo.vespa.flags.FlagSource;
 
 import java.io.File;
-import java.io.IOException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -49,6 +46,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
+import static com.yahoo.config.model.api.ValidationParameters.IgnoreValidationErrors.FALSE;
+import static com.yahoo.config.model.api.ValidationParameters.IgnoreValidationErrors.TRUE;
 import static com.yahoo.yolean.Exceptions.toMessageString;
 import static java.util.logging.Level.FINE;
 
@@ -60,7 +59,6 @@ public class PreparedModelsBuilder extends ModelsBuilder<PreparedModelsBuilder.P
     private static final Logger log = Logger.getLogger(PreparedModelsBuilder.class.getName());
 
     private final FlagSource flagSource;
-    private final SecretStore secretStore;
     private final List<ContainerEndpoint> containerEndpoints;
     private final Optional<EndpointCertificateSecrets> endpointCertificateSecrets;
     private final ConfigDefinitionRepo configDefinitionRepo;
@@ -71,10 +69,10 @@ public class PreparedModelsBuilder extends ModelsBuilder<PreparedModelsBuilder.P
     private final Curator curator;
     private final ExecutorService executor;
     private final OnnxModelCost onnxModelCost;
+    private final Provisioned provisioned = new Provisioned();
 
     public PreparedModelsBuilder(ModelFactoryRegistry modelFactoryRegistry,
                                  FlagSource flagSource,
-                                 SecretStore secretStore,
                                  List<ContainerEndpoint> containerEndpoints,
                                  Optional<EndpointCertificateSecrets> endpointCertificateSecrets,
                                  ConfigDefinitionRepo configDefinitionRepo,
@@ -91,7 +89,6 @@ public class PreparedModelsBuilder extends ModelsBuilder<PreparedModelsBuilder.P
                                  OnnxModelCost onnxModelCost) {
         super(modelFactoryRegistry, configserverConfig, zone, hostProvisionerProvider, deployLogger);
         this.flagSource = flagSource;
-        this.secretStore = secretStore;
         this.containerEndpoints = containerEndpoints;
         this.endpointCertificateSecrets = endpointCertificateSecrets;
         this.configDefinitionRepo = configDefinitionRepo;
@@ -114,7 +111,6 @@ public class PreparedModelsBuilder extends ModelsBuilder<PreparedModelsBuilder.P
         log.log(FINE, () -> "Building model " + modelVersion + " for " + applicationId);
 
         // Use empty on non-hosted systems, use already allocated hosts if available, create connection to a host provisioner otherwise
-        Provisioned provisioned = new Provisioned();
         ModelContext modelContext = new ModelContextImpl(
                 applicationPackage,
                 modelOf(modelVersion),
@@ -122,8 +118,8 @@ public class PreparedModelsBuilder extends ModelsBuilder<PreparedModelsBuilder.P
                 configDefinitionRepo,
                 fileRegistry,
                 executor,
-                new ApplicationCuratorDatabase(applicationId.tenant(), curator).readReindexingStatus(applicationId),
-                createHostProvisioner(applicationPackage, provisioned),
+                new ApplicationCuratorDatabase(applicationId.tenant(), curator, configserverConfig).readReindexingStatus(applicationId),
+                createHostProvisioner(applicationPackage),
                 provisioned,
                 createModelContextProperties(modelFactory.version(), applicationPackage),
                 getAppDir(applicationPackage),
@@ -142,9 +138,8 @@ public class PreparedModelsBuilder extends ModelsBuilder<PreparedModelsBuilder.P
                                                      ModelContext modelContext) {
         log.log(FINE, () -> "Create and validate model " + modelVersion + " for " + applicationId +
                 ", previous model " + (modelOf(modelVersion).isPresent() ? " exists" : "does not exist"));
-        ValidationParameters validationParameters =
-                new ValidationParameters(params.ignoreValidationErrors() ? IgnoreValidationErrors.TRUE : IgnoreValidationErrors.FALSE);
-        ModelCreateResult result = modelFactory.createAndValidateModel(modelContext, validationParameters);
+        var validationParameters = new ValidationParameters(params.ignoreValidationErrors() ? TRUE : FALSE);
+        var result = modelFactory.createAndValidateModel(modelContext, validationParameters);
         validateModelHosts(hostValidator, applicationId, result.getModel());
         log.log(FINE, () -> "Done building model " + modelVersion + " for " + applicationId);
         params.getTimeoutBudget().assertNotTimedOut(() -> "prepare timed out after building model " + modelVersion +
@@ -157,29 +152,31 @@ public class PreparedModelsBuilder extends ModelsBuilder<PreparedModelsBuilder.P
         return activeApplicationVersions.get().get(version).map(Application::getModel);
     }
 
-    private HostProvisioner createHostProvisioner(ApplicationPackage applicationPackage, Provisioned provisioned) {
-        HostProvisioner defaultHostProvisioner = DeployState.getDefaultModelHostProvisioner(applicationPackage);
+    private HostProvisioner createHostProvisioner(ApplicationPackage applicationPackage) {
         // Note: nodeRepositoryProvisioner will always be present when hosted is true
-        Optional<HostProvisioner> nodeRepositoryProvisioner = createNodeRepositoryProvisioner(params.getApplicationId(), provisioned);
+        Optional<HostProvisioner> nodeRepositoryProvisioner = createNodeRepositoryProvisioner(params.getApplicationId());
         Optional<AllocatedHosts> allocatedHosts = applicationPackage.getAllocatedHosts();
 
-        if (allocatedHosts.isEmpty()) return nodeRepositoryProvisioner.orElse(defaultHostProvisioner);
+        if (hosted) {
+            // In hosted Vespa, always use node repository provisioner - never read hosts.xml
+            if (allocatedHosts.isEmpty()) return nodeRepositoryProvisioner.get();
+            // Nodes are already allocated by a model, and we should use them unless this model requests hosts from a
+            // previously unallocated cluster. This allows future models to stop allocate certain clusters.
+            return createStaticProvisionerForHosted(allocatedHosts.get(), nodeRepositoryProvisioner.get());
+        }
 
-        // Nodes are already allocated by a model and we should use them unless this model requests hosts from a
-        // previously unallocated cluster. This allows future models to stop allocate certain clusters.
-        if (hosted) return createStaticProvisionerForHosted(allocatedHosts.get(), nodeRepositoryProvisioner.get());
+        // Non-hosted: use nodeRepositoryProvisioner if available, otherwise fall back to hosts.xml
+        if (allocatedHosts.isEmpty() && nodeRepositoryProvisioner.isPresent()) {
+            return nodeRepositoryProvisioner.get();
+        }
 
-        return defaultHostProvisioner;
+        return DeployState.getDefaultModelHostProvisioner(applicationPackage);
     }
 
     private Optional<File> getAppDir(ApplicationPackage applicationPackage) {
-        try {
-            return applicationPackage instanceof FilesApplicationPackage ?
-                   Optional.of(((FilesApplicationPackage) applicationPackage).getAppDir()) :
-                   Optional.empty();
-        } catch (IOException e) {
-            throw new RuntimeException("Could not find app dir", e);
-        }
+        return applicationPackage instanceof FilesApplicationPackage ?
+                       Optional.of(((FilesApplicationPackage) applicationPackage).getAppDir()) :
+                       Optional.empty();
     }
 
     private void validateModelHosts(HostValidator hostValidator, ApplicationId applicationId, Model model) {
@@ -214,18 +211,18 @@ public class PreparedModelsBuilder extends ModelsBuilder<PreparedModelsBuilder.P
         return new ModelContextImpl.Properties(params.getApplicationId(),
                                                modelVersion,
                                                configserverConfig,
-                                               zone(),
                                                Set.copyOf(containerEndpoints),
                                                params.isBootstrap(),
                                                activeApplicationVersions.isEmpty(),
-                                               LegacyFlags.from(applicationPackage, flagSource),
+                                               LegacyFlags.from(applicationPackage, flagSource.snapshot()),
                                                endpointCertificateSecrets,
                                                params.athenzDomain(),
                                                params.quota(),
+                                               params.tenantVaults(),
                                                params.tenantSecretStores(),
-                                               secretStore,
                                                params.operatorCertificates(),
                                                params.cloudAccount(),
+                                               params.cloudResourceTags(),
                                                params.dataplaneTokens());
     }
 

@@ -1,7 +1,9 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.prelude.querytransform;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.ListIterator;
 
 import com.yahoo.component.annotation.Inject;
 import com.yahoo.component.chain.dependencies.After;
@@ -9,8 +11,17 @@ import com.yahoo.component.chain.dependencies.Provides;
 import com.yahoo.prelude.Index;
 import com.yahoo.prelude.IndexFacts;
 import com.yahoo.prelude.IndexFacts.Session;
-import com.yahoo.prelude.query.*;
+import com.yahoo.prelude.query.BlockItem;
+import com.yahoo.prelude.query.CompositeItem;
+import com.yahoo.prelude.query.IndexedItem;
+import com.yahoo.prelude.query.Item;
+import com.yahoo.prelude.query.PhraseItem;
+import com.yahoo.prelude.query.PhraseSegmentItem;
+import com.yahoo.prelude.query.SegmentItem;
+import com.yahoo.prelude.query.TermItem;
+import com.yahoo.prelude.query.WordAlternativesItem;
 import com.yahoo.prelude.query.WordAlternativesItem.Alternative;
+import com.yahoo.prelude.query.WordItem;
 import com.yahoo.search.Result;
 import com.yahoo.search.Searcher;
 import com.yahoo.language.Language;
@@ -61,35 +72,40 @@ public class NormalizingSearcher extends Searcher {
             query.trace(getFunctionName(), true, 2);
     }
 
-    private Query normalizeBody(Query query, IndexFacts.Session indexFacts) {
+    private void normalizeBody(Query query, IndexFacts.Session indexFacts) {
         Item root = query.getModel().getQueryTree().getRoot();
         Language language = query.getModel().getParsingLanguage();
         if (root instanceof BlockItem) {
+            Language rootLanguage = root.getLanguage() != Language.UNKNOWN ? root.getLanguage() : language;
             List<Item> rootItems = new ArrayList<>(1);
             rootItems.add(root);
             ListIterator<Item> i = rootItems.listIterator();
             i.next();
-            normalizeBlocks(language, indexFacts, (BlockItem) root, i);
+            normalizeBlocks(rootLanguage, indexFacts, (BlockItem) root, i);
             if ( ! rootItems.isEmpty()) // give up normalizing if the root was removed
                 query.getModel().getQueryTree().setRoot(rootItems.get(0));
         } else if (root instanceof CompositeItem) {
             query.getModel().getQueryTree().setRoot(normalizeComposite(language, indexFacts, (CompositeItem) root));
         }
-        return query;
     }
     
     private Item normalizeComposite(Language language, IndexFacts.Session indexFacts, CompositeItem item) {
-        if (item instanceof PhraseItem)  {
-            return normalizePhrase(language, indexFacts, (PhraseItem) item);
+        if (item.getLanguage() != Language.UNKNOWN)
+            language = item.getLanguage();
+
+        if (item instanceof PhraseItem phrase)  {
+            return normalizePhrase(language, indexFacts, phrase);
         }
         else {
             for (ListIterator<Item> i = item.getItemIterator(); i.hasNext(); ) {
                 Item current = i.next();
 
-                if (current instanceof BlockItem) {
-                    normalizeBlocks(language, indexFacts, (BlockItem) current, i);
-                } else if (current instanceof CompositeItem) {
-                    Item currentProcessed = normalizeComposite(language, indexFacts, (CompositeItem) current);
+                if (current instanceof BlockItem block) {
+                    Language blockLanguage = ((Item) block).getLanguage() != Language.UNKNOWN
+                            ? ((Item) block).getLanguage() : language;
+                    normalizeBlocks(blockLanguage, indexFacts, block, i);
+                } else if (current instanceof CompositeItem composite) {
+                    Item currentProcessed = normalizeComposite(language, indexFacts, composite);
                     i.set(currentProcessed);
                 }
             }
@@ -98,11 +114,11 @@ public class NormalizingSearcher extends Searcher {
     }
 
     private void normalizeBlocks(Language language, IndexFacts.Session indexFacts, BlockItem block, ListIterator<Item> i) {
-        if (block instanceof TermItem) {
-            if (block instanceof WordAlternativesItem) {
-                normalizeAlternatives(language, indexFacts, (WordAlternativesItem) block);
+        if (block instanceof TermItem term) {
+            if (block instanceof WordAlternativesItem alternatives) {
+                normalizeAlternatives(language, indexFacts, alternatives);
             } else {
-                normalizeWord(language, indexFacts, (TermItem) block, i);
+                normalizeWord(language, indexFacts, term, i);
             }
         } else {
             for (ListIterator<Item> j = ((SegmentItem) block).getItemIterator(); j.hasNext();)
@@ -113,7 +129,7 @@ public class NormalizingSearcher extends Searcher {
     private void normalizeAlternatives(Language language, Session indexFacts, WordAlternativesItem block) {
         if ( ! block.isNormalizable()) return;
 
-        Index index = indexFacts.getIndex(block.getIndexName());
+        Index index = indexFacts.getIndex(block.getFieldName());
         if (index.isAttribute()) return;
         if ( ! index.getNormalize()) return;
 
@@ -126,17 +142,16 @@ public class NormalizingSearcher extends Searcher {
     }
 
     private Item normalizePhrase(Language language, IndexFacts.Session indexFacts, PhraseItem phrase) {
-        if ( ! indexFacts.getIndex(phrase.getIndexName()).getNormalize()) return phrase;
+        if ( ! indexFacts.getIndex(phrase.getFieldName()).getNormalize()) return phrase;
 
         for (ListIterator<Item> i = phrase.getItemIterator(); i.hasNext();) {
-            IndexedItem content = (IndexedItem) i.next();
+            IndexedItem content = (IndexedItem)i.next();
 
-            if (content instanceof TermItem) {
-                normalizeWord(language, indexFacts, (TermItem) content, i);
+            if (content instanceof TermItem term) {
+                normalizeWord(language, indexFacts, term, i);
             }
             else {
-                PhraseSegmentItem segment = (PhraseSegmentItem) content;
-                for (ListIterator<Item> j = segment.getItemIterator(); j.hasNext();)
+                for (ListIterator<Item> j = ((PhraseSegmentItem)content).getItemIterator(); j.hasNext();)
                     normalizeWord(language, indexFacts, (TermItem) j.next(), j);
             }
         }
@@ -146,7 +161,7 @@ public class NormalizingSearcher extends Searcher {
     private void normalizeWord(Language language, IndexFacts.Session indexFacts, TermItem term, ListIterator<Item> i) {
         if ( ! (term instanceof WordItem word)) return;
         if ( ! term.isNormalizable()) return;
-        Index index = indexFacts.getIndex(term.getIndexName());
+        Index index = indexFacts.getIndex(term.getFieldName());
         if (index.isAttribute()) return;
         if ( ! index.getNormalize()) return;
 

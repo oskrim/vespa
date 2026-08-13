@@ -8,7 +8,10 @@ import com.yahoo.vespa.indexinglanguage.SimpleTestAdapter;
 import org.junit.Test;
 
 import static com.yahoo.vespa.indexinglanguage.expressions.ExpressionAssert.assertVerify;
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertSame;
+import static org.junit.Assert.assertTrue;
 
 /**
  * @author Simon Thoresen Hult
@@ -34,10 +37,7 @@ public class NowTestCase {
 
     @Test
     public void requireThatExpressionCanBeVerified() {
-        Expression exp = new NowExpression();
-        assertVerify(null, exp, DataType.LONG);
-        assertVerify(DataType.INT, exp, DataType.LONG);
-        assertVerify(DataType.STRING, exp, DataType.LONG);
+        assertVerify(AnyDataType.instance, new NowExpression(), DataType.LONG);
     }
 
     @Test

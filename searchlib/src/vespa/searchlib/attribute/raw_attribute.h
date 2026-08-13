@@ -9,14 +9,15 @@ namespace search::attribute {
 /**
  * Base class for all raw attributes.
  */
-class RawAttribute : public NotImplementedAttribute
-{
+class RawAttribute : public NotImplementedAttribute {
 public:
     RawAttribute(const std::string& name, const Config& config);
     ~RawAttribute() override;
 
-    long onSerializeForAscendingSort(DocId doc, void* serTo, long available, const common::BlobConverter*) const override;
-    long onSerializeForDescendingSort(DocId doc, void* serTo, long available, const common::BlobConverter*) const override;
+    bool is_sortable() const noexcept override;
+    std::unique_ptr<ISortBlobWriter> make_sort_blob_writer(bool ascending, const common::BlobConverter* converter,
+                                                           common::sortspec::MissingPolicy policy,
+                                                           std::string_view missing_value) const override;
 };
 
-}
+} // namespace search::attribute

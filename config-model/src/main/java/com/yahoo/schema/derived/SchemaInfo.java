@@ -27,12 +27,14 @@ import java.util.Collections;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * Information about a schema.
  *
  * @author bratseth
  */
+@SuppressWarnings("removal")
 public final class SchemaInfo extends Derived {
 
     private final Schema schema;
@@ -84,7 +86,6 @@ public final class SchemaInfo extends Derived {
     }
 
     public void getConfig(SchemaInfoConfig.Builder builder) {
-        // Append
         var schemaBuilder = new SchemaInfoConfig.Schema.Builder();
         schemaBuilder.name(schema.getName());
         addFieldsConfig(schemaBuilder);
@@ -124,6 +125,7 @@ public final class SchemaInfo extends Derived {
         }
         fieldBuilder.attribute(field.doesAttributing());
         fieldBuilder.index(field.doesIndexing());
+        fieldBuilder.bitPacked(field.doesBitPacking());
         schemaBuilder.field(fieldBuilder);
     }
 
@@ -136,6 +138,7 @@ public final class SchemaInfo extends Derived {
             fieldBuilder.alias(i.next());
         fieldBuilder.attribute(false);
         fieldBuilder.index(true);
+        fieldBuilder.bitPacked(false);
         schemaBuilder.field(fieldBuilder);
     }
 
@@ -148,6 +151,7 @@ public final class SchemaInfo extends Derived {
             fieldBuilder.alias(alias);
         fieldBuilder.attribute(true);
         fieldBuilder.index(false);
+        fieldBuilder.bitPacked(false);
         schemaBuilder.field(fieldBuilder);
     }
 
@@ -174,7 +178,8 @@ public final class SchemaInfo extends Derived {
                 var fieldsBuilder = new SchemaInfoConfig.Schema.Summaryclass.Fields.Builder();
                 fieldsBuilder.name(field.getName())
                              .type(field.getType().getName())
-                             .dynamic(SummaryClass.commandRequiringQuery(field.getCommand()));
+                             .dynamic(SummaryClass.commandRequiringQuery(field.getCommand()) ||
+                                      SummaryClass.elementsSelectorRequiringQuery(field.getElementsSelector()));
                 summaryBuilder.fields(fieldsBuilder);
             }
             schemaBuilder.summaryclass(summaryBuilder);
@@ -189,6 +194,13 @@ public final class SchemaInfo extends Derived {
                     .hasRankFeatures(rankProfile.hasRankFeatures())
                     .significance(new SchemaInfoConfig.Schema.Rankprofile.Significance.Builder()
                                           .useModel(rankProfile.useSignificanceModel()));
+            rankProfile.getMatchPhaseMaxHits().ifPresent(rankProfileConfig::matchPhaseMaxHits);
+            rankProfile.getTotalMatchPhaseMaxHits().ifPresent(rankProfileConfig::totalMatchPhaseMaxHits);
+            rankProfile.getTotalKeepRankCount().ifPresent(rankProfileConfig::totalKeepRankCount);
+            rankProfile.getKeepRankCount().ifPresent(rankProfileConfig::keepRankCount);
+            rankProfile.getTotalKeepRankCount().ifPresent(rankProfileConfig::totalKeepRankCount);
+            rankProfile.getRerankCount().ifPresent(rankProfileConfig::rerankCount);
+            rankProfile.getTotalRerankCount().ifPresent(rankProfileConfig::totalRerankCount);
             for (var input : rankProfile.inputs().entrySet()) {
                 var inputConfig = new SchemaInfoConfig.Schema.Rankprofile.Input.Builder();
                 inputConfig.name(input.getKey().toString());
@@ -228,6 +240,12 @@ public final class SchemaInfo extends Derived {
         private final String name;
         private final boolean hasSummaryFeatures;
         private final boolean hasRankFeatures;
+        private final Optional<Long> matchPhaseMaxHits;
+        private final Optional<Long> totalMatchPhaseMaxHits;
+        private final Optional<Integer> keepRankCount;
+        private final Optional<Integer> totalKeepRankCount;
+        private final Optional<Integer> rerankCount;
+        private final Optional<Integer> totalRerankCount;
         private final boolean useSignificanceModel;
         private final Map<Reference, RankProfile.Input> inputs;
 
@@ -236,12 +254,26 @@ public final class SchemaInfo extends Derived {
             this.hasSummaryFeatures =  ! profile.getSummaryFeatures().isEmpty();
             this.hasRankFeatures =  ! profile.getRankFeatures().isEmpty();
             this.inputs = profile.inputs();
+            this.matchPhaseMaxHits = profile.getMatchPhase() == null ? Optional.empty()
+                                                                     : profile.getMatchPhase().getMaxHits();
+            this.totalMatchPhaseMaxHits = profile.getMatchPhase() == null ? Optional.empty()
+                                                                          : profile.getMatchPhase().getTotalMaxHits();
+            this.keepRankCount = profile.getKeepRankCount();
+            this.totalKeepRankCount = profile.getTotalKeepRankCount();
+            this.rerankCount = profile.getRerankCount();
+            this.totalRerankCount = profile.getTotalRerankCount();
             useSignificanceModel = profile.useSignificanceModel();
         }
 
         public String name() { return name; }
         public boolean hasSummaryFeatures() { return hasSummaryFeatures; }
         public boolean hasRankFeatures() { return hasRankFeatures; }
+        public Optional<Long> getMatchPhaseMaxHits() { return matchPhaseMaxHits; }
+        public Optional<Long> getTotalMatchPhaseMaxHits() { return totalMatchPhaseMaxHits; }
+        public Optional<Integer> getKeepRankCount() { return keepRankCount; }
+        public Optional<Integer> getTotalKeepRankCount() { return totalKeepRankCount; }
+        public Optional<Integer> getRerankCount() { return rerankCount; }
+        public Optional<Integer> getTotalRerankCount() { return totalRerankCount; }
         public boolean useSignificanceModel() { return useSignificanceModel; }
         public Map<Reference, RankProfile.Input> inputs() { return inputs; }
 

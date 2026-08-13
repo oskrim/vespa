@@ -15,6 +15,7 @@ import com.yahoo.document.DocumentUpdate;
 import com.yahoo.document.Field;
 import com.yahoo.document.MapDataType;
 import com.yahoo.document.StructDataType;
+import com.yahoo.document.TensorDataType;
 import com.yahoo.document.WeightedSetDataType;
 import com.yahoo.document.datatypes.Array;
 import com.yahoo.document.datatypes.BoolFieldValue;
@@ -23,10 +24,13 @@ import com.yahoo.document.datatypes.IntegerFieldValue;
 import com.yahoo.document.datatypes.MapFieldValue;
 import com.yahoo.document.datatypes.StringFieldValue;
 import com.yahoo.document.datatypes.Struct;
+import com.yahoo.document.datatypes.TensorFieldValue;
 import com.yahoo.document.datatypes.WeightedSet;
 import com.yahoo.document.select.convert.SelectionExpressionConverter;
 import com.yahoo.document.select.parser.ParseException;
 import com.yahoo.document.select.parser.TokenMgrException;
+import com.yahoo.tensor.Tensor;
+import com.yahoo.tensor.TensorType;
 import com.yahoo.yolean.Exceptions;
 import org.junit.Before;
 import org.junit.Test;
@@ -77,6 +81,7 @@ public class DocumentSelectorTestCase {
 
         ArrayDataType intarray = new ArrayDataType(DataType.INT);
         type.addField("intarray", intarray);
+        type.addField("dense_tensor", TensorDataType.getTensor(TensorType.fromSpec("tensor(x[2])")));
 
         manager.registerDocumentType(parent);
         manager.registerDocumentType(type);
@@ -143,6 +148,9 @@ public class DocumentSelectorTestCase {
         assertParse("music.expire > now() - 300");
         assertParse("now or now_search");
         assertParse("(music.expire / 1000) > (now() - 300)");
+        assertParse("music.foo{bananas} == 1");
+        assertParse("music.foo{\"bananas with bandanas\"} == 1");
+        assertParse("music.foo[0]{0}[1]{1}{bananas}.yes.with{\"oh so much\"}{$exciting}[$potassium]");
     }
 
     @Test
@@ -393,6 +401,10 @@ public class DocumentSelectorTestCase {
             aval.add(sval2);
         }
         documents.get(1).getDocument().setFieldValue("structarray", aval);
+        {
+            var tensor = Tensor.from("tensor(x[2]):[0.1, 0.2]");
+            documents.get(1).getDocument().setFieldValue("dense_tensor", new TensorFieldValue(tensor));
+        }
 
         MapFieldValue<IntegerFieldValue, StringFieldValue> mval =
                 new MapFieldValue<>((MapDataType)documents.get(1).getDocument().getField("mymap").getDataType());
@@ -404,6 +416,7 @@ public class DocumentSelectorTestCase {
         MapFieldValue<StringFieldValue, Array> amval =
                 new MapFieldValue<>((MapDataType)documents.get(1).getDocument().getField("structarrmap").getDataType());
         amval.put(new StringFieldValue("foo"), aval);
+        amval.put(new StringFieldValue("key that needs escaping"), aval);
 
         Array<Struct> abval = new Array<>(documents.get(1).getDocument().getField("structarray").getDataType());
         {
@@ -703,10 +716,22 @@ public class DocumentSelectorTestCase {
         assertEquals(Result.FALSE, evaluate("test.intarray > 80", documents.get(1)));
         assertEquals(Result.TRUE, evaluate("test.intarray >= 84", documents.get(0)));
         assertEquals(Result.TRUE, evaluate("test.intarray <= 3", documents.get(1)));
+        assertEquals(Result.TRUE, evaluate("not test.intarray < 5", documents.get(0)));
+        assertEquals(Result.FALSE, evaluate("not test.intarray < 5", documents.get(1)));
+        assertEquals(Result.FALSE, evaluate("5 > test.intarray", documents.get(0)));
+        assertEquals(Result.TRUE, evaluate("5 > test.intarray", documents.get(1)));
+        assertEquals(Result.TRUE, evaluate("not 5 > test.intarray", documents.get(0)));
+        assertEquals(Result.FALSE, evaluate("not 5 > test.intarray", documents.get(1)));
 
         // Interesting property ...
         assertEquals(Result.TRUE, evaluate("test.intarray == 84", documents.get(0)));
         assertEquals(Result.TRUE, evaluate("test.intarray != 84", documents.get(0)));
+        assertEquals(Result.FALSE, evaluate("not test.intarray == 84", documents.get(0)));
+        assertEquals(Result.FALSE, evaluate("not test.intarray != 84", documents.get(0)));
+        assertEquals(Result.TRUE, evaluate("84 == test.intarray", documents.get(0)));
+        assertEquals(Result.TRUE, evaluate("84 != test.intarray", documents.get(0)));
+        assertEquals(Result.FALSE, evaluate("not 84 == test.intarray", documents.get(0)));
+        assertEquals(Result.FALSE, evaluate("not 84 != test.intarray", documents.get(0)));
 
         assertEquals(Result.TRUE, evaluate("test.structarray[$x].key == 15 AND test.structarray[$x].value == \"structval1\"", documents.get(1)));
         assertEquals(Result.FALSE, evaluate("test.structarray[$x].key == 15 AND test.structarray[$x].value == \"structval2\"", documents.get(1)));
@@ -732,6 +757,10 @@ public class DocumentSelectorTestCase {
         assertEquals(Result.FALSE, evaluate("test.mymap == 4", documents.get(1)));
         assertEquals(Result.TRUE, evaluate("test.mymap = 3", documents.get(1))); // Fallback to ==
         assertEquals(Result.FALSE, evaluate("test.mymap = 4", documents.get(1))); // Fallback to ==
+        assertEquals(Result.FALSE, evaluate("test.structarrmap{\"key that needs escaping\"}", documents.get(0)));
+        assertEquals(Result.TRUE, evaluate("test.structarrmap{\"key that needs escaping\"}", documents.get(1)));
+        assertEquals(Result.FALSE, evaluate("test.structarrmap == \"key that needs escaping\"", documents.get(0)));
+        assertEquals(Result.TRUE, evaluate("test.structarrmap == \"key that needs escaping\"", documents.get(1)));
 
         assertEquals(Result.TRUE, evaluate("test.structarrmap{$x}[$y].key == 15 AND test.structarrmap{$x}[$y].value == \"structval1\"", documents.get(1)));
         assertEquals(Result.TRUE, evaluate("test.structarrmap.value[$y].key == 15 AND test.structarrmap.value[$y].value == \"structval1\"", documents.get(1)));
@@ -741,8 +770,10 @@ public class DocumentSelectorTestCase {
 
         assertEquals(Result.TRUE, evaluate("test.stringweightedset", documents.get(1)));
         assertEquals(Result.TRUE, evaluate("test.stringweightedset{val1}", documents.get(1)));
+        assertEquals(Result.TRUE, evaluate("test.stringweightedset{\"val1\"}", documents.get(1)));
         assertEquals(Result.TRUE, evaluate("test.stringweightedset{val1} == 1", documents.get(1)));
         assertEquals(Result.FALSE, evaluate("test.stringweightedset{val1} == 2", documents.get(1)));
+        assertEquals(Result.FALSE, evaluate("test.stringweightedset{\"val1\"} == 2", documents.get(1)));
         assertEquals(Result.TRUE, evaluate("test.stringweightedset == \"val1\"", documents.get(1)));
         assertEquals(Result.TRUE, evaluate("test.stringweightedset = \"val*\"", documents.get(1)));
         assertEquals(Result.TRUE, evaluate("test.stringweightedset =~ \"val[0-9]\"", documents.get(1)));
@@ -770,6 +801,30 @@ public class DocumentSelectorTestCase {
         assertEquals(Result.FALSE, evaluate("test.truth == true", documents.get(0)));
         assertEquals(Result.FALSE, evaluate("test.truth == 0", documents.get(0)));
         assertEquals(Result.FALSE, evaluate("test.truth == false", documents.get(0)));
+    }
+
+    @Test
+    public void tensor_fields_can_be_presence_checked_with_null() throws ParseException {
+        var documents = createDocs();
+        // Document 1 has `dense_tensor` field set, the others do not
+        assertEquals(Result.TRUE, evaluate("test.dense_tensor != null", documents.get(1)));
+        assertEquals(Result.TRUE, evaluate("test.dense_tensor", documents.get(1)));
+        assertEquals(Result.TRUE, evaluate("null != test.dense_tensor", documents.get(1)));
+        assertEquals(Result.FALSE, evaluate("test.dense_tensor == null", documents.get(1)));
+        assertEquals(Result.FALSE, evaluate("null == test.dense_tensor", documents.get(1)));
+        assertEquals(Result.TRUE, evaluate("test.dense_tensor == null", documents.get(0)));
+        assertEquals(Result.TRUE, evaluate("not test.dense_tensor", documents.get(0)));
+        assertEquals(Result.FALSE, evaluate("test.dense_tensor != null", documents.get(0)));
+        // Tensors are not defined for any other operations than presence checks
+        assertEquals(Result.INVALID, evaluate("test.dense_tensor == 1234", documents.get(1)));
+        assertEquals(Result.INVALID, evaluate("test.dense_tensor < 1234", documents.get(1)));
+        // ... not even identity checks
+        assertEquals(Result.INVALID, evaluate("test.dense_tensor == test.dense_tensor", documents.get(1)));
+        assertEquals(Result.INVALID, evaluate("test.dense_tensor != test.dense_tensor", documents.get(1)));
+        // ... unless the fields are not set, in which case identity checks will succeed since the
+        // expression degenerates to comparing null values.
+        assertEquals(Result.TRUE, evaluate("test.dense_tensor == test.dense_tensor", documents.get(0)));
+        assertEquals(Result.FALSE, evaluate("test.dense_tensor != test.dense_tensor", documents.get(0)));
     }
 
     @Test
@@ -817,9 +872,10 @@ public class DocumentSelectorTestCase {
         try {
             // Nested field access is NOT considered a simple expression.
             evaluate("test.my_imported_field.foo", documents.get(0));
-            fail();
+            fail("Expected exception");
         } catch (IllegalArgumentException e) {
-            assertTrue(e.getMessage().startsWith("Field 'my_imported_field' not found in type datatype test"));
+            assertEquals("Field 'my_imported_field' not found in document type 'test'",
+                         Exceptions.toMessageString(e));
         }
     }
 

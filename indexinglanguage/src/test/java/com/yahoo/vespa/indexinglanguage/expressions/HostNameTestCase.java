@@ -10,7 +10,9 @@ import org.junit.Test;
 import static com.yahoo.vespa.defaults.Defaults.getDefaults;
 
 import static com.yahoo.vespa.indexinglanguage.expressions.ExpressionAssert.assertVerify;
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 
 /**
  * @author Simon Thoresen Hult
@@ -27,10 +29,7 @@ public class HostNameTestCase {
 
     @Test
     public void requireThatExpressionCanBeVerified() {
-        Expression exp = new HostNameExpression();
-        assertVerify(null, exp, DataType.STRING);
-        assertVerify(DataType.INT, exp, DataType.STRING);
-        assertVerify(DataType.STRING, exp, DataType.STRING);
+        assertVerify(AnyDataType.instance, new HostNameExpression(), DataType.STRING);
     }
 
     @Test

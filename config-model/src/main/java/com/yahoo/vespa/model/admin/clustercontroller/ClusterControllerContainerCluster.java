@@ -10,7 +10,6 @@ import com.yahoo.vespa.model.container.ContainerCluster;
 import com.yahoo.vespa.model.container.PlatformBundles;
 
 import java.nio.file.Path;
-import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -25,12 +24,17 @@ public class ClusterControllerContainerCluster extends ContainerCluster<ClusterC
 
     private final ReindexingContext reindexingContext;
 
+    private int totalNumberOfContentNodes = 0;
+
     public ClusterControllerContainerCluster(
             TreeConfigProducer<?> parent, String subId, String name, DeployState deployState) {
         super(parent, subId, name, deployState, false);
         addDefaultHandlersWithVip();
         this.reindexingContext = createReindexingContext(deployState);
-        setJvmGCOptions(deployState.getProperties().jvmGCOptions(Optional.of(ClusterSpec.Type.admin)));
+        setJvmGCOptions(deployState.getProperties().jvmGCOptionsFlag()
+                                .withClusterType(ClusterSpec.Type.admin)
+                                .withClusterId(ClusterSpec.Id.from(name))
+                                .value());
         if (isHostedVespa())
             addAccessLog("controller");
     }
@@ -44,7 +48,27 @@ public class ClusterControllerContainerCluster extends ContainerCluster<ClusterC
     public void getConfig(QrStartConfig.Builder builder) {
         super.getConfig(builder);
 
-        builder.jvm.heapsize(128);
+        builder.jvm.heapsize(calculateHeapSize());
+    }
+
+    public void updateNodeCount(int nodes) {
+        totalNumberOfContentNodes += nodes;
+    }
+
+    private int calculateHeapSize() {
+        int baseValue = 128;
+        if (!isHostedVespa) return baseValue;
+
+        return Math.min(baseValue + calculateJvmHeapAdjustment(), 400);
+    }
+
+    private int calculateJvmHeapAdjustment() {
+        // Heuristic to set JVM heap size for cluster controller
+        // 300 nodes => need heap size of about 400 MiB, minimum heap should be 128 MiB
+        // Increase in steps to avoid changes to heap size with small changes in node count.
+        double adjustmentFactor = 0.75; // 0.75 MiB per node
+        var step = totalNumberOfContentNodes / 50;
+        return  (int) (step * adjustmentFactor * 50);
     }
 
     public ReindexingContext reindexingContext() { return reindexingContext; }

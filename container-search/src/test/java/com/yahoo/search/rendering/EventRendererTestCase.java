@@ -19,6 +19,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 import java.io.ByteArrayOutputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -150,7 +151,7 @@ public class EventRendererTestCase {
     }
 
     @Test
-    public void testErrorEndsStream() throws ExecutionException, InterruptedException {
+    public void testRenderErrorEvent() throws ExecutionException, InterruptedException {
         var tokenStream = new EventStream();
         tokenStream.add("token1");
         tokenStream.add("token2");
@@ -165,12 +166,41 @@ public class EventRendererTestCase {
                 data: {"token":"token2"}
 
                 event: error
-                data: {"source":"my_llm","error":400,"message":"Something went wrong"}
+                data: {"code":400,"summary":"Something went wrong","source":"my_llm"}
 
                 event: end
                 """;
         assertEquals(expected, result);
     }
+    
+    @Test
+    public void testRenderErrorHit() throws ExecutionException, InterruptedException {
+        var tokenStream = new EventStream();
+        tokenStream.add("token1");
+        tokenStream.add("token2");
+        tokenStream.markComplete();
+        tokenStream.setRelevance(0);
+        
+        var hitGroup = newHitGroup(tokenStream, "token_stream");
+        var error = new ErrorMessage(400, "Something went wrong");
+        error.setSource("my_llm");
+        hitGroup.addError(error);
+
+        var result = render(new Result(new Query(), hitGroup));
+        var expected = """
+                event: error
+                data: {"code":400,"summary":"Something went wrong","source":"my_llm"}
+
+                event: token
+                data: {"token":"token1"}
+
+                event: token
+                data: {"token":"token2"}
+
+                event: end
+                """;
+        assertEquals(expected, result);
+    } 
 
     @Test
     public void testPromptRendering() throws ExecutionException, InterruptedException {
@@ -262,7 +292,7 @@ public class EventRendererTestCase {
         @Override
         public synchronized void write(byte[] b, int off, int len) {
             super.write(b, off, len);
-            System.out.print(new String(b, off, len));
+            System.out.print(new String(b, off, len, StandardCharsets.UTF_8));
         }
     }
 

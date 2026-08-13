@@ -1,11 +1,15 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
-#include "distribution_config_util.h"
 #include "global_bucket_space_distribution_converter.h"
+
+#include "distribution_config_util.h"
+
 #include <vespa/config-stor-distribution.h>
 #include <vespa/config/print/asciiconfigwriter.h>
-#include <vespa/config/print/asciiconfigreader.hpp>
 #include <vespa/vespalib/stllike/asciistream.h>
+
+#include <vespa/config/print/asciiconfigreader.hpp>
+
 #include <cassert>
 #include <map>
 
@@ -17,7 +21,7 @@ using DistributionConfigBuilder = vespa::config::content::StorDistributionConfig
 namespace {
 
 struct Group {
-    uint16_t nested_leaf_count{0};
+    uint16_t                                   nested_leaf_count{0};
     std::map<uint16_t, std::unique_ptr<Group>> sub_groups;
 };
 
@@ -29,7 +33,7 @@ void set_distribution_invariant_config_fields(DistributionConfigBuilder& builder
 }
 
 const Group& find_non_root_group_by_index(const std::string& index, const Group& root) {
-    auto path = lib::DistributionConfigUtil::getGroupPath(index);
+    auto  path = lib::DistributionConfigUtil::getGroupPath(index);
     auto* node = &root;
     for (auto idx : path) {
         auto child_iter = node->sub_groups.find(idx);
@@ -59,10 +63,8 @@ bool is_leaf_group(const DistributionConfigBuilder::Group& g) noexcept {
     return !g.nodes.empty();
 }
 
-void insert_new_group_into_tree(
-        std::unique_ptr<Group> new_group,
-        const DistributionConfigBuilder::Group& config_source_group,
-        Group& root) {
+void insert_new_group_into_tree(std::unique_ptr<Group>                  new_group,
+                                const DistributionConfigBuilder::Group& config_source_group, Group& root) {
     const auto path = lib::DistributionConfigUtil::getGroupPath(config_source_group.index);
     assert(!path.empty());
 
@@ -81,17 +83,17 @@ void insert_new_group_into_tree(
     }
 }
 
-void build_transformed_root_group(DistributionConfigBuilder& builder,
+void build_transformed_root_group(DistributionConfigBuilder&              builder,
                                   const DistributionConfigBuilder::Group& config_source_root,
-                                  const Group& parsed_root) {
+                                  const Group&                            parsed_root) {
     DistributionConfigBuilder::Group new_root(config_source_root);
     new_root.partitions = sub_groups_to_partition_spec(parsed_root);
     builder.group.emplace_back(std::move(new_root));
 }
 
-void build_transformed_non_root_group(DistributionConfigBuilder& builder,
+void build_transformed_non_root_group(DistributionConfigBuilder&              builder,
                                       const DistributionConfigBuilder::Group& config_source_group,
-                                      const Group& parsed_root) {
+                                      const Group&                            parsed_root) {
     DistributionConfigBuilder::Group new_group(config_source_group);
     if (!is_leaf_group(config_source_group)) { // Partition specs only apply to inner nodes
         const auto& g = find_non_root_group_by_index(config_source_group.index, parsed_root);
@@ -135,7 +137,7 @@ void build_global_groups(DistributionConfigBuilder& builder, const DistributionC
     assert(!source.group.empty()); // TODO gracefully handle empty config?
     auto root = create_group_tree_from_config(source);
 
-    auto g_iter = source.group.begin();
+    auto       g_iter = source.group.begin();
     const auto g_end = source.group.end();
     build_transformed_root_group(builder, *g_iter, *root);
     ++g_iter;
@@ -147,35 +149,33 @@ void build_global_groups(DistributionConfigBuilder& builder, const DistributionC
     builder.readyCopies = builder.redundancy;
 }
 
-} // anon ns
-
-std::shared_ptr<DistributionConfig>
-GlobalBucketSpaceDistributionConverter::convert_to_global(const DistributionConfig& source) {
+std::shared_ptr<DistributionConfig> convert_config_to_global(const DistributionConfig& source) {
     DistributionConfigBuilder builder;
     set_distribution_invariant_config_fields(builder);
     build_global_groups(builder, source);
     return std::make_shared<DistributionConfig>(builder);
 }
 
-std::shared_ptr<lib::Distribution>
+} // namespace
+
+std::shared_ptr<const lib::Distribution>
 GlobalBucketSpaceDistributionConverter::convert_to_global(const lib::Distribution& distr) {
     const auto& src_config = distr.serialized();
-    auto global_config = convert_to_global(*string_to_config(src_config));
-    return std::make_shared<lib::Distribution>(*global_config);
+    // Even though we don't use the partition specs for any global distribution
+    // semantics, we still have to rewrite the group/node tree to ensure that the
+    // distribution config "hashes" do not change. Otherwise, upgrades will fail
+    // due to mismatching config strings between distributors and storage nodes.
+    // TODO Vespa 9 change distributor<->content node bucket info handshake to not
+    //  require distribution config hash since we now get atomic state+config bundles
+    //  from the cluster controller.
+    auto global_config = convert_config_to_global(*string_to_config(src_config));
+    return std::make_shared<const lib::Distribution>(*global_config, true);
 }
 
-std::unique_ptr<DistributionConfig>
-GlobalBucketSpaceDistributionConverter::string_to_config(const std::string& cfg) {
-    vespalib::asciistream iss(cfg);
+std::unique_ptr<DistributionConfig> GlobalBucketSpaceDistributionConverter::string_to_config(const std::string& cfg) {
+    vespalib::asciistream                                                     iss(cfg);
     config::AsciiConfigReader<vespa::config::content::StorDistributionConfig> reader(iss);
     return reader.read();
 }
 
-std::string GlobalBucketSpaceDistributionConverter::config_to_string(const DistributionConfig& cfg) {
-    vespalib::asciistream ost;
-    config::AsciiConfigWriter writer(ost);
-    writer.write(cfg);
-    return ost.str();
-}
-
-}
+} // namespace storage::lib

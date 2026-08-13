@@ -2,8 +2,8 @@
 package com.yahoo.vespa.indexinglanguage.expressions;
 
 import com.yahoo.document.DataType;
-
-import java.util.regex.Pattern;
+import com.yahoo.document.datatypes.StringFieldValue;
+import com.yahoo.vespa.indexinglanguage.SimpleTestAdapter;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.fail;
@@ -13,44 +13,46 @@ import static org.junit.Assert.fail;
  */
 class ExpressionAssert {
 
-    public static void assertVerifyCtx(VerificationContext ctx, Expression exp, DataType expectedValueAfter) {
-        assertEquals(expectedValueAfter, exp.verify(ctx));
+    public static void assertVerifyCtx(Expression expression, TypeContext context) {
+        expression.resolve(context);
     }
 
-    public static void assertVerify(DataType valueBefore, Expression exp, DataType expectedValueAfter) {
-        assertVerifyCtx(new VerificationContext().setCurrentType(valueBefore), exp, expectedValueAfter);
+    public static void assertVerify(DataType inputType, Expression expression, DataType outputType) {
+        var context = new TypeContext(new SimpleTestAdapter());
+        assertVerifyCtx(expression, context);
+        assertEquals(outputType, expression.setInputType(inputType, context));
+        assertEquals(inputType, expression.setOutputType(outputType, context));
     }
 
-    public static void assertVerifyThrows(DataType valueBefore, Expression exp, String expectedException) {
-        assertVerifyCtxThrows(new VerificationContext().setCurrentType(valueBefore), exp, expectedException);
+    public static void assertVerifyThrows(String expectedMessage, DataType valueBefore, Expression expression) {
+        assertVerifyThrows(expectedMessage, expression, valueBefore, new TypeContext(new SimpleTestAdapter()));
     }
 
     interface CreateExpression {
         Expression create();
     }
-    public static void assertVerifyThrows(DataType valueBefore, CreateExpression createExp, String expectedException) {
-        assertVerifyCtxThrows(new VerificationContext().setCurrentType(valueBefore), createExp, expectedException);
+    public static void assertVerifyThrows(String expectedMessage, DataType valueBefore, CreateExpression createExpression) {
+        assertVerifyThrows(expectedMessage, createExpression, new TypeContext(new SimpleTestAdapter()));
     }
 
-    public static void assertVerifyCtxThrows(VerificationContext ctx, CreateExpression createExp, String expectedException) {
+    public static void assertVerifyThrows(String expectedMessage, CreateExpression createExp, TypeContext context) {
         try {
             Expression exp = createExp.create();
-            exp.verify(ctx);
-            fail();
+            exp = new StatementExpression(new ConstantExpression(new StringFieldValue("test")), exp);
+            exp.resolve(context);
+            fail("Expected exception");
         } catch (VerificationException e) {
-            if (!Pattern.matches(expectedException, e.getMessage())) {
-                assertEquals(expectedException, e.getMessage());
-            }
+            assertEquals(expectedMessage, e.getMessage());
         }
     }
-    public static void assertVerifyCtxThrows(VerificationContext ctx, Expression exp, String expectedException) {
+    public static void assertVerifyThrows(String expectedMessage, Expression expression, DataType inputType, TypeContext context) {
         try {
-            exp.verify(ctx);
-            fail();
+            expression.setInputType(inputType, context);
+            expression.resolve(context);
+            fail("Expected exception");
         } catch (VerificationException e) {
-            if (!Pattern.matches(expectedException, e.getMessage())) {
-                assertEquals(expectedException, e.getMessage());
-            }
+            assertEquals(expectedMessage, e.getMessage());
         }
     }
+
 }

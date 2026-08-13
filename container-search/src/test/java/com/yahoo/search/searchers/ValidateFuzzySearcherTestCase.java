@@ -18,6 +18,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -27,11 +28,12 @@ import static org.junit.jupiter.api.Assertions.assertNull;
  * @author alexeyche
  */
 public class ValidateFuzzySearcherTestCase {
+
     ValidateFuzzySearcher searcher;
 
     List<String> attributes;
 
-    private List<Index> indexes;
+    private final List<Index> indexes;
 
     private static final String CMD_ATTRIBUTE = "attribute";
     private static final String CMD_STRING = "string";
@@ -41,7 +43,7 @@ public class ValidateFuzzySearcherTestCase {
         indexes = new ArrayList<>();
         for (Attribute.Datatype.Enum attr: Attribute.Datatype.Enum.values()) {
             for (Attribute.Collectiontype.Enum ctype: Attribute.Collectiontype.Enum.values()) {
-                String attributeName = attr.name().toLowerCase() + "_" + ctype.name().toLowerCase();
+                String attributeName = attr.name().toLowerCase(Locale.ROOT) + "_" + ctype.name().toLowerCase(Locale.ROOT);
                 attributes.add(attributeName);
 
                 Index index = new Index(attributeName);
@@ -56,14 +58,24 @@ public class ValidateFuzzySearcherTestCase {
     }
 
     private String makeQuery(String attribute, String query, int maxEditDistance, int prefixLength, boolean prefixMatch) {
-        return "select * from sources * where %s contains ({maxEditDistance:%d,prefixLength:%d,prefix:%b}fuzzy(\"%s\"))"
-                .formatted(attribute, maxEditDistance, prefixLength, prefixMatch, query);
+        return String.format(Locale.ROOT, "select * from sources * where %s contains ({maxEditDistance:%d,prefixLength:%d,prefix:%b}fuzzy(\"%s\"))",
+                attribute, maxEditDistance, prefixLength, prefixMatch, query);
     }
 
     private String makeQuery(String attribute, String query) {
         return makeQuery(attribute, query, 2, 0, false);
     }
 
+
+    @Test
+    void testQueryInsideSameElement() {
+        Index index = new Index("myMap.value");
+        index.setAttribute(true);
+        index.setString(true);
+        String q = "select * from sources * where myMap contains sameElement(value contains fuzzy('fuzzy'))";
+        Result r = doSearch(searcher, q, List.of(index));
+        assertNull(r.hits().getError());
+    }
 
     @Test
     void testQueriesToAllAttributes() {
@@ -75,7 +87,7 @@ public class ValidateFuzzySearcherTestCase {
             if (validAttributes.contains(attribute)) {
                 assertNull(r.hits().getError());
             } else {
-                assertErrMsg("FUZZY(fuzzy,2,0,false) " + attribute + ":fuzzy field is not a string attribute", r);
+                assertErrMsg("Fuzzy items require a string attribute field, but '" + attribute + "' is not", r);
             }
         }
     }
@@ -105,7 +117,7 @@ public class ValidateFuzzySearcherTestCase {
     void testInvalidQueryWrongAttributeName() {
         String q = makeQuery("wrong_name", "fuzzy");
         Result r = doSearch(searcher, q);
-        assertErrMsg("FUZZY(fuzzy,2,0,false) wrong_name:fuzzy field is not a string attribute", r);
+        assertErrMsg("Fuzzy items require a string attribute field, but 'wrong_name' is not", r);
     }
 
     private static void assertErrMsg(String message, Result r) {
@@ -113,6 +125,10 @@ public class ValidateFuzzySearcherTestCase {
     }
 
     private Result doSearch(ValidateFuzzySearcher searcher, String yqlQuery) {
+        return doSearch(searcher, yqlQuery, indexes);
+    }
+
+    private Result doSearch(ValidateFuzzySearcher searcher, String yqlQuery, List<Index> indexes) {
         QueryTree queryTree = new YqlParser(new ParserEnvironment()).parse(new Parsable().setQuery(yqlQuery));
         Query query = new Query();
         query.getModel().getQueryTree().setRoot(queryTree.getRoot());
@@ -123,4 +139,5 @@ public class ValidateFuzzySearcherTestCase {
         IndexFacts indexFacts = new IndexFacts(new IndexModel(searchDefinition));
         return new Execution(searcher, Execution.Context.createContextStub(indexFacts)).search(query);
     }
+
 }

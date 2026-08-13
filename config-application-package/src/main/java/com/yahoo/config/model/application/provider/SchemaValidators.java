@@ -3,6 +3,7 @@ package com.yahoo.config.model.application.provider;
 
 import com.yahoo.component.Version;
 import com.yahoo.io.IOUtils;
+import com.yahoo.text.Text;
 import org.osgi.framework.Bundle;
 import org.xml.sax.SAXException;
 import java.io.File;
@@ -16,6 +17,8 @@ import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.nio.charset.StandardCharsets;
+import java.util.Locale;
 
 import static com.yahoo.vespa.defaults.Defaults.getDefaults;
 import static java.nio.file.Files.createTempDirectory;
@@ -31,6 +34,7 @@ public class SchemaValidators {
     private static final String schemaDirBase = System.getProperty("java.io.tmpdir", File.separator + "tmp" + File.separator + "vespa");
     private static final Logger log = Logger.getLogger(SchemaValidators.class.getName());
 
+    private static final String applicationXmlSchemaName = "application.rnc";
     private static final String servicesXmlSchemaName = "services.rnc";
     private static final String hostsXmlSchemaName = "hosts.rnc";
     private static final String deploymentXmlSchemaName = "deployment.rnc";
@@ -38,7 +42,7 @@ public class SchemaValidators {
     private static final String containerIncludeXmlSchemaName = "container-include.rnc";
     private static final String routingStandaloneXmlSchemaName = "routing-standalone.rnc";
 
-
+    private final SchemaValidator applicationXmlValidator;
     private final SchemaValidator servicesXmlValidator;
     private final SchemaValidator hostsXmlValidator;
     private final SchemaValidator deploymentXmlValidator;
@@ -55,6 +59,7 @@ public class SchemaValidators {
         File schemaDir = null;
         try {
             schemaDir = saveSchemasFromJar(new File(SchemaValidators.schemaDirBase), vespaVersion);
+            applicationXmlValidator = createValidator(schemaDir, applicationXmlSchemaName);
             servicesXmlValidator = createValidator(schemaDir, servicesXmlSchemaName);
             hostsXmlValidator = createValidator(schemaDir, hostsXmlSchemaName);
             deploymentXmlValidator = createValidator(schemaDir, deploymentXmlSchemaName);
@@ -69,29 +74,13 @@ public class SchemaValidators {
         }
     }
 
-    public SchemaValidator servicesXmlValidator() {
-        return servicesXmlValidator;
-    }
-
-    public SchemaValidator hostsXmlValidator() {
-        return hostsXmlValidator;
-    }
-
-    public SchemaValidator deploymentXmlValidator() {
-        return deploymentXmlValidator;
-    }
-
-    SchemaValidator validationOverridesXmlValidator() {
-        return validationOverridesXmlValidator;
-    }
-
-    SchemaValidator containerIncludeXmlValidator() {
-        return containerIncludeXmlValidator;
-    }
-
-    SchemaValidator routingStandaloneXmlValidator() {
-        return routingStandaloneXmlValidator;
-    }
+    SchemaValidator applicationXmlValidator() { return applicationXmlValidator; }
+    public SchemaValidator servicesXmlValidator() { return servicesXmlValidator; }
+    public SchemaValidator hostsXmlValidator() { return hostsXmlValidator; }
+    public SchemaValidator deploymentXmlValidator() { return deploymentXmlValidator; }
+    SchemaValidator validationOverridesXmlValidator() { return validationOverridesXmlValidator; }
+    SchemaValidator containerIncludeXmlValidator() { return containerIncludeXmlValidator; }
+    SchemaValidator routingStandaloneXmlValidator() { return routingStandaloneXmlValidator; }
 
     /**
      * Looks for schema files in config-model.jar and saves them in a temp dir. Uses schema files
@@ -137,7 +126,7 @@ public class SchemaValidators {
                     schemasFound = true;
                     copySchemas(schemaPath, tmpDir);
                 } else {
-                    log.log(Level.FINE, () -> String.format("Saving schemas for model bundle %s:%s", bundle.getSymbolicName(), bundle.getVersion()));
+                    log.log(Level.FINE, () -> Text.format("Saving schemas for model bundle %s:%s", bundle.getSymbolicName(), bundle.getVersion()));
                     for (Enumeration<URL> entries = bundle.findEntries("schema", "*.rnc", true); entries.hasMoreElements(); ) {
                         URL url = entries.nextElement();
                         writeContentsToFile(tmpDir, url.getFile(), url.openStream());
@@ -168,8 +157,14 @@ public class SchemaValidators {
     }
 
     private static void writeContentsToFile(File outDir, String outFile, InputStream inputStream) throws IOException {
-        String contents = IOUtils.readAll(new InputStreamReader(inputStream));
-        File out = new File(outDir, outFile);
+        String contents = IOUtils.readAll(new InputStreamReader(inputStream, StandardCharsets.UTF_8));
+
+        // Validate and sanitize the output path
+        File out = new File(outDir, outFile).getCanonicalFile();
+        if (!out.getPath().startsWith(outDir.getCanonicalPath() + File.separator)) {
+            throw new IOException("Invalid file path: " + outFile);
+        }
+
         IOUtils.writeFile(out, contents, false);
     }
 

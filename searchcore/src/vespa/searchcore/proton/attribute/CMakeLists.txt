@@ -9,19 +9,22 @@ vespa_add_library(searchcore_attribute STATIC
     attribute_directory.cpp
     attribute_executor.cpp
     attribute_factory.cpp
+    attribute_initialization_status_collector.cpp
     attribute_initializer.cpp
     attribute_initializer_result.cpp
+    attribute_load_memory_calculator.cpp
     attribute_manager_explorer.cpp
     attribute_manager_initializer.cpp
     attribute_manager_reconfig.cpp
     attribute_populator.cpp
     attribute_spec.cpp
-    attribute_transient_memory_calculator.cpp
     attribute_type_matcher.cpp
     attribute_usage_filter.cpp
+    attribute_usage_notifier.cpp
     attribute_usage_sampler_context.cpp
     attribute_usage_sampler_functor.cpp
     attribute_usage_stats.cpp
+    attribute_usage_stats_and_load_info.cpp
     attribute_vector_explorer.cpp
     attribute_writer.cpp
     attribute_writer_explorer.cpp
@@ -38,6 +41,7 @@ vespa_add_library(searchcore_attribute STATIC
     imported_attributes_context.cpp
     imported_attributes_repo.cpp
     initialized_attributes_result.cpp
+    reserved_memory_for_attribute_load_calculator.cpp
     sequential_attributes_initializer.cpp
     DEPENDS
     searchcore_flushengine

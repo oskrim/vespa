@@ -1,6 +1,7 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.prelude.fastsearch;
 
+import com.yahoo.prelude.fastsearch.PartialSummaryHandler;
 import com.yahoo.prelude.querytransform.QueryRewrite;
 import com.yahoo.search.Query;
 import com.yahoo.search.Result;
@@ -31,7 +32,6 @@ import java.util.Optional;
 // catch and unwrap into a results with an error in high level methods.  -Jon
 public class IndexedBackend extends VespaBackend {
 
-    /** Used to dispatch directly to search nodes over RPC, replacing the old fnet communication path */
     private final Dispatcher dispatcher;
 
     /**
@@ -43,14 +43,14 @@ public class IndexedBackend extends VespaBackend {
      *                   backend.
      * @param clusterParams the cluster number, and other cluster backend parameters
      */
-    public IndexedBackend(ClusterParams clusterParams, Dispatcher dispatcher)
-    {
+    public IndexedBackend(ClusterParams clusterParams, Dispatcher dispatcher) {
         super(clusterParams);
         this.dispatcher = dispatcher;
     }
 
     @Override
     protected void transformQuery(Query query) {
+        super.transformQuery(query);
         QueryRewrite.rewriteSddocname(query);
     }
 
@@ -67,7 +67,7 @@ public class IndexedBackend extends VespaBackend {
         if (dispatcher.allGroupsHaveSize1())
             forceSinglePassGrouping(query);
         try (SearchInvoker invoker = getSearchInvoker(query)) {
-            Result result = invoker.search(query);
+            Result result = invoker.search(query, 1.0);
             injectSource(result.hits());
 
             if (query.properties().getBoolean(Ranking.RANKFEATURES, false)) {
@@ -77,7 +77,7 @@ public class IndexedBackend extends VespaBackend {
                 // contain the data we need. If we fetch the default
                 // one we end up fetching docsums twice unless the
                 // user also requested the default one.
-                fill(result, query.getPresentation().getSummary()); // ARGH
+                fill(result, PartialSummaryHandler.resolveSummaryClass(result)); // ARGH
             }
             return result;
         } catch (TimeoutException e) {
@@ -97,13 +97,13 @@ public class IndexedBackend extends VespaBackend {
      *
      * @param result result containing a partition of the unfilled hits
      * @param summaryClass the summary class we want to fill with
-     **/
+     */
     @Override
     protected void doPartialFill(Result result, String summaryClass) {
         if (result.isFilled(summaryClass)) return;
 
         Query query = result.getQuery();
-        traceQuery(getName(), DispatchPhase.FILL, query, query.getOffset(), query.getHits(), 1, quotedSummaryClass(summaryClass));
+        traceQuery(getName(), DispatchPhase.FILL, query, query.getOffset(), query.getHits(), 1, quotedSummaryClass(query, summaryClass));
 
         try (FillInvoker invoker = getFillInvoker(result)) {
             invoker.fill(result, summaryClass);
@@ -140,8 +140,10 @@ public class IndexedBackend extends VespaBackend {
         return dispatcher.getFillInvoker(result, this);
     }
 
-    private static Optional<String> quotedSummaryClass(String summaryClass) {
-        return Optional.of(summaryClass == null ? "[null]" : "'" + summaryClass + "'");
+    private static Optional<String> quotedSummaryClass(Query q, String summaryClass) {
+        return Optional.of(PartialSummaryHandler
+                           .quotedSummaryClassName(summaryClass,
+                                                   q.getPresentation().getSummaryFields()));
     }
 
     public String toString() {

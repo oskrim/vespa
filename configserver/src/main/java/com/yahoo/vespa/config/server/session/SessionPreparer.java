@@ -21,17 +21,20 @@ import com.yahoo.config.model.api.FileDistribution;
 import com.yahoo.config.model.api.OnnxModelCost;
 import com.yahoo.config.model.api.Quota;
 import com.yahoo.config.model.api.TenantSecretStore;
+import com.yahoo.config.model.api.TenantVault;
 import com.yahoo.config.provision.AllocatedHosts;
 import com.yahoo.config.provision.ApplicationId;
+import com.yahoo.config.provision.ApplicationName;
 import com.yahoo.config.provision.AthenzDomain;
 import com.yahoo.config.provision.CloudAccount;
-import com.yahoo.config.provision.CloudName;
+import com.yahoo.config.provision.CloudResourceTags;
 import com.yahoo.config.provision.DataplaneToken;
 import com.yahoo.config.provision.DockerImage;
 import com.yahoo.config.provision.InstanceName;
 import com.yahoo.config.provision.Tags;
+import com.yahoo.config.provision.TelemetryExporterConfiguration;
+import com.yahoo.config.provision.TelemetryExporterConfiguration.VaultReference;
 import com.yahoo.config.provision.Zone;
-import com.yahoo.container.jdisc.secretstore.SecretStore;
 import com.yahoo.net.HostName;
 import com.yahoo.path.Path;
 import com.yahoo.vespa.config.server.ConfigServerSpec;
@@ -65,6 +68,7 @@ import java.nio.file.Files;
 import java.security.cert.X509Certificate;
 import java.time.Instant;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -92,7 +96,6 @@ public class SessionPreparer {
     private final ConfigDefinitionRepo configDefinitionRepo;
     private final Curator curator;
     private final Zone zone;
-    private final SecretStore secretStore;
     private final FlagSource flagSource;
     private final ExecutorService executor;
     private final BooleanFlag writeSessionData;
@@ -108,7 +111,6 @@ public class SessionPreparer {
                            Curator curator,
                            Zone zone,
                            FlagSource flagSource,
-                           SecretStore secretStore,
                            OnnxModelCost onnxModelCost,
                            List<EndpointCertificateSecretStore> endpointCertificateSecretStores) {
         this.modelFactoryRegistry = modelFactoryRegistry;
@@ -118,7 +120,6 @@ public class SessionPreparer {
         this.configDefinitionRepo = configDefinitionRepo;
         this.curator = curator;
         this.zone = zone;
-        this.secretStore = secretStore;
         this.flagSource = flagSource;
         this.executor = executor;
         this.writeSessionData = Flags.WRITE_CONFIG_SERVER_SESSION_DATA_AS_ONE_BLOB.bindTo(flagSource);
@@ -146,7 +147,7 @@ public class SessionPreparer {
                                                   TenantRepository.getTenantPath(applicationId.tenant()),
                                                   serverDbSessionDir, applicationPackage, sessionZooKeeperClient,
                                                   onnxModelCost, endpointCertificateSecretStores);
-        preparation.preprocess();
+        preparation.preprocess(activeApplicationVersions);
         try {
             AllocatedHosts allocatedHosts = preparation.buildModels(now);
             preparation.makeResult(allocatedHosts);
@@ -178,6 +179,8 @@ public class SessionPreparer {
 
         /** The version of Vespa the application to be prepared specifies for its nodes */
         final Version vespaVersion;
+        /** The version of Vespa to build first when there are several config models, empty if latest version should be built first */
+        final Optional<Version> vespaVersionToBuildFirst;
 
         final ContainerEndpointsCache containerEndpointsCache;
         final List<ContainerEndpoint> containerEndpoints;
@@ -206,6 +209,7 @@ public class SessionPreparer {
             this.applicationId = params.getApplicationId();
             this.dockerImageRepository = params.dockerImageRepository();
             this.vespaVersion = params.vespaVersion().orElse(Vtag.currentVersion);
+            this.vespaVersionToBuildFirst = params.vespaVersionToBuildFirst();
             this.containerEndpointsCache = new ContainerEndpointsCache(tenantPath, curator);
             this.endpointCertificateMetadataStore = new EndpointCertificateMetadataStore(curator, tenantPath);
             EndpointCertificateRetriever endpointCertificateRetriever = new EndpointCertificateRetriever(endpointCertificateSecretStores);
@@ -218,7 +222,6 @@ public class SessionPreparer {
             this.fileRegistry = fileDistributionFactory.createFileRegistry(serverDbSessionDir);
             this.preparedModelsBuilder = new PreparedModelsBuilder(modelFactoryRegistry,
                                                                    flagSource,
-                                                                   secretStore,
                                                                    containerEndpoints,
                                                                    endpointCertificateSecrets,
                                                                    configDefinitionRepo,
@@ -258,13 +261,15 @@ public class SessionPreparer {
             return fileReference;
         }
 
-        void preprocess() {
+        void preprocess(Optional<ApplicationVersions> activeApplicationVersions) {
             try {
                 validateXmlFeatures(applicationPackage, logger);
                 this.preprocessedApplicationPackage = applicationPackage.preprocess(zone, logger);
             } catch (IOException | RuntimeException e) {
+                var initialSession =  activeApplicationVersions.map(ApplicationVersions::applicationGeneration).map(String::valueOf).orElse("unknown");
                 throw new IllegalArgumentException("Error preprocessing application package for " + applicationId +
-                                                   ", session " + sessionZooKeeperClient.sessionId(), e);
+                                                   ", session id " + sessionZooKeeperClient.sessionId() +
+                                                   " (based on session id " + initialSession + ")", e);
             }
             checkTimeout("preprocess");
         }
@@ -320,9 +325,11 @@ public class SessionPreparer {
 
         void vespaPreprocess(File appDir, File inputXml, ApplicationMetaData metaData, Tags tags) {
             try {
+                ApplicationName application = metaData.getApplicationId().application();
                 InstanceName instance = metaData.getApplicationId().instance();
                 new XmlPreProcessor(appDir,
                                     inputXml,
+                                    application,
                                     instance,
                                     zone.environment(),
                                     zone.region(),
@@ -337,7 +344,8 @@ public class SessionPreparer {
         AllocatedHosts buildModels(Instant now) {
             var allocatedHosts = new AllocatedHostsFromAllModels();
             this.modelResultList = preparedModelsBuilder.buildModels(applicationId, dockerImageRepository, vespaVersion,
-                                                                     preprocessedApplicationPackage, allocatedHosts, now);
+                                                                     vespaVersionToBuildFirst, preprocessedApplicationPackage,
+                                                                     allocatedHosts, now);
             checkTimeout("build models");
             return allocatedHosts.toAllocatedHosts();
         }
@@ -357,16 +365,23 @@ public class SessionPreparer {
                                   Optional.of(filereference),
                                   dockerImageRepository,
                                   vespaVersion,
+                                  vespaVersionToBuildFirst,
                                   logger,
                                   prepareResult.getFileRegistries(),
                                   prepareResult.allocatedHosts(),
                                   athenzDomain,
                                   params.quota(),
+                                  params.tenantVaults(),
                                   params.tenantSecretStores(),
                                   params.operatorCertificates(),
                                   params.cloudAccount(),
+                                  params.cloudResourceTags(),
                                   params.dataplaneTokens(),
-                                  ActivationTriggers.from(prepareResult.getConfigChangeActions(), params.isInternalRedeployment()));
+                                  ActivationTriggers.from(prepareResult.getConfigChangeActions(), params.isInternalRedeployment()),
+                                  telemetryExporterConfiguration().withTenantVaultReferences(
+                                          params.tenantVaults().stream()
+                                                .map(v -> new VaultReference(v.id(), v.name(), v.externalId()))
+                                                .toList()));
             checkTimeout("write state to zookeeper");
         }
 
@@ -392,6 +407,13 @@ public class SessionPreparer {
             return List.copyOf(endpoints);
         }
 
+        private TelemetryExporterConfiguration telemetryExporterConfiguration() {
+            return modelResultList.stream()
+                                  .max(Comparator.comparing(r -> r.version))
+                                  .map(r -> r.getModel().telemetryExporterConfiguration())
+                                  .orElse(TelemetryExporterConfiguration.empty());
+        }
+
     }
 
     private void writeStateToZooKeeper(SessionZooKeeperClient zooKeeperClient,
@@ -401,35 +423,43 @@ public class SessionPreparer {
                                        Optional<FileReference> fileReference,
                                        Optional<DockerImage> dockerImageRepository,
                                        Version vespaVersion,
+                                       Optional<Version> versionToBuildFirst,
                                        DeployLogger deployLogger,
                                        Map<Version, FileRegistry> fileRegistryMap,
                                        AllocatedHosts allocatedHosts,
                                        Optional<AthenzDomain> athenzDomain,
                                        Optional<Quota> quota,
+                                       List<TenantVault> tenantVaults,
                                        List<TenantSecretStore> tenantSecretStores,
                                        List<X509Certificate> operatorCertificates,
                                        Optional<CloudAccount> cloudAccount,
+                                       CloudResourceTags cloudResourceTags,
                                        List<DataplaneToken> dataplaneTokens,
-                                       ActivationTriggers activationTriggers) {
-        var zooKeeperDeplyer = new ZooKeeperDeployer(curator, deployLogger, applicationId, zooKeeperClient.sessionId());
+                                       ActivationTriggers activationTriggers,
+                                       TelemetryExporterConfiguration telemetryExporterConfiguration) {
+        var zooKeeperDeployer = new ZooKeeperDeployer(curator, deployLogger, applicationId, zooKeeperClient.sessionId());
         try {
-            zooKeeperDeplyer.deploy(applicationPackage, fileRegistryMap, allocatedHosts);
+            zooKeeperDeployer.deploy(applicationPackage, fileRegistryMap, allocatedHosts);
             new SessionSerializer().write(zooKeeperClient,
                                           applicationId,
                                           created,
                                           fileReference,
                                           dockerImageRepository,
                                           vespaVersion,
+                                          versionToBuildFirst,
                                           athenzDomain,
                                           quota,
+                                          tenantVaults,
                                           tenantSecretStores,
                                           operatorCertificates,
                                           cloudAccount,
+                                          cloudResourceTags,
                                           dataplaneTokens,
                                           activationTriggers,
+                                          telemetryExporterConfiguration,
                                           writeSessionData);
         } catch (RuntimeException | IOException e) {
-            zooKeeperDeplyer.cleanup();
+            zooKeeperDeployer.cleanup();
             throw new RuntimeException("Error preparing session", e);
         }
     }

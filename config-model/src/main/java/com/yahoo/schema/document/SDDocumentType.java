@@ -25,19 +25,20 @@ import java.util.Set;
 
 /**
  * A document definition is a list of fields. Documents may inherit other documents,
- * implicitly acquiring their fields as it's own. If a document is not set to inherit
+ * implicitly acquiring their fields as its own. If a document is not set to inherit
  * any document, it will always inherit the document "document.0".
  *
  * @author Thomas Gundersen
  * @author bratseth
  */
+@SuppressWarnings({"deprecation", "removal"})
 public class SDDocumentType implements Cloneable {
 
     public static final SDDocumentType VESPA_DOCUMENT;
     private final Map<DataTypeName, SDDocumentType> inheritedTypes = new LinkedHashMap<>();
     private final Map<NewDocumentType.Name, SDDocumentType> ownedTypes = new LinkedHashMap<>();
     private final AnnotationTypeRegistry annotationTypes = new AnnotationTypeRegistry();
-    private DocumentType docType;    
+    private DocumentType docType;
     private DataType structType;
     // The field sets here are set from the processing step in SD,
     // to ensure that the full Search and this SDDocumentType is built first.
@@ -71,7 +72,7 @@ public class SDDocumentType implements Cloneable {
         if (getType(name) != null)
             throw new IllegalArgumentException("Data type '" + name + "' has already been used.");
         if (name.getName().equals(docType.getName()))
-            throw new IllegalArgumentException("Data type '" + name + "' can not have same name as its defining document.");
+            throw new IllegalArgumentException("Data type '" + name + "' cannot have same name as its defining document.");
         ownedTypes.put(name, dt);
         return this;
     }
@@ -157,7 +158,7 @@ public class SDDocumentType implements Cloneable {
                 this.structType = docType.contentStruct();
                 inheritedTypes.clear();
             } else {
-                throw new IllegalArgumentException("You can not set a null struct");
+                throw new IllegalArgumentException("You cannot set a null struct");
             }
         }
         return this;
@@ -234,7 +235,7 @@ public class SDDocumentType implements Cloneable {
             	if (pField.getName().equals(field.getName())) {
             		if (!pField.getDataType().equals(field.getDataType())) {
             			throw new IllegalArgumentException("For " + this + ", field '" + field.getName() +
-                                                           "': Datatype can not be different from that of same field " +
+                                                           "': Datatype cannot be different from that of same field " +
                                                            "in the supertype '" + parent.getName() + "'");
             		}
             	}
@@ -293,7 +294,7 @@ public class SDDocumentType implements Cloneable {
         docType.setStruct(structType);
         return docType;
     }
-    
+
     /** The field sets defined for this type and its {@link Schema} */
     public FieldSets getFieldSets() {
         return fieldSets;

@@ -72,6 +72,10 @@
         "version": "5.32.76"
     },
     "distributor": {
+        "global-stats": {
+            "stored-document-count": 123456,
+            "stored-document-bytes": 789012345
+        },
         "storage-nodes": [
             {
                 "node-index": 0,
@@ -96,6 +100,12 @@
             {
                 "node-index": 1,
                 "min-current-replication-factor": 2,
+                "response-stats": {
+                    "total-count": 10000,
+                    "errors": {
+                        "network": 2500
+                    }
+                },
                 "bucket-spaces": [
                     {
                         "name": "default"

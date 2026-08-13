@@ -12,10 +12,9 @@ class ProtonConfigSnapshot;
  * Interface class to handle config changes to proton using config
  * snapshots spanning all document types.
  */
-class IProtonConfigurer
-{
+class IProtonConfigurer {
 public:
-    virtual ~IProtonConfigurer() { }
+    virtual ~IProtonConfigurer() = default;
     virtual void reconfigure(std::shared_ptr<ProtonConfigSnapshot> configSnapshot) = 0;
 };
 

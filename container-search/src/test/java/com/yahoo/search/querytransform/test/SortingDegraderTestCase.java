@@ -15,7 +15,12 @@ import com.yahoo.search.querytransform.SortingDegrader;
 import com.yahoo.search.searchchain.Execution;
 import org.junit.jupiter.api.Test;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 /**
  * @author bratseth
@@ -63,13 +68,13 @@ public class SortingDegraderTestCase {
     void testDegradingNonDefaultIllegalMaxFilterCoverage() {
         try {
             Query query = new Query("?ranking.sorting=-a1%20-a2&ranking.matchPhase.maxFilterCoverage=37");
-            assertTrue(false);
+            fail();
         } catch (IllegalArgumentException qe) {
-            assertTrue(qe instanceof IllegalArgumentException);
-            assertEquals("Could not set 'ranking.matchPhase.maxFilterCoverage' to '37'", qe.getMessage());
+            assertTrue(true);
+            assertEquals("Could not set 'ranking.matchPhase.maxFilterCoverage'", qe.getMessage());
             Throwable rootE = qe.getCause();
-            assertTrue(rootE instanceof IllegalArgumentException);
-            assertEquals("maxFilterCoverage must be in the range [0.0, 1.0]. It is 37.0", rootE.getMessage());
+            assertInstanceOf(IllegalArgumentException.class, rootE);
+            assertEquals("maxFilterCoverage must be in the range [0.0, 1.0], but is 37.0", rootE.getMessage());
         }
 
     }

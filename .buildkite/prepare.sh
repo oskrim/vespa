@@ -1,17 +1,26 @@
-#!/bin/bash
+#!/usr/bin/env bash
+#
 # Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+#
+# Prepares the build environment by updating Vespa version in POMs and creating artifact directories.
 
-set -euo pipefail
+set -o errexit
+set -o nounset
+set -o pipefail
 
+if [[ -n "${DEBUG:-}" ]]; then
+    set -o xtrace
+fi
+
+: "${VESPA_VERSION:?Environment variable VESPA_VERSION must be set (version to build)}"
+: "${SOURCE_DIR:?Environment variable SOURCE_DIR must be set (path to source code)}"
+: "${LOCAL_RPM_REPO:?Environment variable LOCAL_RPM_REPO must be set (path to local RPM repo)}"
+: "${LOCAL_MVN_REPO:?Environment variable LOCAL_MVN_REPO must be set (path to local Maven repo)}"
+
+echo "--- 🛠️ Preparing build environment"
+echo "Updating Vespa version in POMs to $VESPA_VERSION..."
 "$SOURCE_DIR/.buildkite/replace-vespa-version-in-poms.sh" "$VESPA_VERSION" "$SOURCE_DIR"
 
-# We disable javadoc for all modules not marked as public API
-for MODULE in $(comm -2 -3 \
-                <(find . -name "*.java" | awk -F/ '{print $2}' | sort -u)
-                <(find . -name "package-info.java" -exec grep -HnE "@(com.yahoo.api.annotations.)?PublicApi.*" {} \; | awk -F/ '{print $2}' | sort -u)); do
-    mkdir -p "$MODULE/src/main/javadoc"
-    echo "No javadoc available for module" > "$MODULE/src/main/javadoc/README"
-done
-
-mkdir -p "$WORKDIR/artifacts/$ARCH/rpms"
-mkdir -p "$WORKDIR/artifacts/$ARCH/maven-repo"
+echo "Creating artifact directories..."
+mkdir -p "$LOCAL_RPM_REPO"
+mkdir -p "$LOCAL_MVN_REPO"

@@ -13,9 +13,8 @@ namespace search::queryeval {
  * used during evaluation.
  */
 struct PostingInfo {
-    virtual ~PostingInfo() { }
+    virtual ~PostingInfo() = default;
 };
-
 
 /**
  * Class for getting the min and max weights of a posting list.
@@ -30,13 +29,10 @@ private:
 
 public:
     MinMaxPostingInfo(int32_t minWeight, int32_t maxWeight) noexcept
-        : PostingInfo(),
-          _minWeight(minWeight),
-          _maxWeight(maxWeight)
-    {}
+        : PostingInfo(), _minWeight(minWeight), _maxWeight(maxWeight) {}
     ~MinMaxPostingInfo() override;
     int32_t getMinWeight() const { return _minWeight; }
     int32_t getMaxWeight() const { return _maxWeight; }
 };
 
-}
+} // namespace search::queryeval

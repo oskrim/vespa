@@ -22,10 +22,12 @@ import com.yahoo.document.serialization.DocumentSerializer;
 import com.yahoo.document.serialization.DocumentSerializerFactory;
 import com.yahoo.io.GrowableByteBuffer;
 import com.yahoo.messagebus.Routable;
+import com.yahoo.text.Text;
 import com.yahoo.vdslib.DocumentSummary;
 import com.yahoo.vdslib.SearchResult;
 import com.yahoo.vdslib.VisitorStatistics;
 import com.yahoo.vespa.objects.BufferSerializer;
+import com.yahoo.yolean.Exceptions;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -33,6 +35,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Objects;
 import java.util.function.BiFunction;
 import java.util.function.Function;
+import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /**
@@ -73,7 +76,8 @@ abstract class RoutableFactories80 {
                 protoStream.checkNoSpaceLeft();
                 return buf;
             } catch (IOException | RuntimeException e) {
-                log.severe("Error during Protobuf encoding of message type %s: %s".formatted(apiClass.getSimpleName(), e.getMessage()));
+                log.severe(Text.format("Error during Protobuf encoding of message type %s: %s", apiClass.getSimpleName(), Exceptions.toMessageString(e)));
+                log.log(Level.FINE, "Protobuf encode error has exception trace:", e);
                 return null;
             }
         }
@@ -89,8 +93,8 @@ abstract class RoutableFactories80 {
             try {
                 return decoderFn.apply(in);
             } catch (RuntimeException e) {
-                throw new RuntimeException("Error during Protobuf decoding of message type %s: %s"
-                        .formatted(apiClass.getSimpleName(), e.getMessage()), e);
+                throw new RuntimeException(Text.format("Error during Protobuf decoding of message type %s: %s",
+                        apiClass.getSimpleName(), e.getMessage()), e);
             }
         }
 
@@ -303,15 +307,27 @@ abstract class RoutableFactories80 {
     static RoutableFactory createGetDocumentMessageFactory() {
         return ProtobufCodecBuilder
                 .of(GetDocumentMessage.class, DocapiFeed.GetDocumentRequest.class)
-                .encoder((apiMsg) ->
-                        DocapiFeed.GetDocumentRequest.newBuilder()
+                .encoder((apiMsg) -> {
+                        var builder = DocapiFeed.GetDocumentRequest.newBuilder()
                             .setDocumentId(toProtoDocId(apiMsg.getDocumentId()))
-                            .setFieldSet(toProtoFieldSet(apiMsg.getFieldSet()))
-                            .build())
-                .decoder(DocapiFeed.GetDocumentRequest.parser(), (protoMsg) ->
-                        new GetDocumentMessage(
-                                fromProtoDocId(protoMsg.getDocumentId()),
-                                fromProtoFieldSet(protoMsg.getFieldSet())))
+                            .setFieldSet(toProtoFieldSet(apiMsg.getFieldSet()));
+
+                        if (apiMsg.hasDebugReplicaNodeId()) {
+                            builder.setDebugReplicaNodeId(apiMsg.getDebugReplicaNodeId());
+                        }
+
+                        return builder.build();
+                })
+                .decoder(DocapiFeed.GetDocumentRequest.parser(), (protoMsg) -> {
+                        var msg = new GetDocumentMessage(fromProtoDocId(protoMsg.getDocumentId()),
+                                                         fromProtoFieldSet(protoMsg.getFieldSet()));
+
+                        if (protoMsg.hasDebugReplicaNodeId()) {
+                            msg.setDebugReplicaNodeId(protoMsg.getDebugReplicaNodeId());
+                        }
+
+                        return msg;
+                })
                 .build();
     }
 

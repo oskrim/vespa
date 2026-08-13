@@ -1,6 +1,7 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "splunk-starter.h"
+
 #include <dirent.h>
 #include <sys/stat.h>
 
@@ -13,10 +14,10 @@ SplunkStarter::~SplunkStarter() = default;
 
 namespace {
 
-std::string fixDir(const std::string &parent, const std::string &subdir) {
+std::string fixDir(const std::string& parent, const std::string& subdir) {
     auto dirname = parent + "/" + subdir;
-    DIR *dp = opendir(dirname.c_str());
-    if (dp == NULL) {
+    DIR* dp = opendir(dirname.c_str());
+    if (dp == nullptr) {
         if (errno != ENOENT || mkdir(dirname.c_str(), 0755) != 0) {
             LOG(warning, "Could not create directory '%s'", dirname.c_str());
             perror(dirname.c_str());
@@ -27,8 +28,7 @@ std::string fixDir(const std::string &parent, const std::string &subdir) {
     return dirname;
 }
 
-std::string
-cfFilePath(const std::string &parent, const std::string &filename) {
+std::string cfFilePath(const std::string& parent, const std::string& filename) {
     std::string path = parent;
     path = fixDir(path, "etc");
     path = fixDir(path, "system");
@@ -36,18 +36,18 @@ cfFilePath(const std::string &parent, const std::string &filename) {
     return path + "/" + filename;
 }
 
-std::string splunkCertPath(const std::string &parent, const std::string &filename) {
-        std::string path = parent;
-        path = fixDir(path, "var");
-        path = fixDir(path, "lib");
-        path = fixDir(path, "sia");
-        path = fixDir(path, "certs");
-        return path + "/" + filename;
-    }
+std::string splunkCertPath(const std::string& parent, const std::string& filename) {
+    std::string path = parent;
+    path = fixDir(path, "var");
+    path = fixDir(path, "lib");
+    path = fixDir(path, "sia");
+    path = fixDir(path, "certs");
+    return path + "/" + filename;
+}
 
-void appendFile(FILE *target, const std::string &filename) {
-    FILE *fp = fopen(filename.c_str(), "r");
-    if (fp != NULL) {
+void appendFile(FILE* target, const std::string& filename) {
+    FILE* fp = fopen(filename.c_str(), "r");
+    if (fp != nullptr) {
         int c;
         while (EOF != (c = fgetc(fp))) {
             fputc(c, target);
@@ -56,14 +56,14 @@ void appendFile(FILE *target, const std::string &filename) {
     }
 }
 
-} // namespace <unnamed>
+} // namespace
 
 void SplunkStarter::gotConfig(const LogforwarderConfig& config) {
     std::string path = cfFilePath(config.splunkHome, "deploymentclient.conf");
     LOG(debug, "got config, writing %s", path.c_str());
     std::string tmpPath = path + ".new";
-    FILE *fp = fopen(tmpPath.c_str(), "w");
-    if (fp == NULL) {
+    FILE*       fp = fopen(tmpPath.c_str(), "w");
+    if (fp == nullptr) {
         LOG(warning, "could not open '%s' for write", tmpPath.c_str());
         return;
     }
@@ -78,24 +78,18 @@ void SplunkStarter::gotConfig(const LogforwarderConfig& config) {
     fclose(fp);
     rename(tmpPath.c_str(), path.c_str());
 
-    if (getenv("VESPA_HOSTNAME") != NULL &&
-        getenv("VESPA_TENANT") != NULL &&
-        getenv("VESPA_APPLICATION")!= NULL &&
-        getenv("VESPA_INSTANCE") != NULL &&
-        getenv("VESPA_ENVIRONMENT") != NULL &&
-        getenv("VESPA_REGION") != NULL)
+    if (getenv("VESPA_HOSTNAME") != nullptr && getenv("VESPA_TENANT") != nullptr &&
+        getenv("VESPA_APPLICATION") != nullptr && getenv("VESPA_INSTANCE") != nullptr &&
+        getenv("VESPA_ENVIRONMENT") != nullptr && getenv("VESPA_REGION") != nullptr)
     {
         path = cfFilePath(config.splunkHome, "inputs.conf");
         tmpPath = path + ".new";
         fp = fopen(tmpPath.c_str(), "w");
-        if (fp != NULL) {
+        if (fp != nullptr) {
             fprintf(fp, "[default]\n");
             fprintf(fp, "host = %s\n", getenv("VESPA_HOSTNAME"));
-            fprintf(fp, "_meta = vespa_tenant::%s vespa_app::%s.%s vespa_zone::%s.%s\n",
-                    getenv("VESPA_TENANT"),
-                    getenv("VESPA_APPLICATION"),
-                    getenv("VESPA_INSTANCE"),
-                    getenv("VESPA_ENVIRONMENT"),
+            fprintf(fp, "_meta = vespa_tenant::%s vespa_app::%s.%s vespa_zone::%s.%s\n", getenv("VESPA_TENANT"),
+                    getenv("VESPA_APPLICATION"), getenv("VESPA_INSTANCE"), getenv("VESPA_ENVIRONMENT"),
                     getenv("VESPA_REGION"));
             fclose(fp);
             rename(tmpPath.c_str(), path.c_str());
@@ -109,14 +103,14 @@ void SplunkStarter::gotConfig(const LogforwarderConfig& config) {
         fp = fopen(tmpPath.c_str(), "w");
         appendFile(fp, clientCert);
         appendFile(fp, clientKey);
-        appendFile(fp, "/opt/yahoo/share/ssl/certs/athenz_certificate_bundle.pem");
+        appendFile(fp, "/opt/yahoo/share/ssl/certs/athenz_tw_certificate_bundle.pem");
         fclose(fp);
         rename(tmpPath.c_str(), certPath.c_str());
 
         path = cfFilePath(config.splunkHome, "outputs.conf");
         tmpPath = path + ".new";
         fp = fopen(tmpPath.c_str(), "w");
-        if (fp != NULL) {
+        if (fp != nullptr) {
             fprintf(fp, "[tcpout]\n");
             fprintf(fp, "clientCert = %s\n", certPath.c_str());
             fclose(fp);
@@ -125,11 +119,11 @@ void SplunkStarter::gotConfig(const LogforwarderConfig& config) {
         path = cfFilePath(config.splunkHome, "server.conf");
         tmpPath = path + ".new";
         fp = fopen(tmpPath.c_str(), "w");
-        if (fp != NULL) {
+        if (fp != nullptr) {
             fprintf(fp, "[sslConfig]\n");
             fprintf(fp, "enableSplunkdSSL = true\n");
             fprintf(fp, "requireClientCert = true\n");
-            fprintf(fp, "sslRootCAPath = /opt/yahoo/share/ssl/certs/athenz_certificate_bundle.pem\n");
+            fprintf(fp, "sslRootCAPath = /opt/yahoo/share/ssl/certs/athenz_tw_certificate_bundle.pem\n");
             fprintf(fp, "serverCert = %s\n", certPath.c_str());
             fprintf(fp, "\n");
             fprintf(fp, "[httpServer]\n");
@@ -138,9 +132,7 @@ void SplunkStarter::gotConfig(const LogforwarderConfig& config) {
             rename(tmpPath.c_str(), path.c_str());
         }
     }
-    if (config.clientName.size() == 0 ||
-        config.deploymentServer.size() == 0)
-    {
+    if (config.clientName.size() == 0 || config.deploymentServer.size() == 0) {
         _childHandler.stopChild();
     } else {
         _childHandler.startChild(config.splunkHome);

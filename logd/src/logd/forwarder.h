@@ -2,10 +2,11 @@
 
 #pragma once
 
-#include <vespa/log/log.h>
 #include <map>
 #include <memory>
 #include <string_view>
+
+#include <vespa/log/log.h>
 
 namespace logdemon {
 
@@ -18,11 +19,11 @@ using ForwardMap = std::map<ns_log::Logger::LogLevel, bool>;
 class Forwarder {
 public:
     using UP = std::unique_ptr<Forwarder>;
-    virtual ~Forwarder() {}
+    virtual ~Forwarder() = default;
     virtual void forwardLine(std::string_view log_line) = 0;
     virtual void flush() = 0;
     virtual int badLines() const = 0;
     virtual void resetBadLines() = 0;
 };
 
-}
+} // namespace logdemon

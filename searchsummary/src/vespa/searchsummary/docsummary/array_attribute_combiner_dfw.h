@@ -3,9 +3,12 @@
 #pragma once
 
 #include "attribute_combiner_dfw.h"
+
 #include <vector>
 
-namespace search::attribute { class IAttributeContext; }
+namespace search::attribute {
+class IAttributeContext;
+}
 
 namespace search::docsummary {
 
@@ -17,19 +20,17 @@ class StructFieldsResolver;
  *
  * Used to write both array of struct fields and map of primitives fields.
  */
-class ArrayAttributeCombinerDFW : public AttributeCombinerDFW
-{
+class ArrayAttributeCombinerDFW : public AttributeCombinerDFW {
     std::vector<std::string> _fields;
     std::vector<std::string> _attributeNames;
-    bool                          _is_map_of_scalar;
+    bool                     _is_map_of_scalar;
 
-    DocsumFieldWriterState* allocFieldWriterState(search::attribute::IAttributeContext &context, vespalib::Stash &stash, const MatchingElements* matching_elements) const override;
+    DocsumFieldWriterState* allocFieldWriterState(search::attribute::IAttributeContext& context,
+                                                  vespalib::Stash&                      stash) const override;
+
 public:
-    ArrayAttributeCombinerDFW(const std::string &fieldName,
-                              const StructFieldsResolver& fields_resolver,
-                              bool filter_elements,
-                              std::shared_ptr<MatchingElementsFields> matching_elems_fields);
+    ArrayAttributeCombinerDFW(const StructFieldsResolver& fields_resolver);
     ~ArrayAttributeCombinerDFW() override;
 };
 
-}
+} // namespace search::docsummary

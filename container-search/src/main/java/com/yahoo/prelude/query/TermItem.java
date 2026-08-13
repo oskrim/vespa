@@ -2,6 +2,7 @@
 package com.yahoo.prelude.query;
 
 import com.yahoo.prelude.query.textualrepresentation.Discloser;
+import com.yahoo.search.query.QueryType;
 
 import java.nio.ByteBuffer;
 import java.util.Objects;
@@ -20,8 +21,12 @@ public abstract class TermItem extends SimpleIndexedItem implements BlockItem {
     /** Whether accent dropping should be performed */
     private boolean normalizable = true;
 
+    private boolean lowercased = false;
+
     /** The substring which is the raw form of the source of this token, or null if none. */
     private Substring origin;
+
+    private QueryType type = null;
 
     private SegmentingRule segmentingRule = SegmentingRule.LANGUAGE_DEFAULT;
 
@@ -43,8 +48,8 @@ public abstract class TermItem extends SimpleIndexedItem implements BlockItem {
         this.origin = origin;
     }
 
-    public final int encode(ByteBuffer buffer) {
-        encodeThis(buffer);
+    public final int encode(ByteBuffer buffer, SerializationContext context) {
+        encodeThis(buffer, context);
         return 1;
     }
 
@@ -102,6 +107,14 @@ public abstract class TermItem extends SimpleIndexedItem implements BlockItem {
     @Override
     public int getTermCount() { return 1; }
 
+    /** Returns the query parsing type that created this, or null if none. */
+    @Override
+    public QueryType getQueryType() { return type; }
+
+    /** Sets the query parsing type that created this. */
+    @Override
+    public void setQueryType(QueryType type) { this.type = type; }
+
     /** Returns whether accent removal is a meaningful and possible operation for this word. */
     public boolean isNormalizable() { return normalizable; }
 
@@ -111,6 +124,10 @@ public abstract class TermItem extends SimpleIndexedItem implements BlockItem {
      * @param normalizable set to true if accent removal can/should be performed
      */
     public void setNormalizable(boolean normalizable) { this.normalizable = normalizable; }
+
+    public boolean isLowercased() { return lowercased; }
+
+    public void setLowercased(boolean lowercased) { this.lowercased = lowercased; }
 
     @Override
     public SegmentingRule getSegmentingRule() { return segmentingRule; }
@@ -123,13 +140,14 @@ public abstract class TermItem extends SimpleIndexedItem implements BlockItem {
         var other = (TermItem)o;
         if ( this.isFromQuery != other.isFromQuery) return false;
         if ( this.normalizable != other.normalizable) return false;
+        if ( this.lowercased != other.lowercased) return false;
         if ( this.segmentingRule != other.segmentingRule) return false;
         return true;
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(super.hashCode(), isFromQuery, normalizable, segmentingRule);
+        return Objects.hash(super.hashCode(), isFromQuery, normalizable, segmentingRule, lowercased);
     }
 
 }

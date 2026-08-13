@@ -57,7 +57,7 @@ public class IndexingInputsTestCase {
         }
         catch (IllegalArgumentException e) {
             assertEquals("For schema 'indexing_extra_field_input_implicit', field 'foo': " +
-                         "For expression '{ tokenize normalize stem:\"BEST\" | index foo; }': Expected string input, but no input is specified",
+                         "Invalid expression 'tokenize normalize stem:\"BEST\"': Expected string input, but no input is provided",
                          Exceptions.toMessageString(e));
         }
     }
@@ -156,10 +156,26 @@ public class IndexingInputsTestCase {
             fail("Expected exception");
         }
         catch (IllegalArgumentException e) {
-            assertEquals("For schema 'test', field 'derived1': For expression '{ attribute derived1; }': " +
-                         "Expected any input, but no input is specified",
+            assertEquals("For schema 'test', field 'derived1': Invalid expression 'attribute derived1': " +
+                         "Expected int input, but no input is provided",
                          Exceptions.toMessageString(e));
         }
+    }
+
+    @Test
+    void testFloatTensorInputCanBeAssignedToBfloat16TensorAttribute() throws ParseException {
+        var schema = """
+                schema test {
+                    document test {
+                        field embedding type tensor<float>(x[384]) {
+                        }
+                    }
+                    field embedding_bfloat16 type tensor<bfloat16>(x[384]) {
+                        indexing: input embedding | attribute
+                    }
+                }
+                """;
+        ApplicationBuilder.createFromString(schema);
     }
 
 }

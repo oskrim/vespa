@@ -15,6 +15,7 @@ import com.yahoo.search.rendering.RendererRegistry;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 
 /**
@@ -56,6 +57,8 @@ public class Presentation implements Cloneable {
     }
     public static QueryProfileType getArgumentType() { return argumentType; }
 
+    private Query parent;
+
     /** How the result should be highlighted */
     private Highlight highlight = null;
 
@@ -80,12 +83,17 @@ public class Presentation implements Cloneable {
     /** Whether to renders tensors in short form */
     private boolean tensorDirectValues = false; // TODO: Flip default on Vespa 9
 
+    /** Whether to dense (part of) tensors in hex string form */
+    private boolean tensorHexDense = false;
+
     /** Set of explicitly requested summary fields, instead of summary classes */
     private Set<String> summaryFields = LazySet.newHashSet();
 
     private static final Splitter COMMA_SPLITTER = Splitter.on(',').omitEmptyStrings().trimResults();
 
-    public Presentation(Query parent) { }
+    public Presentation(Query parent) {
+        this.parent = parent;
+    }
 
     /** Returns how terms in this result should be highlighted, or null if not set */
     public Highlight getHighlight() { return highlight; }
@@ -121,8 +129,16 @@ public class Presentation implements Cloneable {
         setRenderer(ComponentSpecification.fromString(format));
     }
 
+    /** Assigns the query owning this */
+    private void setParent(Query parent) {
+        this.parent = Objects.requireNonNull(parent, "A presentation's objects parent cannot be null");
+    }
+
+    /** Returns the query owning this, never null */
+    public Query getParent() { return parent; }
+
     @Override
-    public Object clone()  {
+    public Presentation clone()  {
         try {
             Presentation clone = (Presentation)super.clone();
             if (boldingData != null)
@@ -144,17 +160,13 @@ public class Presentation implements Cloneable {
     }
 
     /** Returns whether to add optional timing data to the rendered result. */
-    public boolean getTiming() {
-        return timing;
-    }
+    public boolean getTiming() { return getParent().getTrace().getProfile() || timing; }
 
-    public void setTiming(boolean timing) {
-        this.timing = timing;
-    }
+    public void setTiming(boolean timing) { this.timing = timing; }
 
     /**
      * Return the set of explicitly requested fields. Returns an empty set if no
-     * fields are specified outside of summary classes. The returned set is
+     * fields are specified outside summary classes. The returned set is
      * mutable and fields may be added or removed before passing on the query.
      *
      * @return the set of names of requested fields, never null
@@ -164,7 +176,7 @@ public class Presentation implements Cloneable {
     }
 
     /**
-     * Parse the given string as a comma delimited set of field names and
+     * Parse the given string as a comma-delimited set of field names and
      * overwrite the set of summary fields. Whitespace will be trimmed. If you
      * want to add or remove fields programmatically, use
      * {@link #getSummaryFields()} and modify the returned set.
@@ -181,10 +193,24 @@ public class Presentation implements Cloneable {
 
     /**
      * Returns whether tensors should use short form in JSON and textual representations, see
-     * <a href="https://docs.vespa.ai/en/reference/document-json-format.html#tensor">https://docs.vespa.ai/en/reference/document-json-format.html#tensor</a>.
+     * <a href="https://docs.vespa.ai/en/reference/schemas/document-json-format.html#tensor">https://docs.vespa.ai/en/reference/document-json-format.html#tensor</a>.
      * Default is true.
      */
     public boolean getTensorShortForm() { return tensorShortForm; }
+
+    /** whether dense part of tensors should be represented as a string of hex digits */
+    public boolean getTensorHexDense() { return tensorHexDense; }
+
+    /** the current tensor format, see setTensorFormat() */
+    public String getTensorFormat() {
+        String format = "long";
+        if (tensorShortForm) format = "short";
+        if (tensorHexDense) format = "hex";
+        if (tensorDirectValues) {
+            return (format + "-value");
+        }
+        return format;
+    }
 
     /** @deprecated use setTensorFormat(). */
     @Deprecated // TODO: Remove on Vespa 9
@@ -199,6 +225,16 @@ public class Presentation implements Cloneable {
      */
     public void setTensorFormat(String value) {
         switch (value) {
+            case "hex" :
+                tensorHexDense = true;
+                tensorShortForm = true;
+                tensorDirectValues = false;
+                break;
+            case "hex-value" :
+                tensorHexDense = true;
+                tensorShortForm = true;
+                tensorDirectValues = true;
+                break;
             case "short" :
                 tensorShortForm = true;
                 tensorDirectValues = false;
@@ -227,7 +263,7 @@ public class Presentation implements Cloneable {
      * Returns whether tensor content should be rendered directly, or inside a JSON object containing a
      * "type" entry having the tensor type, and a "cells"/"values"/"blocks" entry (depending on type),
      * having the tensor content. See
-     * <a href="https://docs.vespa.ai/en/reference/document-json-format.html#tensor">https://docs.vespa.ai/en/reference/document-json-format.html#tensor</a>.
+     * <a href="https://docs.vespa.ai/en/reference/schemas/document-json-format.html#tensor">https://docs.vespa.ai/en/reference/schemas/document-json-format.html#tensor</a>.
      * Default is false: Render wrapped in a JSON object.
      */
     public boolean getTensorDirectValues() { return tensorDirectValues; }
@@ -242,16 +278,32 @@ public class Presentation implements Cloneable {
             highlight.prepare();
     }
 
+    public Presentation cloneFor(Query parent) {
+        Presentation presentation = this.clone();
+        presentation.setParent(parent);
+        return presentation;
+    }
+
     @Override
     public boolean equals(Object o) {
-        if ( ! (o instanceof Presentation p)) return false;
-        return QueryHelper.equals(bolding, p.bolding) && QueryHelper.equals(summary, p.summary);
+        if (o == this) return true;
+        if ( ! (o instanceof Presentation other)) return false;
+        if ( ! Objects.equals(bolding, other.bolding)) return false;
+        if ( ! Objects.equals(summary, other.summary)) return false;
+        if ( ! Objects.equals(format, other.format)) return false;
+        if ( ! Objects.equals(timing, other.timing)) return false;
+        if ( ! Objects.equals(tensorShortForm, other.tensorShortForm)) return false;
+        if ( ! Objects.equals(tensorDirectValues, other.tensorDirectValues)) return false;
+        if ( ! Objects.equals(tensorHexDense, other.tensorHexDense)) return false;
+        if ( ! Objects.equals(summaryFields, other.summaryFields)) return false;
+        return true;
     }
 
     @Override
     public int hashCode() {
-        return QueryHelper.combineHash(bolding, summary);
+        return Objects.hash(bolding, summary, format, timing, tensorShortForm,
+                            tensorDirectValues, tensorHexDense, summaryFields);
+
     }
 
 }
-

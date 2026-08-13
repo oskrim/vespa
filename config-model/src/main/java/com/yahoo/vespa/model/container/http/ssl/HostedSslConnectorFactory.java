@@ -5,6 +5,7 @@ import ai.vespa.utils.BytesQuantity;
 import com.yahoo.config.model.api.EndpointCertificateSecrets;
 import com.yahoo.jdisc.http.ConnectorConfig;
 import com.yahoo.security.tls.TlsContext;
+import com.yahoo.text.Text;
 import com.yahoo.vespa.model.container.http.ConnectorFactory;
 
 import java.time.Duration;
@@ -27,11 +28,13 @@ public class HostedSslConnectorFactory extends ConnectorFactory {
     private final SslClientAuth clientAuth;
     private final List<String> tlsCiphersOverride;
     private final boolean proxyProtocolEnabled;
+    private final boolean tokenEndpoint;
     private final Duration endpointConnectionTtl;
     private final List<String> remoteAddressHeaders;
     private final List<String> remotePortHeaders;
     private final Set<String> knownServerNames;
     private final List<EntityLoggingEntry> entityLoggingEntries;
+    private final Set<String> httpComplianceViolations;
 
     public static Builder builder(String name, int listenPort) { return new Builder(name, listenPort); }
 
@@ -40,6 +43,7 @@ public class HostedSslConnectorFactory extends ConnectorFactory {
         this.clientAuth = builder.clientAuth;
         this.tlsCiphersOverride = List.copyOf(builder.tlsCiphersOverride);
         this.proxyProtocolEnabled = builder.proxyProtocolEnabled;
+        this.tokenEndpoint = builder.tokenEndpoint;
         this.endpointConnectionTtl = builder.endpointConnectionTtl;
         this.remoteAddressHeaders = List.copyOf(builder.remoteAddressHeaders);
         this.remotePortHeaders = List.copyOf(builder.remotePortHeaders);
@@ -48,18 +52,19 @@ public class HostedSslConnectorFactory extends ConnectorFactory {
                 .map(prefix -> {
                     var parts = prefix.split(":");
                     if (parts.length != 3) {
-                        throw new IllegalArgumentException("Expected string of format 'prefix:sample-rate:max-entity-size', got '%s'".formatted(prefix));
+                        throw new IllegalArgumentException(Text.format("Expected string of format 'prefix:sample-rate:max-entity-size', got '%s'", prefix));
                     }
                     var pathPrefix = parts[0];
                     if (pathPrefix.isBlank())
                         throw new IllegalArgumentException("Path prefix must not be blank");
                     var sampleRate = Double.parseDouble(parts[1]);
-                    if (sampleRate < 0 || sampleRate > 1)
-                        throw new IllegalArgumentException("Sample rate must be in range [0, 1], got '%s'".formatted(sampleRate));
+                    if (sampleRate < 0)
+                        throw new IllegalArgumentException(Text.format("Sample rate must be non-negative, got '%s'", sampleRate));
                     var maxEntitySize = BytesQuantity.fromString(parts[2]);
                     return new EntityLoggingEntry(pathPrefix, sampleRate, maxEntitySize);
                 })
                 .toList();
+        this.httpComplianceViolations = Set.copyOf(builder.httpComplianceViolations);
     }
 
     private static SslProvider createSslProvider(Builder builder) {
@@ -89,7 +94,7 @@ public class HostedSslConnectorFactory extends ConnectorFactory {
         connectorBuilder
                 .proxyProtocol(new ConnectorConfig.ProxyProtocol.Builder()
                                        .enabled(proxyProtocolEnabled))
-                .idleTimeout(Duration.ofSeconds(30).toSeconds())
+                .idleTimeout(tokenEndpoint ? Duration.ofMinutes(5).toSeconds() : Duration.ofSeconds(30).toSeconds())
                 .maxConnectionLife(endpointConnectionTtl != null ? endpointConnectionTtl.toSeconds() : 0)
                 .accessLog(new ConnectorConfig.AccessLog.Builder()
                                    .remoteAddressHeaders(remoteAddressHeaders)
@@ -100,6 +105,8 @@ public class HostedSslConnectorFactory extends ConnectorFactory {
                                                             .sampleRate(e.sampleRate)
                                                             .maxSize(e.maxEntitySize.toBytes()))
                                                     .toList()))
+                .compliance(new ConnectorConfig.Compliance.Builder()
+                        .httpViolations(httpComplianceViolations.stream().sorted().toList()))
                 .serverName.known(knownServerNames);
 
     }
@@ -120,6 +127,7 @@ public class HostedSslConnectorFactory extends ConnectorFactory {
         boolean tokenEndpoint;
         Set<String> knownServerNames = Set.of();
         Set<String> requestPrefixForLoggingContent = Set.of();
+        Set<String> httpComplianceViolations = Set.of();
 
         private Builder(String name, int port) { this.name = name; this.port = port; }
         public Builder clientAuth(SslClientAuth auth) { clientAuth = auth; return this; }
@@ -134,6 +142,7 @@ public class HostedSslConnectorFactory extends ConnectorFactory {
         public Builder remotePortHeader(String header) { this.remotePortHeaders.add(header); return this; }
         public Builder knownServerNames(Set<String> knownServerNames) { this.knownServerNames = Set.copyOf(knownServerNames); return this; }
         public Builder requestPrefixForLoggingContent(Collection<String> v) { this.requestPrefixForLoggingContent = Set.copyOf(v); return this; }
+        public Builder httpComplianceViolations(Collection<String> v) { this.httpComplianceViolations = Set.copyOf(v); return this; }
         public HostedSslConnectorFactory build() { return new HostedSslConnectorFactory(this); }
     }
 }

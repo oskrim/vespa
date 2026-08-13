@@ -1,23 +1,19 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.search.dispatch.searchcluster;
 
-import com.yahoo.stream.CustomCollectors;
-
 import java.util.Collection;
-import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.Set;
 
 import static java.util.Comparator.comparingInt;
 import static java.util.stream.Collectors.toCollection;
-import static java.util.stream.Collectors.toSet;
 
 /**
  * Simple interface for groups and their nodes in the content cluster.
  *
  * @author baldersheim
  */
-public interface SearchGroups {
+public interface SearchGroups extends DocumentCountSource {
 
     Group get(int id);
 
@@ -38,5 +34,9 @@ public interface SearchGroups {
     int size();
 
     boolean isPartialGroupCoverageSufficient(boolean currentCoverageSufficient, Collection<Node> nodes);
+
+    boolean hasSufficientCoverage(long groupDocumentCount, long documentCount);
+
+    long maxDocumentCount();
 
 }

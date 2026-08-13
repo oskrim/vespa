@@ -50,12 +50,12 @@ public class MapConversionTestCase {
         expression.setStatementOutput(new DocumentType("myDocument"),
                                       new Field("myArray", new ArrayDataType(DataType.STRING)));
 
-        expression.verify(adapter);
+        expression.resolve(adapter);
 
         ExecutionContext context = new ExecutionContext(adapter);
         expression.execute(context);
         assertTrue(adapter.values.containsKey("myArray"));
-        var arrayValue = (Array<StringFieldValue>)adapter.values.get("myArray");
+        var arrayValue = (Array<StringFieldValue>) adapter.values.get("myArray");
         assertEquals(2, arrayValue.size());
         assertEquals("key1:value1", arrayValue.get(0).getString());
         assertEquals("key2:value2", arrayValue.get(1).getString());

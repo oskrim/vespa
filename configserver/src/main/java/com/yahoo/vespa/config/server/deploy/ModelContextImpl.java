@@ -18,22 +18,23 @@ import com.yahoo.config.model.api.Provisioned;
 import com.yahoo.config.model.api.Quota;
 import com.yahoo.config.model.api.Reindexing;
 import com.yahoo.config.model.api.TenantSecretStore;
+import com.yahoo.config.model.api.TenantVault;
 import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.AthenzDomain;
 import com.yahoo.config.provision.CloudAccount;
+import com.yahoo.config.provision.CloudResourceTags;
 import com.yahoo.config.provision.ClusterSpec;
 import com.yahoo.config.provision.DataplaneToken;
 import com.yahoo.config.provision.DockerImage;
 import com.yahoo.config.provision.HostName;
 import com.yahoo.config.provision.NodeResources.Architecture;
+import com.yahoo.config.provision.OpenTelemetryConfiguration;
 import com.yahoo.config.provision.SharedHosts;
-import com.yahoo.config.provision.Zone;
-import com.yahoo.container.jdisc.secretstore.SecretStore;
-import com.yahoo.vespa.flags.Dimension;
+import com.yahoo.vespa.flags.Flag;
 import com.yahoo.vespa.flags.FlagSource;
 import com.yahoo.vespa.flags.Flags;
 import com.yahoo.vespa.flags.PermanentFlags;
-import com.yahoo.vespa.flags.StringFlag;
+import com.yahoo.vespa.flags.UnboundFlag;
 
 import java.io.File;
 import java.net.URI;
@@ -41,11 +42,14 @@ import java.security.cert.X509Certificate;
 import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 
 import static com.yahoo.vespa.config.server.ConfigServerSpec.fromConfig;
+import static com.yahoo.vespa.flags.Dimension.CLUSTER_ID;
 import static com.yahoo.vespa.flags.Dimension.CLUSTER_TYPE;
+import static com.yahoo.vespa.flags.Dimension.HOSTNAME;
 
 /**
  * Implementation of {@link ModelContext} for configserver.
@@ -163,173 +167,116 @@ public class ModelContextImpl implements ModelContext {
     @Override
     public Version wantedNodeVespaVersion() { return wantedNodeVespaVersion; }
 
+    /** A flag wrapper that can be safely exposed to the config model implementation.
+     * Used to set fine-grained flag dimensions (e.g. hostname, cluster type, cluster id).
+     * @see Properties#jvmGCOptionsFlag() for an example of this.
+     */
+    private record FeatureFlag<T, F extends Flag<T, F>, U extends UnboundFlag<T, F, U>>(F flag)
+            implements ModelContext.FeatureFlag<T> {
+
+        FeatureFlag(U unboundFlag, FlagSource source, ApplicationId appId, Version version) {
+            this(unboundFlag.bindTo(source).with(appId).with(version));
+        }
+
+        @Override
+        public ModelContext.FeatureFlag<T> withClusterType(ClusterSpec.Type clusterType) {
+            return new FeatureFlag<>(flag.with(CLUSTER_TYPE, clusterType.name()));
+        }
+
+        @Override
+        public ModelContext.FeatureFlag<T> withClusterId(ClusterSpec.Id clusterId) {
+            return new FeatureFlag<>(flag.with(CLUSTER_ID, clusterId.value()));
+        }
+
+        @Override
+        public ModelContext.FeatureFlag<T> withHostname(String hostname) {
+            return new FeatureFlag<>(flag.with(HOSTNAME, hostname));
+        }
+
+        @Override public T value() { return flag.boxedValue(); }
+    }
+
     public static class FeatureFlags implements ModelContext.FeatureFlags {
 
-        private final String queryDispatchPolicy;
-        private final double queryDispatchWarmup;
-        private final double defaultTermwiseLimit;
-        private final String feedSequencer;
-        private final String responseSequencer;
-        private final int numResponseThreads;
-        private final boolean useAsyncMessageHandlingOnSchedule;
-        private final double feedConcurrency;
-        private final double feedNiceness;
-        private final List<String> allowedAthenzProxyIdentities;
-        private final int maxActivationInhibitedOutOfSyncGroups;
-        private final double resourceLimitDisk;
-        private final double resourceLimitMemory;
-        private final double minNodeRatioPerGroup;
-        private final boolean containerDumpHeapOnShutdownTimeout;
-        private final boolean loadCodeAsHugePages;
-        private final double containerShutdownTimeout;
-        private final int maxUnCommittedMemory;
-        private final boolean forwardIssuesAsErrors;
-        private final boolean useV8GeoPositions;
-        private final int maxCompactBuffers;
-        private final List<String> ignoredHttpUserAgents;
-        private final boolean enableProxyProtocolMixedMode;
-        private final boolean sharedStringRepoNoReclaim;
-        private final String logFileCompressionAlgorithm;
-        private final int mbus_network_threads;
-        private final int mbus_java_num_targets;
-        private final int mbus_java_events_before_wakeup;
-        private final int mbus_cpp_num_targets;
-        private final int mbus_cpp_events_before_wakeup;
-        private final int rpc_num_targets;
-        private final int rpc_events_before_wakeup;
-        private final int heapPercentage;
-        private final String summaryDecodePolicy;
-        private final boolean sortBlueprintsByCost;
-        private final boolean alwaysMarkPhraseExpensive;
-        private final int contentLayerMetadataFeatureLevel;
-        private final String unknownConfigDefinition;
-        private final int searchHandlerThreadpool;
-        private final int persistenceThreadMaxFeedOpBatchSize;
-        private final boolean logserverOtelCol;
-        private final SharedHosts sharedHosts;
-        private final Architecture adminClusterArchitecture;
-        private final double logserverNodeMemory;
-        private final boolean symmetricPutAndActivateReplicaSelection;
-        private final boolean enforceStrictlyIncreasingClusterStateVersions;
-        private final boolean launchApplicationAthenzService;
-        private final boolean distributionConfigFromClusterController;
-        private final boolean useLegacyWandQueryParsing;
-        private final boolean forwardAllLogLevels;
+        private final FlagSource source;
+        private final ApplicationId appId;
+        private final Version version;
 
         public FeatureFlags(FlagSource source, ApplicationId appId, Version version) {
-            this.defaultTermwiseLimit = Flags.DEFAULT_TERM_WISE_LIMIT.bindTo(source).with(appId).with(version).value();
-            this.feedSequencer = Flags.FEED_SEQUENCER_TYPE.bindTo(source).with(appId).with(version).value();
-            this.responseSequencer = Flags.RESPONSE_SEQUENCER_TYPE.bindTo(source).with(appId).with(version).value();
-            this.numResponseThreads = Flags.RESPONSE_NUM_THREADS.bindTo(source).with(appId).with(version).value();
-            this.useAsyncMessageHandlingOnSchedule = Flags.USE_ASYNC_MESSAGE_HANDLING_ON_SCHEDULE.bindTo(source).with(appId).with(version).value();
-            this.feedConcurrency = Flags.FEED_CONCURRENCY.bindTo(source).with(appId).with(version).value();
-            this.feedNiceness = Flags.FEED_NICENESS.bindTo(source).with(appId).with(version).value();
-            this.mbus_network_threads = Flags.MBUS_NUM_NETWORK_THREADS.bindTo(source).with(appId).with(version).value();
-            this.allowedAthenzProxyIdentities = PermanentFlags.ALLOWED_ATHENZ_PROXY_IDENTITIES.bindTo(source).with(appId).with(version).value();
-            this.maxActivationInhibitedOutOfSyncGroups = Flags.MAX_ACTIVATION_INHIBITED_OUT_OF_SYNC_GROUPS.bindTo(source).with(appId).with(version).value();
-            this.resourceLimitDisk = PermanentFlags.RESOURCE_LIMIT_DISK.bindTo(source).with(appId).with(version).value();
-            this.resourceLimitMemory = PermanentFlags.RESOURCE_LIMIT_MEMORY.bindTo(source).with(appId).with(version).value();
-            this.minNodeRatioPerGroup = Flags.MIN_NODE_RATIO_PER_GROUP.bindTo(source).with(appId).with(version).value();
-            this.containerDumpHeapOnShutdownTimeout = Flags.CONTAINER_DUMP_HEAP_ON_SHUTDOWN_TIMEOUT.bindTo(source).with(appId).with(version).value();
-            this.loadCodeAsHugePages = Flags.LOAD_CODE_AS_HUGEPAGES.bindTo(source).with(appId).with(version).value();
-            this.containerShutdownTimeout = Flags.CONTAINER_SHUTDOWN_TIMEOUT.bindTo(source).with(appId).with(version).value();
-            this.maxUnCommittedMemory = Flags.MAX_UNCOMMITTED_MEMORY.bindTo(source).with(appId).with(version).value();
-            this.forwardIssuesAsErrors = PermanentFlags.FORWARD_ISSUES_AS_ERRORS.bindTo(source).with(appId).with(version).value();
-            this.useV8GeoPositions = Flags.USE_V8_GEO_POSITIONS.bindTo(source).with(appId).with(version).value();
-            this.maxCompactBuffers = Flags.MAX_COMPACT_BUFFERS.bindTo(source).with(appId).with(version).value();
-            this.ignoredHttpUserAgents = PermanentFlags.IGNORED_HTTP_USER_AGENTS.bindTo(source).with(appId).with(version).value();
-            this.enableProxyProtocolMixedMode = Flags.ENABLE_PROXY_PROTOCOL_MIXED_MODE.bindTo(source).with(appId).with(version).value();
-            this.sharedStringRepoNoReclaim = Flags.SHARED_STRING_REPO_NO_RECLAIM.bindTo(source).with(appId).with(version).value();
-            this.logFileCompressionAlgorithm = Flags.LOG_FILE_COMPRESSION_ALGORITHM.bindTo(source).with(appId).with(version).value();
-            this.mbus_java_num_targets = Flags.MBUS_JAVA_NUM_TARGETS.bindTo(source).with(appId).with(version).value();
-            this.mbus_java_events_before_wakeup = Flags.MBUS_JAVA_EVENTS_BEFORE_WAKEUP.bindTo(source).with(appId).with(version).value();
-            this.mbus_cpp_num_targets = Flags.MBUS_CPP_NUM_TARGETS.bindTo(source).with(appId).with(version).value();
-            this.mbus_cpp_events_before_wakeup = Flags.MBUS_CPP_EVENTS_BEFORE_WAKEUP.bindTo(source).with(appId).with(version).value();
-            this.rpc_num_targets = Flags.RPC_NUM_TARGETS.bindTo(source).with(appId).with(version).value();
-            this.rpc_events_before_wakeup = Flags.RPC_EVENTS_BEFORE_WAKEUP.bindTo(source).with(appId).with(version).value();
-            this.queryDispatchPolicy = Flags.QUERY_DISPATCH_POLICY.bindTo(source).with(appId).with(version).value();
-            this.queryDispatchWarmup = PermanentFlags.QUERY_DISPATCH_WARMUP.bindTo(source).with(appId).with(version).value();
-            this.heapPercentage = PermanentFlags.HEAP_SIZE_PERCENTAGE.bindTo(source).with(appId).with(version).value();
-            this.summaryDecodePolicy = Flags.SUMMARY_DECODE_POLICY.bindTo(source).with(appId).with(version).value();
-            this.contentLayerMetadataFeatureLevel = Flags.CONTENT_LAYER_METADATA_FEATURE_LEVEL.bindTo(source).with(appId).with(version).value();
-            this.unknownConfigDefinition = PermanentFlags.UNKNOWN_CONFIG_DEFINITION.bindTo(source).with(appId).with(version).value();
-            this.searchHandlerThreadpool = Flags.SEARCH_HANDLER_THREADPOOL.bindTo(source).with(appId).with(version).value();
-            this.alwaysMarkPhraseExpensive = Flags.ALWAYS_MARK_PHRASE_EXPENSIVE.bindTo(source).with(appId).with(version).value();
-            this.sortBlueprintsByCost = Flags.SORT_BLUEPRINTS_BY_COST.bindTo(source).with(appId).with(version).value();
-            this.persistenceThreadMaxFeedOpBatchSize = Flags.PERSISTENCE_THREAD_MAX_FEED_OP_BATCH_SIZE.bindTo(source).with(appId).with(version).value();
-            this.logserverOtelCol = Flags.LOGSERVER_OTELCOL_AGENT.bindTo(source).with(appId).with(version).value();
-            this.sharedHosts = PermanentFlags.SHARED_HOST.bindTo(source).with( appId).with(version).value();
-            this.adminClusterArchitecture = Architecture.valueOf(PermanentFlags.ADMIN_CLUSTER_NODE_ARCHITECTURE.bindTo(source).with(appId).with(version).value());
-            this.logserverNodeMemory = PermanentFlags.LOGSERVER_NODE_MEMORY.bindTo(source).with(appId).with(version).value();
-            this.symmetricPutAndActivateReplicaSelection = Flags.SYMMETRIC_PUT_AND_ACTIVATE_REPLICA_SELECTION.bindTo(source).with(appId).with(version).value();
-            this.enforceStrictlyIncreasingClusterStateVersions = Flags.ENFORCE_STRICTLY_INCREASING_CLUSTER_STATE_VERSIONS.bindTo(source).with(appId).with(version).value();
-            this.launchApplicationAthenzService = Flags.LAUNCH_APPLICATION_ATHENZ_SERVICE.bindTo(source).with(appId).with(version).value();
-            this.distributionConfigFromClusterController = Flags.DISTRIBUTION_CONFIG_FROM_CLUSTER_CONTROLLER.bindTo(source).with(appId).with(version).value();
-            this.useLegacyWandQueryParsing = Flags.USE_LEGACY_WAND_QUERY_PARSING.bindTo(source).with(appId).with(version).value();
-            this.forwardAllLogLevels = PermanentFlags.FORWARD_ALL_LOG_LEVELS.bindTo(source).with(appId).with(version).value();
+            this.source = source;
+            this.appId = appId;
+            this.version = version;
         }
 
-        @Override public int heapSizePercentage() { return heapPercentage; }
-        @Override public String queryDispatchPolicy() { return queryDispatchPolicy; }
-        @Override public double queryDispatchWarmup() { return queryDispatchWarmup; }
-        @Override public String summaryDecodePolicy() { return summaryDecodePolicy; }
-        @Override public double defaultTermwiseLimit() { return defaultTermwiseLimit; }
-        @Override public String feedSequencerType() { return feedSequencer; }
-        @Override public String responseSequencerType() { return responseSequencer; }
-        @Override public int defaultNumResponseThreads() { return numResponseThreads; }
-        @Override public boolean useAsyncMessageHandlingOnSchedule() { return useAsyncMessageHandlingOnSchedule; }
-        @Override public double feedConcurrency() { return feedConcurrency; }
-        @Override public double feedNiceness() { return feedNiceness; }
-        @Override public int mbusNetworkThreads() { return mbus_network_threads; }
-        @Override public List<String> allowedAthenzProxyIdentities() { return allowedAthenzProxyIdentities; }
-        @Override public int maxActivationInhibitedOutOfSyncGroups() { return maxActivationInhibitedOutOfSyncGroups; }
-        @Override public double resourceLimitDisk() { return resourceLimitDisk; }
-        @Override public double resourceLimitMemory() { return resourceLimitMemory; }
-        @Override public double minNodeRatioPerGroup() { return minNodeRatioPerGroup; }
-        @Override public double containerShutdownTimeout() { return containerShutdownTimeout; }
-        @Override public boolean containerDumpHeapOnShutdownTimeout() { return containerDumpHeapOnShutdownTimeout; }
-        @Override public boolean loadCodeAsHugePages() { return loadCodeAsHugePages; }
-        @Override public int maxUnCommittedMemory() { return maxUnCommittedMemory; }
-        @Override public boolean forwardIssuesAsErrors() { return forwardIssuesAsErrors; }
-        @Override public boolean useV8GeoPositions() { return useV8GeoPositions; }
-        @Override public int maxCompactBuffers() { return maxCompactBuffers; }
-        @Override public List<String> ignoredHttpUserAgents() { return ignoredHttpUserAgents; }
-        @Override public boolean enableProxyProtocolMixedMode() { return enableProxyProtocolMixedMode; }
-        @Override public boolean sharedStringRepoNoReclaim() { return sharedStringRepoNoReclaim; }
-        @Override public int mbusJavaRpcNumTargets() { return mbus_java_num_targets; }
-        @Override public int mbusJavaEventsBeforeWakeup() { return mbus_java_events_before_wakeup; }
-        @Override public int mbusCppRpcNumTargets() { return mbus_cpp_num_targets; }
-        @Override public int mbusCppEventsBeforeWakeup() { return mbus_cpp_events_before_wakeup; }
-        @Override public int rpcNumTargets() { return rpc_num_targets; }
-        @Override public int rpcEventsBeforeWakeup() { return rpc_events_before_wakeup; }
-        @Override public String logFileCompressionAlgorithm(String defVal) {
-            var fflag = this.logFileCompressionAlgorithm;
-            if (fflag != null && ! fflag.isEmpty()) {
-                return fflag;
-            }
-            return defVal;
+        private <T, F extends Flag<T, F>, U extends UnboundFlag<T, F, U>> ModelContext.FeatureFlag<T> flag(U unboundFlag) {
+            return new FeatureFlag<>(unboundFlag, source, appId, version);
         }
-        @Override public boolean alwaysMarkPhraseExpensive() { return alwaysMarkPhraseExpensive; }
-        @Override public int contentLayerMetadataFeatureLevel() { return contentLayerMetadataFeatureLevel; }
-        @Override public String unknownConfigDefinition() { return unknownConfigDefinition; }
-        @Override public int searchHandlerThreadpool() { return searchHandlerThreadpool; }
-        @Override public boolean sortBlueprintsByCost() { return sortBlueprintsByCost; }
-        @Override public int persistenceThreadMaxFeedOpBatchSize() { return persistenceThreadMaxFeedOpBatchSize; }
-        @Override public boolean logserverOtelCol() { return logserverOtelCol; }
-        @Override public SharedHosts sharedHosts() { return sharedHosts; }
-        @Override public Architecture adminClusterArchitecture() { return adminClusterArchitecture; }
-        @Override public double logserverNodeMemory() { return logserverNodeMemory; }
-        @Override public boolean symmetricPutAndActivateReplicaSelection() { return symmetricPutAndActivateReplicaSelection; }
-        @Override public boolean enforceStrictlyIncreasingClusterStateVersions() { return enforceStrictlyIncreasingClusterStateVersions; }
-        @Override public boolean distributionConfigFromClusterController() { return distributionConfigFromClusterController; }
-        @Override public boolean useLegacyWandQueryParsing() { return useLegacyWandQueryParsing; }
-        @Override public boolean forwardAllLogLevels() { return forwardAllLogLevels; }
+
+        @Override public boolean useNonPublicEndpointForTest() { return flag(Flags.USE_NON_PUBLIC_ENDPOINT_FOR_TEST).value(); }
+        @Override public int heapSizePercentage(Optional<String> clusterId) {
+            var flag = flag(PermanentFlags.HEAP_SIZE_PERCENTAGE);
+            return clusterId.map(id -> flag.withClusterId(ClusterSpec.Id.from(id)).value()).orElseGet(flag::value);
+        }
+        @Override public double queryDispatchWarmup() { return flag(PermanentFlags.QUERY_DISPATCH_WARMUP).value(); }
+        @Override public String responseSequencerType() { return flag(Flags.RESPONSE_SEQUENCER_TYPE).value(); }
+        @Override public int defaultNumResponseThreads() { return flag(Flags.RESPONSE_NUM_THREADS).value(); }
+        @Override public boolean useAsyncMessageHandlingOnSchedule() { return flag(Flags.USE_ASYNC_MESSAGE_HANDLING_ON_SCHEDULE).value(); }
+        @Override public double feedConcurrency() { return flag(PermanentFlags.FEED_CONCURRENCY).value(); }
+        @Override public double feedNiceness() { return flag(PermanentFlags.FEED_NICENESS).value(); }
+        @Override public int mbusNetworkThreads() { return flag(Flags.MBUS_NUM_NETWORK_THREADS).value(); }
+        @Override public OpenTelemetryConfiguration opentelemetrySdk() { return flag(Flags.OPENTELEMETRY_SDK).value(); }
+        @Override public List<String> allowedAthenzProxyIdentities() { return flag(PermanentFlags.ALLOWED_ATHENZ_PROXY_IDENTITIES).value(); }
+        @Override public int maxActivationInhibitedOutOfSyncGroups() { return flag(PermanentFlags.MAX_ACTIVATION_INHIBITED_OUT_OF_SYNC_GROUPS).value(); }
+        @Override public double resourceLimitDisk() { return flag(PermanentFlags.RESOURCE_LIMIT_DISK).value(); }
+        @Override public double resourceLimitMemory() { return flag(PermanentFlags.RESOURCE_LIMIT_MEMORY).value(); }
+        @Override public double resourceLimitAddressSpace() { return flag(PermanentFlags.RESOURCE_LIMIT_ADDRESS_SPACE).value(); }
+        @Override public boolean containerDumpHeapOnShutdownTimeout() { return flag(PermanentFlags.CONTAINER_DUMP_HEAP_ON_SHUTDOWN_TIMEOUT).value(); }
+        @Override public int maxUnCommittedMemory() { return flag(PermanentFlags.MAX_UNCOMMITTED_MEMORY).value(); }
+        @Override public boolean forwardIssuesAsErrors() { return flag(PermanentFlags.FORWARD_ISSUES_AS_ERRORS).value(); }
+        @Override public List<String> ignoredHttpUserAgents() { return flag(PermanentFlags.IGNORED_HTTP_USER_AGENTS).value(); }
+        @Override public int mbusJavaRpcNumTargets() { return flag(Flags.MBUS_JAVA_NUM_TARGETS).value(); }
+        @Override public int mbusJavaEventsBeforeWakeup() { return flag(Flags.MBUS_JAVA_EVENTS_BEFORE_WAKEUP).value(); }
+        @Override public int mbusCppRpcNumTargets() { return flag(Flags.MBUS_CPP_NUM_TARGETS).value(); }
+        @Override public int mbusCppEventsBeforeWakeup() { return flag(Flags.MBUS_CPP_EVENTS_BEFORE_WAKEUP).value(); }
+        @Override public int rpcNumTargets() { return flag(Flags.RPC_NUM_TARGETS).value(); }
+        @Override public int rpcEventsBeforeWakeup() { return flag(Flags.RPC_EVENTS_BEFORE_WAKEUP).value(); }
+        @Override public String unknownConfigDefinition() { return flag(PermanentFlags.UNKNOWN_CONFIG_DEFINITION).value(); }
+        @Override public boolean sortBlueprintsByCost() { return flag(PermanentFlags.SORT_BLUEPRINTS_BY_COST).value(); }
+        @Override public boolean logserverOtelCol() { return flag(Flags.LOGSERVER_OTELCOL_AGENT).value(); }
+        @Override public SharedHosts sharedHosts() { return flag(PermanentFlags.SHARED_HOST).value(); }
+        @Override public Architecture adminClusterArchitecture() { return Architecture.valueOf(flag(PermanentFlags.ADMIN_CLUSTER_NODE_ARCHITECTURE).value()); }
+        @Override public double logserverNodeMemory() { return flag(PermanentFlags.LOGSERVER_NODE_MEMORY).value(); }
+        @Override public double clusterControllerNodeMemory() { return flag(PermanentFlags.CLUSTER_CONTROLLER_NODE_MEMORY).value(); }
+        @Override public boolean useLegacyWandQueryParsing() { return flag(Flags.USE_LEGACY_WAND_QUERY_PARSING).value(); }
+        @Override public boolean useSimpleAnnotations() { return flag(Flags.USE_SIMPLE_ANNOTATIONS).value(); }
+        @Override public boolean sendOldQueryStack() { return flag(Flags.SEND_OLD_QUERY_STACK).value(); }
+        @Override public boolean forwardAllLogLevels() { return flag(PermanentFlags.FORWARD_ALL_LOG_LEVELS).value(); }
+        @Override public long zookeeperPreAllocSize() { return flag(PermanentFlags.ZOOKEEPER_PRE_ALLOC_SIZE_KIB).value(); }
+        @Override public int maxContentNodeMaintenanceOpConcurrency() { return flag(PermanentFlags.MAX_CONTENT_NODE_MAINTENANCE_OP_CONCURRENCY).value(); }
+        @Override public Object sidecarsForTest() { return flag(Flags.SIDECARS_FOR_TEST).value(); }
+        @Override public ModelContext.FeatureFlag<Boolean> useTritonFlag() { return flag(Flags.USE_TRITON); }
+        @Override public OptionalInt metricsProxyHeapSizeInMib() { return toOptionalInt(flag(Flags.METRICS_PROXY_HEAP_SIZE_IN_MIB).value()); }
+        @Override public ModelContext.FeatureFlag<Integer> metricsProxyHeapSizeInMibFlag() { return flag(Flags.METRICS_PROXY_HEAP_SIZE_IN_MIB); }
+        @Override public OptionalInt metricsProxyAdminNodeHeapSizeInMib() { return toOptionalInt(flag(Flags.METRICS_PROXY_ADMIN_HEAP_SIZE_IN_MIB).value()); }
+        @Override public boolean ignoreConnectivityChecksAtStartup() { return flag(PermanentFlags.IGNORE_CONNECTIVITY_CHECKS_AT_STARTUP).value(); }
+        @Override public boolean requireExplicitDocprocCluster() { return flag(Flags.REQUIRE_EXPLICIT_DOCPROC_CLUSTER).value(); }
+        @Override public double searchNodeReservedMemoryFactor() { return flag(Flags.SEARCHNODE_RESERVED_MEMORY_FACTOR).value(); }
+        @Override public boolean forceDisableOnnxModelOptimization() { return flag(PermanentFlags.FORCE_DISABLE_ONNX_MODEL_OPTIMIZATION).value(); }
+        @Override public boolean failWhenConfiguringIndexedMapOfArray() { return flag(Flags.FAIL_WHEN_CONFIGURING_INDEXED_MAP_OF_ARRAY).value(); }
+        @Override public boolean protonLogWarningOnDiskCapacityChange() { return flag(Flags.PROTON_LOG_WARNING_ON_DISK_CAPACITY_CHANGE).value(); }
+        @Override public boolean protonResampleDiskCapacity() { return flag(Flags.PROTON_RESAMPLE_DISK_CAPACITY).value(); }
+
+        private static OptionalInt toOptionalInt(int value) {
+            return value > 0 ? OptionalInt.of(value) : OptionalInt.empty();
+        }
     }
 
     public static class Properties implements ModelContext.Properties {
 
         private final ModelContext.FeatureFlags featureFlags;
         private final ApplicationId applicationId;
+        private final FlagSource flagSource;
+        private final Version modelVersion;
         private final boolean multitenant;
         private final List<ConfigServerSpec> configServerSpecs;
         private final HostName loadBalancerName;
@@ -337,32 +284,22 @@ public class ModelContextImpl implements ModelContext {
         private final String tenantSecretDomain;
         private final String athenzDnsSuffix;
         private final boolean hostedVespa;
-        private final Zone zone;
         private final Set<ContainerEndpoint> endpoints;
         private final boolean isBootstrap;
         private final boolean isFirstTimeDeployment;
         private final Optional<EndpointCertificateSecrets> endpointCertificateSecrets;
         private final Optional<AthenzDomain> athenzDomain;
         private final Quota quota;
+        private final List<TenantVault> tenantVaults;
         private final List<TenantSecretStore> tenantSecretStores;
-        private final SecretStore secretStore;
-        private final StringFlag jvmGCOptionsFlag;
-        private final boolean allowDisableMtls;
         private final List<X509Certificate> operatorCertificates;
-        private final List<String> tlsCiphersOverride;
-        private final List<String> zoneDnsSuffixes;
-        private final List<String> environmentVariables;
         private final Optional<CloudAccount> cloudAccount;
+        private final CloudResourceTags cloudResourceTags;
         private final List<DataplaneToken> dataplaneTokens;
-        private final boolean allowUserFilters;
-        private final Duration endpointConnectionTtl;
-        private final List<String> requestPrefixForLoggingContent;
-        private final boolean launchApplicationAthenzService;
 
         public Properties(ApplicationId applicationId,
                           Version modelVersion,
                           ConfigserverConfig configserverConfig,
-                          Zone zone,
                           Set<ContainerEndpoint> endpoints,
                           boolean isBootstrap,
                           boolean isFirstTimeDeployment,
@@ -370,13 +307,16 @@ public class ModelContextImpl implements ModelContext {
                           Optional<EndpointCertificateSecrets> endpointCertificateSecrets,
                           Optional<AthenzDomain> athenzDomain,
                           Optional<Quota> maybeQuota,
+                          List<TenantVault> tenantVaults,
                           List<TenantSecretStore> tenantSecretStores,
-                          SecretStore secretStore,
                           List<X509Certificate> operatorCertificates,
                           Optional<CloudAccount> cloudAccount,
+                          CloudResourceTags cloudResourceTags,
                           List<DataplaneToken> dataplaneTokens) {
             this.featureFlags = new FeatureFlags(flagSource, applicationId, modelVersion);
             this.applicationId = applicationId;
+            this.flagSource = flagSource;
+            this.modelVersion = modelVersion;
             this.multitenant = configserverConfig.multitenant() || configserverConfig.hostedVespa() || Boolean.getBoolean("multitenant");
             this.configServerSpecs = fromConfig(configserverConfig);
             this.loadBalancerName = configserverConfig.loadBalancerAddress().isEmpty() ? null : HostName.of(configserverConfig.loadBalancerAddress());
@@ -384,137 +324,80 @@ public class ModelContextImpl implements ModelContext {
             this.tenantSecretDomain = configserverConfig.tenantSecretDomain();
             this.athenzDnsSuffix = configserverConfig.athenzDnsSuffix();
             this.hostedVespa = configserverConfig.hostedVespa();
-            this.zone = zone;
             this.endpoints = endpoints;
             this.isBootstrap = isBootstrap;
             this.isFirstTimeDeployment = isFirstTimeDeployment;
             this.endpointCertificateSecrets = endpointCertificateSecrets;
             this.athenzDomain = athenzDomain;
             this.quota = maybeQuota.orElseGet(Quota::unlimited);
+            this.tenantVaults = tenantVaults;
             this.tenantSecretStores = tenantSecretStores;
-            this.secretStore = secretStore;
-            this.jvmGCOptionsFlag = PermanentFlags.JVM_GC_OPTIONS.bindTo(flagSource)
-                    .with(Dimension.INSTANCE_ID, applicationId.serializedForm())
-                    .with(Dimension.APPLICATION, applicationId.toSerializedFormWithoutInstance());
-            this.allowDisableMtls = PermanentFlags.ALLOW_DISABLE_MTLS.bindTo(flagSource).with(applicationId).value();
             this.operatorCertificates = operatorCertificates;
-            this.tlsCiphersOverride = PermanentFlags.TLS_CIPHERS_OVERRIDE.bindTo(flagSource).with(applicationId).value();
-            this.zoneDnsSuffixes = configserverConfig.zoneDnsSuffixes();
-            this.environmentVariables = PermanentFlags.ENVIRONMENT_VARIABLES.bindTo(flagSource).with(applicationId).value();
             this.cloudAccount = cloudAccount;
-            this.allowUserFilters = PermanentFlags.ALLOW_USER_FILTERS.bindTo(flagSource).with(applicationId).value();
-            this.endpointConnectionTtl = Duration.ofSeconds(PermanentFlags.ENDPOINT_CONNECTION_TTL.bindTo(flagSource).with(applicationId).value());
+            this.cloudResourceTags = cloudResourceTags;
             this.dataplaneTokens = dataplaneTokens;
-            this.requestPrefixForLoggingContent = PermanentFlags.LOG_REQUEST_CONTENT.bindTo(flagSource).with(applicationId).value();
-            this.launchApplicationAthenzService = Flags.LAUNCH_APPLICATION_ATHENZ_SERVICE.bindTo(flagSource).with(applicationId).value();
         }
 
         @Override public ModelContext.FeatureFlags featureFlags() { return featureFlags; }
+        @Override public boolean multitenant() { return multitenant; }
+        @Override public ApplicationId applicationId() { return applicationId; }
+        @Override public List<ConfigServerSpec> configServerSpecs() { return configServerSpecs; }
+        @Override public HostName loadBalancerName() { return loadBalancerName; }
+        @Override public URI ztsUrl() { return ztsUrl; }
+        @Override public String athenzDnsSuffix() { return athenzDnsSuffix; }
+        @Override public boolean hostedVespa() { return hostedVespa; }
+        @Override public Set<ContainerEndpoint> endpoints() { return endpoints; }
+        @Override public boolean isBootstrap() { return isBootstrap; }
+        @Override public boolean isFirstTimeDeployment() { return isFirstTimeDeployment; }
+        @Override public Optional<EndpointCertificateSecrets> endpointCertificateSecrets() { return endpointCertificateSecrets; }
+        @Override public Optional<AthenzDomain> athenzDomain() { return athenzDomain; }
+        @Override public Quota quota() { return quota; }
+        @Override public List<TenantVault> tenantVaults() { return tenantVaults; }
+        @Override public List<TenantSecretStore> tenantSecretStores() { return tenantSecretStores; }
+        @Override public List<X509Certificate> operatorCertificates() { return operatorCertificates; }
+        @Override public Optional<CloudAccount> cloudAccount() { return cloudAccount; }
+        @Override public CloudResourceTags cloudResourceTags() { return cloudResourceTags; }
+        @Override public List<DataplaneToken> dataplaneTokens() { return dataplaneTokens; }
+        @Override public boolean allowDisableMtls() { return flag(PermanentFlags.ALLOW_DISABLE_MTLS).value(); }
+        @Override public List<String> tlsCiphersOverride() { return flag(PermanentFlags.TLS_CIPHERS_OVERRIDE).value(); }
+        @Override public List<String> environmentVariables() { return flag(PermanentFlags.ENVIRONMENT_VARIABLES).value(); }
+        @Override public boolean allowUserFilters() { return flag(PermanentFlags.ALLOW_USER_FILTERS).value(); }
+        @Override public Duration endpointConnectionTtl() { return Duration.ofSeconds(flag(PermanentFlags.ENDPOINT_CONNECTION_TTL).value()); }
+        @Override public List<String> requestPrefixForLoggingContent() { return flag(PermanentFlags.LOG_REQUEST_CONTENT).value(); }
+        @Override public List<String> jdiscHttpComplianceViolations() { return flag(PermanentFlags.JDISC_HTTP_COMPLIANCE_VIOLATIONS).value(); }
+        @Override public ModelContext.FeatureFlag<String> jvmGCOptionsFlag() { return flag(PermanentFlags.JVM_GC_OPTIONS); }
 
-        @Override
-        public boolean multitenant() { return multitenant; }
-
-        @Override
-        public ApplicationId applicationId() { return applicationId; }
-
-        @Override
-        public List<ConfigServerSpec> configServerSpecs() { return configServerSpecs; }
-
-        @Override
-        public HostName loadBalancerName() { return loadBalancerName; }
-
-        @Override
-        public URI ztsUrl() {
-            return ztsUrl;
+        private <T, F extends Flag<T, F>, U extends UnboundFlag<T, F, U>> ModelContext.FeatureFlag<T> flag(U unboundFlag) {
+            return new FeatureFlag<>(unboundFlag, flagSource, applicationId, modelVersion);
         }
 
-        @Override
-        public AthenzDomain tenantSecretDomain() {
+        @Override public AthenzDomain tenantSecretDomain() {
             if (tenantSecretDomain.isEmpty())
-                throw new IllegalArgumentException("Tenant secret domain is not set for zone " + zone);
+                throw new IllegalArgumentException("Tenant secret domain is not set");
             return AthenzDomain.from(tenantSecretDomain);
         }
 
-        @Override
-        public String athenzDnsSuffix() {
-            return athenzDnsSuffix;
+        @SuppressWarnings("removal")
+        @Override public String jvmGCOptions(Optional<ClusterSpec.Type> clusterType, Optional<ClusterSpec.Id> clusterId) {
+            var flag = flag(PermanentFlags.JVM_GC_OPTIONS);
+            var withType = clusterType.map(type -> flag.withClusterType(type)).orElse(flag);
+            return clusterId.map(id -> withType.withClusterId(id)).orElse(withType).value();
         }
 
-        @Override
-        public boolean hostedVespa() { return hostedVespa; }
-
-        @Override
-        public Zone zone() { return zone; }
-
-        @Override
-        public Set<ContainerEndpoint> endpoints() { return endpoints; }
-
-        @Override
-        public boolean isBootstrap() { return isBootstrap; }
-
-        @Override
-        public boolean isFirstTimeDeployment() { return isFirstTimeDeployment; }
-
-        @Override
-        public Optional<EndpointCertificateSecrets> endpointCertificateSecrets() { return endpointCertificateSecrets; }
-
-        @Override
-        public Optional<AthenzDomain> athenzDomain() { return athenzDomain; }
-
-        @Override public Quota quota() { return quota; }
-
-        @Override
-        public List<TenantSecretStore> tenantSecretStores() {
-            return tenantSecretStores;
+        @Override public String mallocImpl(Optional<ClusterSpec.Type> clusterType) {
+            var flag = flag(PermanentFlags.VESPA_USE_MALLOC_IMPL);
+            return clusterType.map(type -> flag.withClusterType(type)).orElse(flag).value();
         }
 
-        @Override public String jvmGCOptions(Optional<ClusterSpec.Type> clusterType) {
-            return flagValueForClusterType(jvmGCOptionsFlag, clusterType);
+        @Override public int searchNodeInitializerThreads(String clusterId) {
+            return flag(PermanentFlags.SEARCHNODE_INITIALIZER_THREADS)
+                    .withClusterId(ClusterSpec.Id.from(clusterId)).value();
         }
 
-        @Override
-        public boolean allowDisableMtls() {
-            return allowDisableMtls;
+        @Override public int heapSizePercentage(String clusterId) {
+            return flag(PermanentFlags.HEAP_SIZE_PERCENTAGE)
+                    .withClusterId(ClusterSpec.Id.from(clusterId)).value();
         }
-
-        @Override
-        public List<X509Certificate> operatorCertificates() {
-            return operatorCertificates;
-        }
-
-        @Override public List<String> tlsCiphersOverride() { return tlsCiphersOverride; }
-
-        @Override
-        public List<String> zoneDnsSuffixes() {
-            return zoneDnsSuffixes;
-        }
-
-        public String flagValueForClusterType(StringFlag flag, Optional<ClusterSpec.Type> clusterType) {
-            return clusterType.map(type -> flag.with(CLUSTER_TYPE, type.name()))
-                              .orElse(flag)
-                              .value();
-        }
-
-        @Override
-        public List<String> environmentVariables() { return environmentVariables; }
-
-        @Override
-        public Optional<CloudAccount> cloudAccount() {
-            return cloudAccount;
-        }
-
-        @Override
-        public List<DataplaneToken> dataplaneTokens() {
-            return dataplaneTokens;
-        }
-
-        @Override public boolean allowUserFilters() { return allowUserFilters; }
-
-        @Override public Duration endpointConnectionTtl() { return endpointConnectionTtl; }
-
-        @Override public List<String> requestPrefixForLoggingContent() { return requestPrefixForLoggingContent; }
-
-        @Override public boolean launchApplicationAthenzService() { return launchApplicationAthenzService; }
     }
 
 }

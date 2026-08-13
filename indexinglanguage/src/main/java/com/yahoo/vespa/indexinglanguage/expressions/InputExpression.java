@@ -8,7 +8,10 @@ import com.yahoo.vespa.objects.ObjectOperation;
 import com.yahoo.vespa.objects.ObjectPredicate;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Objects;
+import java.util.Set;
 
 /**
  * @author Simon Thoresen Hult
@@ -19,20 +22,33 @@ public final class InputExpression extends Expression {
     private FieldPath fieldPath;
 
     public InputExpression(String fieldName) {
-        super(null);
         if (fieldName == null)
             throw new IllegalArgumentException("'input' must be given a field name as argument");
         this.fieldName = fieldName;
     }
 
+    @Override
+    public boolean requiresInput() { return false; }
+
     public String getFieldName() { return fieldName; }
 
     @Override
-    protected void doVerify(VerificationContext context) {
-        DataType val = context.getFieldType(fieldName, this);
-        if (val == null)
+    public DataType setInputType(DataType inputType, TypeContext context) {
+        super.setInputType(inputType, context);
+        return requireFieldType(context);
+    }
+
+    @Override
+    public DataType setOutputType(DataType outputType, TypeContext context) {
+        super.setOutputType(requireFieldType(context), outputType, null, context);
+        return AnyDataType.instance;
+    }
+
+    private DataType requireFieldType(TypeContext context) {
+        DataType fieldType = context.getFieldType(fieldName, this);
+        if (fieldType == null)
             throw new VerificationException(this, "Field '" + fieldName + "' not found");
-        context.setCurrentType(val);
+        return fieldType;
     }
 
     @Override
@@ -44,28 +60,25 @@ public final class InputExpression extends Expression {
     }
 
     @Override
-    public DataType createdOutputType() { return UnresolvedDataType.INSTANCE; }
-
-    @Override
-    public DataType getOutputType(VerificationContext context) {
+    public DataType getOutputType(TypeContext context) {
         return context.getFieldType(fieldName, this);
     }
 
     @Override
     public String toString() {
-        return "input" + (fieldName != null ? " " + fieldName : "");
+        return "input " + fieldName;
     }
 
     @Override
     public boolean equals(Object obj) {
         if ( ! (obj instanceof InputExpression rhs)) return false;
-        if ( ! equals(fieldName, rhs.fieldName)) return false;
+        if ( ! Objects.equals(fieldName, rhs.fieldName)) return false;
         return true;
     }
 
     @Override
     public int hashCode() {
-        return getClass().hashCode() + (fieldName != null ? fieldName.hashCode() : 0);
+        return getClass().hashCode() + fieldName.hashCode();
     }
 
     public static class FieldPathOptimizer implements ObjectOperation, ObjectPredicate {
@@ -107,6 +120,43 @@ public final class InputExpression extends Expression {
             InputExpression.InputFieldNameExtractor inputFieldNameExtractor = new InputExpression.InputFieldNameExtractor();
             expression.select(inputFieldNameExtractor, inputFieldNameExtractor);
             return inputFieldNameExtractor.inputFieldNames;
+        }
+
+    }
+
+
+    public static class RequiredInputFieldsExtractor implements ObjectOperation, ObjectPredicate {
+
+        private final Set<String> inputFieldNames = new HashSet<>();
+
+        @Override
+        public void execute(Object obj) {
+            if (obj instanceof InputExpression input) {
+                inputFieldNames.add(input.getFieldName());
+            }
+            if (obj instanceof ChoiceExpression choice) {
+                Set<String> required = null;
+                for (Expression child : choice.asList()) {
+                    if (required == null) {
+                        required = new HashSet<>();
+                        required.addAll(runOn(child));
+                    } else {
+                        required.retainAll(runOn(child));
+                    }
+                }
+                inputFieldNames.addAll(required);
+            }
+        }
+
+        @Override
+        public boolean check(Object obj) {
+            return (obj instanceof InputExpression) || (obj instanceof ChoiceExpression);
+        }
+
+        public static Set<String> runOn(Expression expression) {
+            var extractor = new RequiredInputFieldsExtractor();
+            expression.select(extractor, extractor);
+            return extractor.inputFieldNames;
         }
 
     }

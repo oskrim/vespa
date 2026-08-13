@@ -16,15 +16,17 @@ import com.yahoo.searchlib.aggregation.Grouping;
 import com.yahoo.searchlib.aggregation.GroupingLevel;
 import com.yahoo.searchlib.aggregation.HitsAggregationResult;
 import com.yahoo.searchlib.expression.ExpressionNode;
+import com.yahoo.searchlib.expression.FilterExpressionNode;
 import com.yahoo.searchlib.expression.RangeBucketPreDefFunctionNode;
+import com.yahoo.text.Text;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Objects;
 import java.util.OptionalLong;
-import java.util.Deque;
 import java.util.TimeZone;
 
 /**
@@ -210,6 +212,12 @@ class RequestBuilder {
                 grpLevel.setMaxGroups(LOOKAHEAD + frame.state.max + offset);
                 frame.state.max = null;
             }
+
+            if (frame.state.filterBy != null) {
+                grpLevel.setFilter(frame.state.filterBy);
+                frame.state.filterBy = null;
+            }
+
             frame.grouping.getLevels().add(grpLevel);
         }
         String label = frame.astNode.getLabel();
@@ -233,6 +241,7 @@ class RequestBuilder {
 
     private void resolveState(BuildFrame frame) {
         resolveGroupBy(frame);
+        resolveFilterBy(frame);
         resolveMax(frame);
         resolveOrderBy(frame);
         resolvePrecision(frame);
@@ -258,6 +267,12 @@ class RequestBuilder {
                 throw new IllegalInputException("Can not create anonymous " +
                                                         GroupingOperation.getLevelDesc(level) + ".");
             }
+        }
+    }
+
+    private void resolveFilterBy(BuildFrame frame) {
+        if (frame.astNode.getFilterBy() != null) {
+            frame.state.filterBy = converter.toFilterExpressionNode(frame.astNode.getFilterBy());
         }
     }
 
@@ -420,11 +435,11 @@ class RequestBuilder {
             }
         }
         if (totalGroupsAndSummaries > globalMaxGroups)
-            throw new IllegalInputException(String.format(
+            throw new IllegalInputException(Text.format(
                     "The theoretical total number of groups and summaries in grouping query exceeds " +
                             "'grouping.globalMaxGroups' ( %d > %d ). " +
                             "Either restrict group/summary counts with max() or disable 'grouping.globalMaxGroups'. " +
-                            "See https://docs.vespa.ai/en/grouping.html for details.",
+                            "See https://docs.vespa.ai/en/querying/grouping.html for details.",
                     totalGroupsAndSummaries, globalMaxGroups));
         this.totalGroupsAndSummaries = totalGroupsAndSummaries;
     }
@@ -438,7 +453,7 @@ class RequestBuilder {
         if (max <= 0) throw new IllegalInputException(
                 "Cannot return unbounded number of groups when 'grouping.globalMaxGroups' is enabled. " +
                         "Either restrict group count with max() or disable 'grouping.globalMaxGroups'. " +
-                        "See https://docs.vespa.ai/en/grouping.html for details.");
+                        "See https://docs.vespa.ai/en/querying/grouping.html for details.");
         return max;
     }
 
@@ -447,7 +462,7 @@ class RequestBuilder {
         if (max <= 0) throw new IllegalInputException(
                 "Cannot return unbounded number of summaries when 'grouping.globalMaxGroups' is enabled. " +
                         "Either restrict summary count with max() or disable 'grouping.globalMaxGroups'. " +
-                        "See https://docs.vespa.ai/en/grouping.html for details.");
+                        "See https://docs.vespa.ai/en/querying/grouping.html for details.");
         return max;
     }
 
@@ -476,6 +491,7 @@ class RequestBuilder {
         final List<ExpressionNode> orderByExp = new ArrayList<>();
         final List<Boolean> orderByAsc = new ArrayList<>();
         ExpressionNode groupBy = null;
+        FilterExpressionNode filterBy = null;
         String label = null;
         Integer max = null;
         Integer precision = null;
@@ -490,6 +506,7 @@ class RequestBuilder {
             }
             orderByAsc.addAll(obj.orderByAsc);
             groupBy = obj.groupBy;
+            filterBy = obj.filterBy;
             label = obj.label;
             max = obj.max;
             precision = obj.precision;

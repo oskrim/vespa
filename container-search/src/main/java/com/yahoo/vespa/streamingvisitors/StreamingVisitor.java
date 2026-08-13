@@ -16,8 +16,10 @@ import com.yahoo.messagebus.Message;
 import com.yahoo.messagebus.Trace;
 import com.yahoo.messagebus.routing.Route;
 import com.yahoo.prelude.fastsearch.TimeoutException;
+import com.yahoo.prelude.query.SerializationContext;
 import com.yahoo.processing.request.CompoundName;
 import com.yahoo.search.Query;
+import com.yahoo.search.dispatch.rpc.ProtobufSerialization;
 import com.yahoo.search.grouping.vespa.GroupingExecutor;
 import com.yahoo.search.query.Model;
 import com.yahoo.search.query.Ranking;
@@ -30,10 +32,12 @@ import com.yahoo.vespa.objects.BufferSerializer;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.Collection;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Logger;
@@ -63,11 +67,12 @@ class StreamingVisitor extends VisitorDataHandler implements Visitor {
     private static final Logger log = Logger.getLogger(StreamingVisitor.class.getName());
     private final VisitorParameters params = new VisitorParameters("");
     private List<SearchResult.Hit> hits = new ArrayList<>();
+    private final Set<String> errors = new TreeSet<>();
     private int totalHitCount = 0;
 
     private final Map<String, DocumentSummary.Summary> summaryMap = new HashMap<>();
     private final Map<Integer, Grouping> groupingMap = new ConcurrentHashMap<>();
-    private Query query = null;
+    private final Query query;
     private final VisitorSessionFactory visitorSessionFactory;
     private final int traceLevelOverride;
     private Trace sessionTrace;
@@ -76,14 +81,13 @@ class StreamingVisitor extends VisitorDataHandler implements Visitor {
         VisitorSession createVisitorSession(VisitorParameters params) throws ParseException;
     }
 
-    public StreamingVisitor(Query query, String searchCluster, Route route,
-                            String schema, VisitorSessionFactory visitorSessionFactory,
-                            int traceLevelOverride)
-    {
+    public StreamingVisitor(Query query, Route route,
+                            VisitorSessionFactory visitorSessionFactory,
+                            Visitor.Context context) {
         this.query = query;
         this.visitorSessionFactory = visitorSessionFactory;
-        this.traceLevelOverride = traceLevelOverride;
-        setVisitorParameters(searchCluster, route, schema);
+        this.traceLevelOverride = context.traceLevelOverride();
+        setVisitorParameters(route, context);
     }
 
     private int inferSessionTraceLevel(Query query) {
@@ -113,8 +117,8 @@ class StreamingVisitor extends VisitorDataHandler implements Visitor {
         return query.properties().getString(streamingSelection);
     }
 
-    private void setVisitorParameters(String searchCluster, Route route, String schema) {
-        params.setDocumentSelection(createSelectionString(schema, createQuerySelectionString()));
+    private void setVisitorParameters(Route route, Visitor.Context context) {
+        params.setDocumentSelection(createSelectionString(context.schema(), createQuerySelectionString()));
         params.setTimeoutMs(query.getTimeout()); // Per bucket visitor timeout
         params.setSessionTimeoutMs(query.getTimeout());
         params.setVisitorLibrary("searchvisitor");
@@ -144,19 +148,42 @@ class StreamingVisitor extends VisitorDataHandler implements Visitor {
         }
 
         EncodedData ed = new EncodedData();
-        encodeQueryData(query, 0, ed);
-        params.setLibraryParameter("query", ed.getEncodedData());
-        params.setLibraryParameter("querystackcount", String.valueOf(ed.getReturned()));
-        params.setLibraryParameter("searchcluster", searchCluster.getBytes(StandardCharsets.UTF_8));
-        params.setLibraryParameter("schema", schema.getBytes(StandardCharsets.UTF_8));
-        if (query.getPresentation().getSummary() != null) {
-            params.setLibraryParameter("summaryclass", query.getPresentation().getSummary());
+        if (context.sendOldQueryStack()) {
+            ProtobufSerialization.setProtobufAlsoSerialized(true);
+            encodeQueryData(query, 0, ed);
+            params.setLibraryParameter("query", ed.getEncodedData());
+            params.setLibraryParameter("querystackcount", String.valueOf(ed.getReturned()));
         } else {
-            params.setLibraryParameter("summaryclass", "default");
+            // TODO: remove dummies - it's for backwards compatibility only
+            params.setLibraryParameter("query", new byte[]{(byte) 0});
+            params.setLibraryParameter("querystackcount", "1");
         }
-        Set<String> summaryFields = query.getPresentation().getSummaryFields();
-        if (summaryFields != null && !summaryFields.isEmpty()) {
-            params.setLibraryParameter("summary-fields", String.join(" ", summaryFields));
+        var serializationContext = SerializationContext.ignored(); // Not tracking content share in streaming
+        var protobufTree = query.getModel().getQueryTree().toProtobufQueryTree(serializationContext);
+        params.setLibraryParameter("querytree", protobufTree.toByteArray());
+
+        params.setLibraryParameter("searchcluster", context.searchCluster().getBytes(StandardCharsets.UTF_8));
+        params.setLibraryParameter("schema", context.schema().getBytes(StandardCharsets.UTF_8));
+
+        var partialSummaryHandler = context.partialSummaryHandler();
+        if (partialSummaryHandler != null) {
+            params.setLibraryParameter("summaryclass", partialSummaryHandler.askForSummary());
+            var summaryFields = partialSummaryHandler.askForFields();
+            if (summaryFields != null) {
+                params.setLibraryParameter("summary-fields", String.join(" ", summaryFields));
+            }
+        } else {
+            String wantedSummary = query.getPresentation().getSummary();
+            Set<String> summaryFields = query.getPresentation().getSummaryFields();
+            boolean wantSomeFields = summaryFields != null && !summaryFields.isEmpty();
+            if (wantedSummary == null || wantedSummary.equals("default")) {
+                params.setLibraryParameter("summaryclass", "default");
+                if (wantSomeFields) {
+                    params.setLibraryParameter("summary-fields", String.join(" ", summaryFields));
+                }
+            } else {
+                params.setLibraryParameter("summaryclass", wantedSummary);
+            }
         }
         params.setLibraryParameter("summarycount", String.valueOf(query.getOffset() + query.getHits()));
         params.setLibraryParameter("rankprofile", query.getRanking().getProfile());
@@ -232,12 +259,12 @@ class StreamingVisitor extends VisitorDataHandler implements Visitor {
 
     }
 
-    private static void encodeQueryData(Query query, int code, EncodedData ed){
+    private static void encodeQueryData(Query query, int code, EncodedData ed) {
         ByteBuffer buf = ByteBuffer.allocate(1024);
         while (true) {
             try {
                 switch (code) {
-                    case 0 -> ed.setReturned(query.getModel().getQueryTree().getRoot().encode(buf));
+                    case 0 -> ed.setReturned(query.getModel().getQueryTree().getRoot().encode(buf, SerializationContext.ignored()));
                     case 1 -> ed.setReturned(QueryEncoder.encodeAsProperties(query, buf));
                     case 2 -> throw new IllegalArgumentException("old aggregation no longer exists!");
                     case 3 -> {
@@ -267,7 +294,7 @@ class StreamingVisitor extends VisitorDataHandler implements Visitor {
                 log.log(Level.FINE, () -> "StreamingVisitor returned from waitUntilDone without being completed for " + query +
                                           " with selection " + params.getDocumentSelection());
                 session.abort();
-                throw new TimeoutException("Query timed out in " + StreamingBackend.class.getName());
+                throw new TimeoutException("Query timed out in " + this);
             }
         } finally {
             session.destroy();
@@ -323,6 +350,8 @@ class StreamingVisitor extends VisitorDataHandler implements Visitor {
         synchronized (this) {
             totalHitCount += result.getTotalHitCount();
             hits = ListMerger.mergeIntoArrayList(hits, newHits, query.getOffset() + query.getHits());
+            var newErrors = result.getErrors();
+            Collections.addAll(errors, newErrors);
         }
 
         Map<Integer, byte[]> newGroupingMap = result.getGroupingList();
@@ -385,6 +414,14 @@ class StreamingVisitor extends VisitorDataHandler implements Visitor {
             g.postMerge();
         }
         return new ArrayList<>(groupings);
+    }
+
+    @Override
+    public Set<String> getErrors() { return Set.copyOf(errors); }
+
+    @Override
+    public String toString() {
+        return "streaming visitor";
     }
 
 }

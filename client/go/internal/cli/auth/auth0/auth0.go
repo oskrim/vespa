@@ -138,24 +138,31 @@ func (a *Client) Authenticate(request *http.Request) error {
 // AccessToken returns an access token for the configured system, refreshing it if necessary.
 func (a *Client) AccessToken() (string, error) {
 	creds, ok := a.provider.Systems[a.options.SystemName]
-	if !ok {
+	switch {
+	case !ok:
 		return "", fmt.Errorf("auth0: system %s is not configured: %s", a.options.SystemName, reauthMessage)
-	} else if creds.AccessToken == "" {
+	case creds.AccessToken == "":
 		return "", fmt.Errorf("auth0: access token missing: %s", reauthMessage)
-	} else if scopesChanged(creds) {
+	case scopesChanged(creds):
 		return "", fmt.Errorf("auth0: authentication scopes changed: %s", reauthMessage)
-	} else if isExpired(creds.ExpiresAt, accessTokenExpiry) {
+	case isExpired(creds.ExpiresAt, accessTokenExpiry):
 		// check if the stored access token is expired:
 		// use the refresh token to get a new access token:
 		tr := &auth.TokenRetriever{
 			Authenticator: a.Authenticator,
-			Secrets:       &auth.Keyring{},
+			Secrets:       auth.NewKeyring(),
 			Client:        http.DefaultClient,
 		}
 		resp, err := tr.Refresh(cancelOnInterrupt(), a.options.SystemName)
 		if err != nil {
 			return "", fmt.Errorf("auth0: failed to renew access token: %w: %s", err, reauthMessage)
 		} else {
+			if resp.RefreshToken != "" {
+				// the refresh token was rotated: persist the new one, or the next refresh will be rejected
+				if err := tr.Secrets.Set(auth.SecretsNamespace, a.options.SystemName, resp.RefreshToken); err != nil {
+					return "", fmt.Errorf("auth0: failed to persist rotated refresh token: %w", err)
+				}
+			}
 			// persist the updated system with renewed access token
 			creds.AccessToken = resp.AccessToken
 			creds.ExpiresAt = time.Now().Add(time.Duration(resp.ExpiresIn) * time.Second)
@@ -199,7 +206,7 @@ func (a *Client) WriteCredentials(credentials Credentials) error {
 
 // RemoveCredentials removes credentials for the system configured in this client.
 func (a *Client) RemoveCredentials() error {
-	tr := &auth.TokenRetriever{Secrets: &auth.Keyring{}}
+	tr := &auth.TokenRetriever{Secrets: auth.NewKeyring()}
 	if err := tr.Delete(a.options.SystemName); err != nil {
 		return fmt.Errorf("auth0: failed to remove system %s from secret storage: %w", a.options.SystemName, err)
 	}
@@ -212,7 +219,7 @@ func (a *Client) RemoveCredentials() error {
 
 func writeConfig(provider auth0Provider, path string) error {
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0700); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
 	version := 1
@@ -227,7 +234,7 @@ func writeConfig(provider auth0Provider, path string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, jsonConfig, 0600)
+	return os.WriteFile(path, jsonConfig, 0o600)
 }
 
 func readConfig(path string) (auth0Provider, error) {

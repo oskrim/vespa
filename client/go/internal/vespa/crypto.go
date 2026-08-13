@@ -18,6 +18,7 @@ import (
 	"io"
 	"math/big"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -25,9 +26,23 @@ import (
 )
 
 const (
-	defaultCommonName = "cloud.vespa.example"
 	certificateExpiry = 3650 * 24 * time.Hour // Approximately 10 years
 )
+
+func defaultCommonName() string {
+	user := os.Getenv("USER")
+	if user == "" {
+		user = os.Getenv("LOGNAME")
+	}
+	if user == "" {
+		user = "unknown"
+	}
+	hostname, err := os.Hostname()
+	if err != nil {
+		hostname = "unknown"
+	}
+	return user + "@" + hostname
+}
 
 // PemKeyPair represents a PEM-encoded private key and X509 certificate.
 type PemKeyPair struct {
@@ -36,11 +51,44 @@ type PemKeyPair struct {
 }
 
 // WriteCertificateFile writes the certificate contained in this key pair to certificateFile.
-func (kp *PemKeyPair) WriteCertificateFile(certificateFile string, overwrite bool) error {
-	if ioutil.Exists(certificateFile) && !overwrite {
+func (kp *PemKeyPair) WriteCertificateFile(certificateFile string, overwrite bool, newCertificate bool) error {
+	if ioutil.Exists(certificateFile) && !overwrite && !newCertificate {
 		return fmt.Errorf("cannot overwrite existing file: %s", certificateFile)
 	}
-	return ioutil.AtomicWriteFile(certificateFile, kp.Certificate)
+	data := kp.Certificate
+
+	if newCertificate {
+		existing, err := os.ReadFile(certificateFile)
+		if err == nil {
+			data = append(append([]byte{}, kp.Certificate...), existing...)
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("could not read existing certificate file %s: %w", certificateFile, err)
+		}
+	}
+	return ioutil.AtomicWriteFile(certificateFile, data)
+}
+
+func ParseCertificates(data []byte) ([]*x509.Certificate, error) {
+	var certs []*x509.Certificate
+	for rest := data; ; {
+		var block *pem.Block
+		block, rest = pem.Decode(rest)
+		if block == nil {
+			break
+		}
+		if block.Type != "CERTIFICATE" {
+			return nil, fmt.Errorf("unexpected PEM block type %q; expected CERTIFICATE", block.Type)
+		}
+		cert, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			return nil, err
+		}
+		certs = append(certs, cert)
+	}
+	if len(certs) == 0 {
+		return nil, fmt.Errorf("no certificates found in PEM data")
+	}
+	return certs, nil
 }
 
 // WritePrivateKeyFile writes the private key contained in this key pair to privateKeyFile.
@@ -65,7 +113,7 @@ func CreateKeyPair() (PemKeyPair, error) {
 	notAfter := notBefore.Add(certificateExpiry)
 	template := x509.Certificate{
 		SerialNumber: serialNumber,
-		Subject:      pkix.Name{CommonName: defaultCommonName},
+		Subject:      pkix.Name{CommonName: defaultCommonName()},
 		NotBefore:    notBefore,
 		NotAfter:     notAfter,
 	}
@@ -200,7 +248,6 @@ func FingerprintMD5(pemPublicKey []byte) (string, error) {
 		hexDigits[i] = hex.EncodeToString([]byte{c})
 	}
 	return strings.Join(hexDigits, ":"), nil
-
 }
 
 func contentHash(r io.Reader) (string, io.Reader, error) {

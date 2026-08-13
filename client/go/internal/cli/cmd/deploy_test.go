@@ -39,7 +39,7 @@ func TestDeployCloud(t *testing.T) {
 	require.NotNil(t, cli.Run("deploy", pkgDir))
 	apiKeyWarning := "Warning: Authenticating with API key, intended for use in CI environments.\nHint: Authenticate with 'vespa auth login' instead\n"
 	certError := `Error: deployment to Vespa Cloud requires certificate in application package
-Hint: See https://cloud.vespa.ai/en/security/guide
+Hint: See https://docs.vespa.ai/en/security/guide.html
 Hint: Pass --add-cert to use the certificate of the current application
 `
 	assert.Equal(t, apiKeyWarning+certError, stderr.String())
@@ -105,15 +105,18 @@ func TestDeployCloudFastWait(t *testing.T) {
 	stdout.Reset()
 	stderr.Reset()
 	httpClient.NextResponseString(200, `ok`)
-	httpClient.NextResponseString(200, `{"active": false, "status": "unsuccesful"}`)
+	httpClient.NextResponseString(200, `{"active": false, "status": "deploymentFailed",
+		"log": {"deployReal": [{"at": 1631707708431, "type": "warning", "message": "Deployment failed: File in application package with unknown extension: schemas/doc.sd~"}]},
+		"steps": {"deployReal": {"status": "failed"}}}`)
 	require.NotNil(t, cli.Run("deploy", pkgDir))
-	assert.Equal(t, stderr.String(), "Error: deployment run 0 not yet complete after waiting up to 3s: aborting wait: deployment failed: run 0 ended with unsuccessful status: unsuccesful\n")
+	assert.Equal(t, "Deployment failed: File in application package with unknown extension: schemas/doc.sd~\n", stderr.String())
 	assert.True(t, httpClient.Consumed())
 
 	// Deployment which is running does not return error
 	stdout.Reset()
 	stderr.Reset()
 	httpClient.NextResponseString(200, `ok`)
+	httpClient.NextResponseString(200, `{"active": true, "status": "running"}`)
 	httpClient.NextResponseString(200, `{"active": true, "status": "running"}`)
 	require.Nil(t, cli.Run("deploy", pkgDir))
 	assert.Contains(t, stdout.String(), "Success: Triggered deployment")
@@ -135,7 +138,7 @@ func TestDeployCloudUnauthorized(t *testing.T) {
 	assert.Nil(t, cli.Run("auth", "cert", pkgDir))
 	httpClient.NextResponseString(403, "bugger off")
 	require.NotNil(t, cli.Run("deploy", pkgDir))
-	assert.Equal(t, `Error: deployment failed: unauthorized (status 403)
+	assert.Equal(t, `Deployment failed: unauthorized (status 403)
 bugger off
 Hint: You do not have access to the tenant t1
 Hint: You may need to create the tenant at https://console.vespa-cloud.com/tenant
@@ -165,7 +168,7 @@ func TestDeployWait(t *testing.T) {
 	mockServiceStatus(client, "foo") // Look up services
 	assert.Nil(t, cli.Run("deploy", "--wait=3", pkg))
 	assert.Equal(t,
-		"\nSuccess: Deployed '"+pkg+"' with session ID 1\n",
+		"Success: Deployed '"+pkg+"' with session ID 1\n",
 		stdout.String())
 }
 
@@ -192,7 +195,7 @@ func TestDeployZipWithURLTargetArgument(t *testing.T) {
 	cli.httpClient = client
 	assert.Nil(t, cli.Run(arguments...))
 	assert.Equal(t,
-		"\nSuccess: Deployed '"+applicationPackage+"' with session ID 0\n",
+		"Success: Deployed '"+applicationPackage+"' with session ID 0\n",
 		stdout.String())
 	assertDeployRequestMade("http://target:19071", client, t)
 }
@@ -232,7 +235,7 @@ func TestDeployIncludesExpectedFiles(t *testing.T) {
 	assert.Nil(t, cli.Run("deploy", "--wait=0", "testdata/applications/withSource"))
 	applicationPackage := "testdata/applications/withSource/src/main/application"
 	assert.Equal(t,
-		"\nSuccess: Deployed '"+applicationPackage+"' with session ID 0\n",
+		"Success: Deployed '"+applicationPackage+"' with session ID 0\n",
 		stdout.String())
 
 	zipName := filepath.Join(t.TempDir(), "tmp.zip")
@@ -294,7 +297,7 @@ func assertDeploy(applicationPackage string, arguments []string, t *testing.T) {
 	cli.httpClient = client
 	assert.Nil(t, cli.Run(arguments...))
 	assert.Equal(t,
-		"\nSuccess: Deployed '"+applicationPackage+"' with session ID 0\n",
+		"Success: Deployed '"+applicationPackage+"' with session ID 0\n",
 		stdout.String())
 	assertDeployRequestMade("http://127.0.0.1:19071", client, t)
 }
@@ -343,7 +346,7 @@ func assertPackageUpload(requestNumber int, url string, client *mock.HTTPClient,
 	assert.Equal(t, url, req.URL.String())
 	assert.Equal(t, "application/zip", req.Header.Get("Content-Type"))
 	assert.Equal(t, "POST", req.Method)
-	var body = req.Body
+	body := req.Body
 	assert.NotNil(t, body)
 	buf := make([]byte, 7) // Just check the first few bytes
 	body.Read(buf)

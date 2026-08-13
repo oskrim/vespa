@@ -11,30 +11,46 @@ public final class SetVarExpression extends Expression {
     private final String varName;
 
     public SetVarExpression(String varName) {
-        super(UnresolvedDataType.INSTANCE);
         this.varName = varName;
     }
+
+    @Override
+    public boolean isMutating() { return false; }
 
     public String getVariableName() { return varName; }
 
     @Override
-    protected void doVerify(VerificationContext context) {
-        DataType next = context.getCurrentType();
-        DataType prev = context.getVariable(varName);
-        if (prev != null && !prev.equals(next)) {
-            throw new VerificationException(this, "Attempting to assign conflicting types to variable '" + varName +
-                                                  "', " + prev.getName() + " vs " + next.getName());
+    public DataType setInputType(DataType inputType, TypeContext context) {
+        context.setVariableType(varName, inputType);
+        return super.setInputType(inputType, context);
+    }
+
+    @Override
+    public DataType setOutputType(DataType outputType, TypeContext context) {
+        if (outputType == null) return null;
+        context.setVariableType(varName, leastGeneralNonNullOf(outputType, context.getVariableType(varName)));
+        return super.setOutputType(outputType, context);
+    }
+
+    private void setVariableType(DataType newType, TypeContext context) {
+        DataType existingType = context.getVariableType(varName);
+        DataType mostGeneralType = newType;
+        if (existingType != null) {
+            if (existingType.isAssignableTo(newType))
+                mostGeneralType = newType;
+            else if (newType.isAssignableTo(existingType))
+                mostGeneralType = existingType;
+            else
+                throw new VerificationException(this, "Cannot set variable '" + varName + "' to type " + newType.getName() +
+                                                      ": It is already set to type " + existingType.getName());
         }
-        context.setVariable(varName, next);
+        context.setVariableType(varName, mostGeneralType);
     }
 
     @Override
     protected void doExecute(ExecutionContext context) {
         context.setVariable(varName, context.getCurrentValue());
     }
-
-    @Override
-    public DataType createdOutputType() { return null; }
 
     @Override
     public String toString() {

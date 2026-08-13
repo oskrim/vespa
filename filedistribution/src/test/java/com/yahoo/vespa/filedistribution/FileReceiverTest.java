@@ -14,11 +14,12 @@ import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 
 import static com.yahoo.vespa.filedistribution.FileReferenceData.CompressionType;
-import static com.yahoo.vespa.filedistribution.FileReferenceData.CompressionType.gzip;
 import static com.yahoo.vespa.filedistribution.FileReferenceData.CompressionType.lz4;
+import static com.yahoo.vespa.filedistribution.FileReferenceData.CompressionType.none;
 import static com.yahoo.vespa.filedistribution.FileReferenceData.CompressionType.zstd;
 import static com.yahoo.vespa.filedistribution.FileReferenceData.Type.compressed;
 import static com.yahoo.vespa.filedistribution.FileReferenceData.Type.file;
@@ -55,16 +56,16 @@ public class FileReceiverTest {
     @Test
     public void receiveCompressedParts() throws IOException{
         File dirWithFiles = temporaryFolder.newFolder("files");
-        FileWriter writerA = new FileWriter(new File(dirWithFiles, "a"));
+        FileWriter writerA = new FileWriter(new File(dirWithFiles, "a"), StandardCharsets.UTF_8);
         writerA.write("1");
         writerA.close();
-        FileWriter writerB = new FileWriter(new File(dirWithFiles, "b"));
+        FileWriter writerB = new FileWriter(new File(dirWithFiles, "b"), StandardCharsets.UTF_8);
         writerB.write("2");
         writerB.close();
 
-        testWithCompression(dirWithFiles, gzip);
         testWithCompression(dirWithFiles, lz4);
         testWithCompression(dirWithFiles, zstd);
+        testWithCompression(dirWithFiles, none);
     }
 
     private void testWithCompression(File dirWithFiles, CompressionType compressionType) throws IOException {
@@ -79,7 +80,7 @@ public class FileReceiverTest {
     private void transferPartsAndAssert(FileReference ref, String fileName, String all, int numParts) throws IOException {
         byte [] allContent = Utf8.toBytes(all);
 
-        FileReceiver.Session session = new FileReceiver.Session(root, 1, ref, file, gzip, fileName, allContent.length);
+        FileReceiver.Session session = new FileReceiver.Session(root, 1, ref, file, lz4, fileName, allContent.length);
         int partSize = (allContent.length+(numParts-1))/numParts;
         ByteBuffer bb = ByteBuffer.wrap(allContent);
         for (int i = 0, pos = 0; i < numParts; i++) {

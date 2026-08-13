@@ -17,12 +17,12 @@ import com.fasterxml.jackson.core.JsonToken;
 import com.fasterxml.jackson.core.StreamReadConstraints;
 
 import java.io.IOException;
-import java.io.UncheckedIOException;
 import java.io.UnsupportedEncodingException;
 import java.net.URLEncoder;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.HashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.StringJoiner;
 import java.util.concurrent.CompletableFuture;
@@ -33,6 +33,8 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.LongSupplier;
 import java.util.function.Supplier;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 import static ai.vespa.feed.client.OperationParameters.empty;
 import static java.nio.charset.StandardCharsets.UTF_8;
@@ -45,6 +47,8 @@ import static java.util.Objects.requireNonNull;
  * @author jonmv
  */
 class HttpFeedClient implements FeedClient {
+
+    private static final Logger log = Logger.getLogger(HttpFeedClient.class.getName());
 
     private static final Duration maxTimeout = Duration.ofMinutes(15);
     private static final JsonFactory jsonParserFactory = new JsonFactoryBuilder()
@@ -95,6 +99,11 @@ class HttpFeedClient implements FeedClient {
     }
 
     @Override
+    public void resetStats() {
+        requestStrategy.resetStats();
+    }
+
+    @Override
     public CircuitBreaker.State circuitBreakerState() {
         return requestStrategy.circuitBreakerState();
     }
@@ -127,11 +136,13 @@ class HttpFeedClient implements FeedClient {
                            if (thrown != null) {
                                while (thrown instanceof CompletionException)
                                    thrown = thrown.getCause();
-
+                               var finalThrown = thrown;
+                               log.log(Level.FINE, () -> String.format(Locale.ROOT, "Request %s failed: %s", request, finalThrown));
                                promise.completeExceptionally(thrown);
-                           }
-                           else
+                           } else {
+                               log.log(Level.FINE, () -> String.format(Locale.ROOT, "Request %s completed successfully: %s", request, result));
                                promise.complete(result);
+                           }
                        });
         return promise;
     }
@@ -139,16 +150,17 @@ class HttpFeedClient implements FeedClient {
     private void verifyConnection(FeedClientBuilderImpl builder, ClusterFactory clusterFactory) throws IOException {
         Instant start = Instant.now();
         try (Cluster cluster = clusterFactory.create()) {
+            var timeout = Duration.ofSeconds(30);
             HttpRequest request = new HttpRequest("POST",
                                                   getPath(DocumentId.of("feeder", "handshake", "dummy")),
                                                   getQuery(empty(), true),
                                                   requestHeaders,
                                                   null,
-                                                  Duration.ofSeconds(15),
+                                                  timeout,
                                                   nanoClock);
             CompletableFuture<HttpResponse> future = new CompletableFuture<>();
             cluster.dispatch(request, future);
-            HttpResponse response = future.get(20, TimeUnit.SECONDS);
+            HttpResponse response = future.get(timeout.plus(Duration.ofSeconds(5)).getSeconds(), TimeUnit.SECONDS);
             if (response.code() != 200) {
                 String message;
                 if (response.body() != null) switch (response.contentType()) {

@@ -40,7 +40,8 @@ public class InMemoryFlagSource extends AbstractComponent implements FlagSource 
     }
 
     public <T> InMemoryFlagSource withJacksonFlag(FlagId flagId, T value, Class<T> jacksonClass) {
-        return withRawFlag(flagId, new UnboundJacksonFlag<>(flagId, value, jacksonClass).serializer().serialize(value));
+        return withRawFlag(flagId, new UnboundJacksonFlag<>(flagId, value, new FetchVector(),
+                                                            jacksonClass, __ -> true).serializer().serialize(value));
     }
 
     public <T> InMemoryFlagSource withListFlag(FlagId flagId, List<T> value, Class<T> elementClass) {
@@ -60,5 +61,16 @@ public class InMemoryFlagSource extends AbstractComponent implements FlagSource 
     @Override
     public Optional<RawFlag> fetch(FlagId id, FetchVector vector) {
         return Optional.ofNullable(rawFlagsById.get(id));
+    }
+
+    @Override
+    public FlagSource snapshot() {
+        Map<FlagId, RawFlag> frozen = Map.copyOf(rawFlagsById);
+        return new FlagSource() {
+            @Override public Optional<RawFlag> fetch(FlagId id, FetchVector vector) {
+                return Optional.ofNullable(frozen.get(id));
+            }
+            @Override public FlagSource snapshot() { return this; }
+        };
     }
 }

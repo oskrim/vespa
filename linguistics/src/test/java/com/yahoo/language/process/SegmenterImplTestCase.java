@@ -43,7 +43,7 @@ public class SegmenterImplTestCase {
     }
 
     private static void assertSegments(String input, List<String> expectedSegments) {
-        assertEquals(expectedSegments, SEGMENTER.segment(input, Language.ENGLISH));
+        assertEquals(expectedSegments, SEGMENTER.segment(input, new LinguisticsParameters(null, Language.ENGLISH, StemMode.NONE, false, true)));
     }
 
     @Test
@@ -52,17 +52,17 @@ public class SegmenterImplTestCase {
         Segmenter fancySegmenter = new SegmenterImpl(fancyTokenizer);
         List<String> expectedSegments = List.of("juice", "\u00BD", "oz");
         String input = "juice \u00BD oz";
-        assertEquals(expectedSegments, fancySegmenter.segment(input, Language.ENGLISH));
+        assertEquals(expectedSegments, fancySegmenter.segment(input, new LinguisticsParameters(null, Language.ENGLISH, StemMode.NONE, false, true)));
     }
 
     private static class FancyTokenizer implements Tokenizer {
-        private Tokenizer backend = new SimpleTokenizer(new SimpleNormalizer());
+        private final Tokenizer backend = new SimpleTokenizer(new SimpleNormalizer());
 
         FancyTokenizer() {}
 
-        public Iterable<Token> tokenize(String input, Language language, StemMode stemMode, boolean removeAccents) {
+        public Iterable<Token> tokenize(String input, LinguisticsParameters parameters) {
             List<Token> output = new ArrayList<>();
-            for (Token token : backend.tokenize(input, language, stemMode, removeAccents)) {
+            for (Token token : backend.tokenize(input,parameters)) {
                 if ("\u00BD".equals(token.getOrig())) {
                     // emulate tokenizer turning "1/2" symbol into tree tokens ["1", "/", "2"]
                     Token nt1 = new SimpleToken("").

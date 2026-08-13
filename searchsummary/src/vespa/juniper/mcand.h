@@ -20,34 +20,27 @@ struct gtematch_cand {
 };
 using match_candidate_set = std::multiset<MatchCandidate*, gtematch_cand>;
 
-class MatchCandidate : public MatchElement
-{
+class MatchCandidate : public MatchElement {
 public:
     MatchElement** element;
 
-    enum accept_state
-    {
-        M_OK,
-        M_EXISTS,
-        M_OVERLAP,
-        M_EXPIRED,
-        M_MAX
-    };
+    enum accept_state { M_OK, M_EXISTS, M_OVERLAP, M_EXPIRED, M_MAX };
+
 private:
     QueryExpr* _match;
-    int _nelems, _elems;
+    int        _nelems, _elems;
     // _startpos in superclass
-    off_t _endpos;
-    off_t _endtoken;
-    long _docid;
-    off_t _ctxt_start;
-    size_t _elem_weight; // Combination of #elements and their weight, normal weight ~ 100
-    int _options;
-    int _overlap; // Handle terms matching multiple elements in ordered (distinct) mode
+    off_t    _endpos;
+    off_t    _endtoken;
+    long     _docid;
+    off_t    _ctxt_start;
+    size_t   _elem_weight; // Combination of #elements and their weight, normal weight ~ 100
+    int      _options;
+    int      _overlap; // Handle terms matching multiple elements in ordered (distinct) mode
     uint32_t _refcnt;  // reference count for this object
 
-    MatchCandidate(MatchCandidate &);
-    MatchCandidate &operator=(MatchCandidate &);
+    MatchCandidate(MatchCandidate&);
+    MatchCandidate& operator=(MatchCandidate&);
 
 public:
     keylist _klist;
@@ -55,7 +48,10 @@ public:
     MatchCandidate(QueryExpr* query, MatchElement** elms, off_t ctxt_start);
     ~MatchCandidate();
     void ref() { ++_refcnt; }
-    uint32_t deref() { --_refcnt; return _refcnt; }
+    uint32_t deref() {
+        --_refcnt;
+        return _refcnt;
+    }
     void set_valid() override;
     void dump(std::string& s) override;
 
@@ -110,8 +106,7 @@ public:
     // equals a 16-byte distance, while a 100 byte weight increase (typical term addition)
     // equals 1600 bytes of distance increase.
     //
-    inline int rank() const
-    {
+    inline int rank() const {
 #ifdef JUNIPER_1_0_RANK
         // Just kept this here for reference..
         return (_nelems << 14) - ((_distance & ~0x7) << 5) - (_startpos >> 8);
@@ -127,4 +122,3 @@ public:
     void log(std::string& logobj);
     void SetDocid(long id) { _docid = id; }
 };
-

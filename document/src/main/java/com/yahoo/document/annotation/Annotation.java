@@ -11,6 +11,7 @@ import com.yahoo.document.datatypes.FieldValue;
  * @see com.yahoo.document.annotation.AnnotationType
  * @author Einar M R Rosenvinge
  */
+@Deprecated(forRemoval = true)
 public class Annotation implements Comparable<Annotation> {
 
     private AnnotationType type;
@@ -158,11 +159,7 @@ public class Annotation implements Comparable<Annotation> {
         this.spanNode = spanNode;
     }
 
-    /**
-     * Returns the value of the annotation, if any.
-     *
-     * @return the value of the annotation, or null
-     */
+    /** Returns the value of the annotation, if any. */
     public FieldValue getFieldValue() {
         return value;
     }
@@ -221,9 +218,9 @@ public class Annotation implements Comparable<Annotation> {
 
     @Override
     public String toString() {
-        return type + " annotation " +
+        return type.getName() + " annotation" +
                ((value == null) ? " (no value)" : " (with value)") +
-               ((spanNode == null) ? " (no span)" : (" with span "+spanNode));
+               ((spanNode == null) ? " (no span)" : (" with span " + spanNode));
     }
 
 
@@ -258,4 +255,3 @@ public class Annotation implements Comparable<Annotation> {
     }
 
 }
-

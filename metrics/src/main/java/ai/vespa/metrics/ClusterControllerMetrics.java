@@ -14,6 +14,8 @@ public enum ClusterControllerMetrics implements VespaMetrics {
     UP_COUNT("cluster-controller.up.count", Unit.NODE, "Number of content nodes up"),
     CLUSTER_STATE_CHANGE_COUNT("cluster-controller.cluster-state-change.count", Unit.NODE, "Number of nodes changing state"),
     NODES_NOT_CONVERGED("cluster-controller.nodes-not-converged", Unit.NODE, "Number of nodes not converging to the latest cluster state version"),
+    STORED_DOCUMENT_COUNT("cluster-controller.stored-document-count", Unit.DOCUMENT, "Total number of unique documents stored in the cluster"),
+    STORED_DOCUMENT_BYTES("cluster-controller.stored-document-bytes", Unit.BYTE, "Combined byte size of all unique documents stored in the cluster (not including replication)"),
     CLUSTER_BUCKETS_OUT_OF_SYNC_RATIO("cluster-controller.cluster-buckets-out-of-sync-ratio", Unit.FRACTION, "Ratio of buckets in the cluster currently in need of syncing"),
     BUSY_TICK_TIME_MS("cluster-controller.busy-tick-time-ms", Unit.MILLISECOND, "Time busy"),
     IDLE_TICK_TIME_MS("cluster-controller.idle-tick-time-ms", Unit.MILLISECOND, "Time idle"),
@@ -24,10 +26,10 @@ public enum ClusterControllerMetrics implements VespaMetrics {
     // DO NOT RELY ON THIS METRIC YET.
     NODE_EVENT_COUNT("cluster-controller.node-event.count", Unit.OPERATION, "Number of node events"),
     RESOURCE_USAGE_NODES_ABOVE_LIMIT("cluster-controller.resource_usage.nodes_above_limit", Unit.NODE, "The number of content nodes above resource limit, blocking feed"),
-    RESOURCE_USAGE_MAX_MEMORY_UTILIZATION("cluster-controller.resource_usage.max_memory_utilization", Unit.FRACTION, "Current memory utilisation, for content node with highest value"),
-    RESOURCE_USAGE_MAX_DISK_UTILIZATION("cluster-controller.resource_usage.max_disk_utilization", Unit.FRACTION, "Current disk space utilisation, for content node with highest value"),
-    RESOURCE_USAGE_MEMORY_LIMIT("cluster-controller.resource_usage.memory_limit", Unit.FRACTION, "Disk space limit as a fraction of available disk space"),
-    RESOURCE_USAGE_DISK_LIMIT("cluster-controller.resource_usage.disk_limit", Unit.FRACTION, "Memory space limit as a fraction of available memory"),
+    RESOURCE_USAGE_MAX_MEMORY_UTILIZATION("cluster-controller.resource_usage.max_memory_utilization", Unit.FRACTION, "Current memory utilisation, for content node with the highest value"),
+    RESOURCE_USAGE_MAX_DISK_UTILIZATION("cluster-controller.resource_usage.max_disk_utilization", Unit.FRACTION, "Current disk space utilisation, for content node with the highest value"),
+    RESOURCE_USAGE_MEMORY_LIMIT("cluster-controller.resource_usage.memory_limit", Unit.FRACTION, "Memory space limit as a fraction of available memory"),
+    RESOURCE_USAGE_DISK_LIMIT("cluster-controller.resource_usage.disk_limit", Unit.FRACTION, "Disk space limit as a fraction of available disk space"),
     REINDEXING_PROGRESS("reindexing.progress", Unit.FRACTION, "Re-indexing progress");
 
 

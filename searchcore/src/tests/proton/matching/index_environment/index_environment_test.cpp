@@ -1,10 +1,11 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 #include <vespa/eval/eval/value_cache/constant_value.h>
 #include <vespa/searchcore/proton/matching/indexenvironment.h>
+#include <vespa/searchlib/fef/indexproperties.h>
 #include <vespa/searchlib/fef/onnx_models.h>
 #include <vespa/searchlib/fef/ranking_expressions.h>
-#include <vespa/vespalib/testkit/test_kit.h>
-#include <vespa/vespalib/testkit/test_master.hpp>
+#include <vespa/vespalib/gtest/gtest.h>
+#include <vespa/vespalib/test/test_path.h>
 
 using namespace proton::matching;
 using search::fef::FieldInfo;
@@ -14,6 +15,8 @@ using search::fef::OnnxModel;
 using search::fef::OnnxModels;
 using search::fef::Properties;
 using search::fef::RankingExpressions;
+using search::fef::indexproperties::IsFilterField;
+using search::fef::indexproperties::matching::FilterThreshold;
 using search::index::Schema;
 using search::index::schema::CollectionType;
 using search::index::schema::DataType;
@@ -22,13 +25,12 @@ using SAF = Schema::AttributeField;
 using SIAF = Schema::ImportedAttributeField;
 using SIF = Schema::IndexField;
 
-const std::string my_expr_ref(
-    "this is my reference ranking expression.\n"
-    "this is my reference ranking expression.\n"
-    "it will not compile into a function.\n"
-    "it will not compile into a function.\n"
-    "it is just some text, that can also be compressed...\n"
-    "it is just some text, that can also be compressed...\n");
+const std::string my_expr_ref("this is my reference ranking expression.\n"
+                              "this is my reference ranking expression.\n"
+                              "it will not compile into a function.\n"
+                              "it will not compile into a function.\n"
+                              "it is just some text, that can also be compressed...\n"
+                              "it is just some text, that can also be compressed...\n");
 
 RankingExpressions make_expressions() {
     RankingExpressions expr_list;
@@ -39,114 +41,107 @@ RankingExpressions make_expressions() {
 
 OnnxModels make_models() {
     OnnxModels::Vector list;
-    list.emplace_back(std::move(OnnxModel("model1", "path1").input_feature("input1","feature1").output_name("output1", "out1")));
+    list.emplace_back(
+        std::move(OnnxModel("model1", "path1").input_feature("input1", "feature1").output_name("output1", "out1")));
     list.emplace_back(OnnxModel("model2", "path2"));
     return {std::move(list)};
 }
 
 struct MyRankingAssetsRepo : public IRankingAssetsRepo {
     RankingExpressions _expressions;
-    OnnxModels _onnxModels;
+    OnnxModels         _onnxModels;
     MyRankingAssetsRepo(RankingExpressions expressions, OnnxModels onnxModels)
-        : _expressions(std::move(expressions)),
-          _onnxModels(std::move(onnxModels))
-    {}
+        : _expressions(std::move(expressions)), _onnxModels(std::move(onnxModels)) {}
     ~MyRankingAssetsRepo() override;
-    ConstantValue::UP getConstant(const std::string &) const override {
-        return {};
-    }
+    ConstantValue::UP getConstant(const std::string&) const override { return {}; }
 
-    std::string getExpression(const std::string & name) const override {
-        return _expressions.loadExpression(name);
-    }
+    std::string getExpression(const std::string& name) const override { return _expressions.loadExpression(name); }
 
-    const OnnxModel *getOnnxModel(const std::string & name) const override {
-        return _onnxModels.getModel(name);
-    }
+    const OnnxModel* getOnnxModel(const std::string& name) const override { return _onnxModels.getModel(name); }
 };
 
 MyRankingAssetsRepo::~MyRankingAssetsRepo() = default;
 
-Schema::UP
-buildSchema()
-{
+Schema::UP buildSchema() {
     Schema::UP result = std::make_unique<Schema>();
     result->addImportedAttributeField(SIAF("imported_a", DataType::INT32, CollectionType::SINGLE));
     result->addImportedAttributeField(SIAF("imported_b", DataType::STRING, CollectionType::ARRAY));
     return result;
 }
 
-Schema::UP
-buildEmptySchema()
-{
+Schema::UP buildEmptySchema() {
     return std::make_unique<Schema>();
 }
 
 struct Fixture {
     MyRankingAssetsRepo repo;
-    Schema::UP schema;
-    IndexEnvironment env;
-    explicit Fixture(Schema::UP schema_)
-        : repo(make_expressions(), make_models()),
-          schema(std::move(schema_)),
-          env(7, *schema, Properties(), repo)
-    {
-    }
-    const FieldInfo *assertField(size_t idx,
-                                 const std::string &name,
-                                 DataType dataType,
-                                 CollectionType collectionType) const {
-        const FieldInfo *field = env.getField(idx);
-        ASSERT_TRUE(field != nullptr);
-        EXPECT_EQUAL(field, env.getFieldByName(name));
-        EXPECT_EQUAL(name, field->name());
-        EXPECT_EQUAL(dataType, field->get_data_type());
+    Schema::UP          schema;
+    IndexEnvironment    env;
+    explicit Fixture(Schema::UP schema_, Properties props = Properties())
+        : repo(make_expressions(), make_models()), schema(std::move(schema_)), env(7, *schema, props, repo) {}
+    ~Fixture();
+    void assert_field_common(const FieldInfo* field, size_t idx, const std::string& name, DataType dataType,
+                             CollectionType collectionType) const {
+        EXPECT_EQ(field, env.getFieldByName(name));
+        EXPECT_EQ(name, field->name());
+        EXPECT_EQ(dataType, field->get_data_type());
         EXPECT_TRUE(collectionType == field->collection());
-        EXPECT_EQUAL(idx, field->id());
-        return field;
+        EXPECT_EQ(idx, field->id());
     }
-    void assertHiddenAttributeField(size_t idx,
-                                    const std::string &name,
-                                    DataType dataType,
+    void assertField(size_t idx, const std::string& name, DataType dataType, CollectionType collectionType) const {
+        SCOPED_TRACE("idx=" + std::to_string(idx) + ", name=" + name);
+        const FieldInfo* field = env.getField(idx);
+        ASSERT_NE(nullptr, field);
+        assert_field_common(field, idx, name, dataType, collectionType);
+    }
+    void assertHiddenAttributeField(size_t idx, const std::string& name, DataType dataType,
                                     CollectionType collectionType) const {
-        const FieldInfo *field = assertField(idx, name, dataType, collectionType);
+        SCOPED_TRACE("idx=" + std::to_string(idx) + ", name=" + name);
+        const FieldInfo* field = env.getField(idx);
+        ASSERT_NE(nullptr, field);
+        assert_field_common(field, idx, name, dataType, collectionType);
         EXPECT_FALSE(field->hasAttribute());
         EXPECT_TRUE(field->type() == FieldType::HIDDEN_ATTRIBUTE);
         EXPECT_TRUE(field->isFilter());
     }
-    void assertAttributeField(size_t idx,
-                              const std::string &name,
-                              DataType dataType,
+    void assertAttributeField(size_t idx, const std::string& name, DataType dataType,
                               CollectionType collectionType) const {
-        const FieldInfo *field = assertField(idx, name, dataType, collectionType);
+        SCOPED_TRACE("idx=" + std::to_string(idx) + ", name=" + name);
+        const FieldInfo* field = env.getField(idx);
+        ASSERT_NE(nullptr, field);
+        assert_field_common(field, idx, name, dataType, collectionType);
         EXPECT_TRUE(field->hasAttribute());
         EXPECT_TRUE(field->type() == FieldType::ATTRIBUTE);
         EXPECT_FALSE(field->isFilter());
     }
-    void assert_virtual_field(size_t idx,
-                              const std::string& name) const {
-        const auto* field = assertField(idx, name, DataType::COMBINED, CollectionType::ARRAY);
+    void assert_virtual_field(size_t idx, const std::string& name) const {
+        SCOPED_TRACE("idx=" + std::to_string(idx) + ", name=" + name);
+        const FieldInfo* field = env.getField(idx);
+        ASSERT_NE(nullptr, field);
+        assert_field_common(field, idx, name, DataType::COMBINED, CollectionType::ARRAY);
         EXPECT_TRUE(field->type() == FieldType::VIRTUAL);
     }
 };
 
-TEST_F("require that document meta store is always extracted in index environment", Fixture(buildEmptySchema()))
-{
-    ASSERT_EQUAL(1u, f.env.getNumFields());
-    TEST_DO(f.assertHiddenAttributeField(0, "[documentmetastore]", DataType::RAW, CollectionType::SINGLE));
+Fixture::~Fixture() = default;
+
+TEST(IndexEnvironmentTest, require_that_document_meta_store_is_always_extracted_in_index_environment) {
+    Fixture f(buildEmptySchema());
+    ASSERT_EQ(1u, f.env.getNumFields());
+    f.assertHiddenAttributeField(0, "[documentmetastore]", DataType::RAW, CollectionType::SINGLE);
 }
 
-TEST_F("require that distribution key is visible in index environment", Fixture(buildEmptySchema()))
-{
-    ASSERT_EQUAL(7u, f.env.getDistributionKey());
+TEST(IndexEnvironmentTest, require_that_distribution_key_is_visible_in_index_environment) {
+    Fixture f(buildEmptySchema());
+    ASSERT_EQ(7u, f.env.getDistributionKey());
 }
 
-TEST_F("require that imported attribute fields are extracted in index environment", Fixture(buildSchema()))
-{
-    ASSERT_EQUAL(3u, f.env.getNumFields());
-    TEST_DO(f.assertAttributeField(0, "imported_a", DataType::INT32, CollectionType::SINGLE));
-    TEST_DO(f.assertAttributeField(1, "imported_b", DataType::STRING, CollectionType::ARRAY));
-    EXPECT_EQUAL("[documentmetastore]", f.env.getField(2)->name());
+TEST(IndexEnvironmentTest, require_that_imported_attribute_fields_are_extracted_in_index_environment) {
+    Fixture f(buildSchema());
+    ASSERT_EQ(3u, f.env.getNumFields());
+    f.assertAttributeField(0, "imported_a", DataType::INT32, CollectionType::SINGLE);
+    f.assertAttributeField(1, "imported_b", DataType::STRING, CollectionType::ARRAY);
+    EXPECT_EQ("[documentmetastore]", f.env.getField(2)->name());
 }
 
 Schema::UP schema_with_virtual_fields() {
@@ -154,7 +149,8 @@ Schema::UP schema_with_virtual_fields() {
     //   * field person_map type map<int, person>, where the person struct has the fields name and year.
     //   * field int_map type map<int, int>
     //
-    // In this example 'person_map', 'person_map.value', and 'int_map' are virtual fields as seen from the ranking framework.
+    // In this example 'person_map', 'person_map.value', and 'int_map' are virtual fields as seen from the ranking
+    // framework.
     auto result = std::make_unique<Schema>();
     result->addAttributeField(SAF("person_map.key", DataType::INT32, CollectionType::ARRAY));
     result->addAttributeField(SAF("person_map.value.name", DataType::STRING, CollectionType::ARRAY));
@@ -167,47 +163,105 @@ Schema::UP schema_with_virtual_fields() {
     return result;
 }
 
-TEST_F("virtual fields are extracted in index environment", Fixture(schema_with_virtual_fields()))
-{
-    ASSERT_EQUAL(11u, f.env.getNumFields());
-    TEST_DO(f.assertAttributeField(0, "person_map.key", DataType::INT32, CollectionType::ARRAY));
-    TEST_DO(f.assertAttributeField(1, "person_map.value.name", DataType::STRING, CollectionType::ARRAY));
-    TEST_DO(f.assertAttributeField(2, "person_map.value.year", DataType::INT32, CollectionType::ARRAY));
-    TEST_DO(f.assertField(3, "url.hostname", DataType::STRING, CollectionType::SINGLE));
-    TEST_DO(f.assertField(4, "url.port", DataType::STRING, CollectionType::SINGLE));
-    TEST_DO(f.assertAttributeField(5, "int_map.key", DataType::INT32, CollectionType::ARRAY));
-    TEST_DO(f.assertAttributeField(6, "int_map.value", DataType::INT32, CollectionType::ARRAY));
-    EXPECT_EQUAL("[documentmetastore]", f.env.getField(7)->name());
-    TEST_DO(f.assert_virtual_field(8, "int_map"));
-    TEST_DO(f.assert_virtual_field(9, "person_map"));
-    TEST_DO(f.assert_virtual_field(10, "person_map.value"));
+TEST(IndexEnvironmentTest, virtual_fields_are_extracted_in_index_environment) {
+    Fixture f(schema_with_virtual_fields());
+    ASSERT_EQ(11u, f.env.getNumFields());
+    f.assertAttributeField(0, "person_map.key", DataType::INT32, CollectionType::ARRAY);
+    f.assertAttributeField(1, "person_map.value.name", DataType::STRING, CollectionType::ARRAY);
+    f.assertAttributeField(2, "person_map.value.year", DataType::INT32, CollectionType::ARRAY);
+    f.assertField(3, "url.hostname", DataType::STRING, CollectionType::SINGLE);
+    f.assertField(4, "url.port", DataType::STRING, CollectionType::SINGLE);
+    f.assertAttributeField(5, "int_map.key", DataType::INT32, CollectionType::ARRAY);
+    f.assertAttributeField(6, "int_map.value", DataType::INT32, CollectionType::ARRAY);
+    EXPECT_EQ("[documentmetastore]", f.env.getField(7)->name());
+    f.assert_virtual_field(8, "int_map");
+    f.assert_virtual_field(9, "person_map");
+    f.assert_virtual_field(10, "person_map.value");
 }
 
-TEST_F("require that onnx model config can be obtained", Fixture(buildEmptySchema())) {
+TEST(IndexEnvironmentTest, require_that_onnx_model_config_can_be_obtained) {
+    Fixture f1(buildEmptySchema());
     {
         auto model = f1.env.getOnnxModel("model1");
         ASSERT_TRUE(model != nullptr);
-        EXPECT_EQUAL(model->file_path(), std::string("path1"));
-        EXPECT_EQUAL(model->input_feature("input1").value(), std::string("feature1"));
-        EXPECT_EQUAL(model->output_name("output1").value(), std::string("out1"));
+        EXPECT_EQ(model->file_path(), std::string("path1"));
+        EXPECT_EQ(model->input_feature("input1").value(), std::string("feature1"));
+        EXPECT_EQ(model->output_name("output1").value(), std::string("out1"));
     }
     {
         auto model = f1.env.getOnnxModel("model2");
         ASSERT_TRUE(model != nullptr);
-        EXPECT_EQUAL(model->file_path(), std::string("path2"));
+        EXPECT_EQ(model->file_path(), std::string("path2"));
         EXPECT_FALSE(model->input_feature("input1").has_value());
         EXPECT_FALSE(model->output_name("output1").has_value());
     }
     EXPECT_TRUE(f1.env.getOnnxModel("model3") == nullptr);
 }
 
-TEST_F("require that external ranking expressions can be obtained", Fixture(buildEmptySchema())) {
-    auto expr1 = f1.env.getRankingExpression("expr1");
-    auto expr2 = f1.env.getRankingExpression("expr2");
-    auto expr3 = f1.env.getRankingExpression("expr3");
-    EXPECT_EQUAL(expr1, my_expr_ref);
-    EXPECT_EQUAL(expr2, my_expr_ref);
+TEST(IndexEnvironmentTest, require_that_external_ranking_expressions_can_be_obtained) {
+    Fixture f1(buildEmptySchema());
+    auto    expr1 = f1.env.getRankingExpression("expr1");
+    auto    expr2 = f1.env.getRankingExpression("expr2");
+    auto    expr3 = f1.env.getRankingExpression("expr3");
+    EXPECT_EQ(expr1, my_expr_ref);
+    EXPECT_EQ(expr2, my_expr_ref);
     EXPECT_TRUE(expr3.empty());
 }
 
-TEST_MAIN() { TEST_RUN_ALL(); }
+Schema::UP schema_with_index_fields() {
+    auto result = std::make_unique<Schema>();
+    result->addIndexField(SIF("a", DataType::STRING));
+    result->addIndexField(SIF("b", DataType::STRING));
+    result->addIndexField(SIF("c", DataType::STRING));
+    return result;
+}
+
+TEST(IndexEnvironmentTest, no_filter_threshold_settings_are_default) {
+    Fixture f(schema_with_index_fields());
+    auto    a = f.env.getFieldByName("a");
+    auto    b = f.env.getFieldByName("b");
+    auto    c = f.env.getFieldByName("c");
+    EXPECT_FALSE(a->isFilter());
+    EXPECT_FALSE(b->isFilter());
+    EXPECT_FALSE(c->isFilter());
+    EXPECT_FLOAT_EQ(1.0, a->get_filter_threshold().threshold());
+    EXPECT_FLOAT_EQ(1.0, b->get_filter_threshold().threshold());
+    EXPECT_FLOAT_EQ(1.0, c->get_filter_threshold().threshold());
+}
+
+TEST(IndexEnvironmentTest, is_filter_and_filter_threshold_settings_are_extracted_in_precedence_order) {
+    Properties p;
+    {
+        IsFilterField::set(p, "a");
+        FilterThreshold::set(p, "0.1");
+        // Note: 'is filter' setting has precedence over 'filter threshold' setting.
+        FilterThreshold::set_for_field(p, "a", "0.3");
+        FilterThreshold::set_for_field(p, "b", "0.2");
+    }
+    Fixture f(schema_with_index_fields(), p);
+    auto    a = f.env.getFieldByName("a");
+    auto    b = f.env.getFieldByName("b");
+    auto    c = f.env.getFieldByName("c");
+    EXPECT_TRUE(a->isFilter());
+    EXPECT_FALSE(b->isFilter());
+    EXPECT_FALSE(c->isFilter());
+    EXPECT_FLOAT_EQ(0.0, a->get_filter_threshold().threshold());
+    EXPECT_FLOAT_EQ(0.2, b->get_filter_threshold().threshold());
+    EXPECT_FLOAT_EQ(0.1, c->get_filter_threshold().threshold());
+}
+
+TEST(IndexEnvironmentTest, element_gap_is_populated) {
+    Properties p;
+    {
+        using ElementGap = search::fef::indexproperties::matching::ElementGap;
+        ElementGap::set_for_field(p, "a", "infinity");
+        ElementGap::set_for_field(p, "b", "42");
+    }
+    using ElementGap = search::fef::ElementGap;
+    Fixture f(schema_with_index_fields(), p);
+    EXPECT_EQ(ElementGap(std::nullopt), f.env.getFieldByName("a")->get_element_gap());
+    EXPECT_EQ(ElementGap(42), f.env.getFieldByName("b")->get_element_gap());
+    EXPECT_EQ(ElementGap(std::nullopt), f.env.getFieldByName("c")->get_element_gap());
+}
+
+GTEST_MAIN_RUN_ALL_TESTS()

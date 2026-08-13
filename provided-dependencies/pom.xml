@@ -11,6 +11,7 @@
     <version>8-SNAPSHOT</version>
     <relativePath>../parent/pom.xml</relativePath>
   </parent>
+  <name>${project.artifactId}</name>
   <artifactId>provided-dependencies</artifactId>
   <packaging>jar</packaging>
   <version>8-SNAPSHOT</version>
@@ -27,7 +28,15 @@
           <artifactId>org.apache.felix.log</artifactId>
         </exclusion>
         <exclusion>
-          <groupId>org.lz4</groupId>
+           <groupId>org.apache.felix</groupId>
+          <artifactId>org.apache.felix.bundlerepository</artifactId>
+        </exclusion>
+        <exclusion>
+          <groupId>org.apache.felix</groupId>
+          <artifactId>org.apache.felix.resolver</artifactId>
+        </exclusion>
+        <exclusion>
+          <groupId>at.yawk.lz4</groupId>
           <artifactId>lz4-java</artifactId>
         </exclusion>
       </exclusions>
@@ -52,7 +61,7 @@
 
     </dependency>
 
-    <!-- Dependencies used by container-core -->
+    <!-- Dependencies used by container-disc -->
     <dependency>
       <groupId>com.fasterxml.jackson.datatype</groupId>
       <artifactId>jackson-datatype-jsr310</artifactId>

@@ -10,6 +10,7 @@
     <version>8-SNAPSHOT</version>
     <relativePath>../parent/pom.xml</relativePath>
   </parent>
+  <name>${project.artifactId}</name>
   <artifactId>linguistics-components</artifactId>
   <packaging>container-plugin</packaging>
   <version>8-SNAPSHOT</version>
@@ -98,8 +99,8 @@
   <build>
     <plugins>
       <plugin>
-        <groupId>com.github.os72</groupId>
-        <artifactId>protoc-jar-maven-plugin</artifactId>
+        <groupId>io.github.ascopes</groupId>
+        <artifactId>protobuf-maven-plugin</artifactId>
       </plugin>
       <plugin>
         <groupId>com.yahoo.vespa</groupId>

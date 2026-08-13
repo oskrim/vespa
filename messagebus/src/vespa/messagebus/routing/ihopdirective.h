@@ -2,6 +2,7 @@
 #pragma once
 
 #include <vespa/messagebus/common.h>
+
 #include <memory>
 
 namespace mbus {
@@ -17,13 +18,7 @@ public:
     /**
      * Defines the various polymorphic variants of a hop directive.
      */
-    enum Type {
-        TYPE_ERROR,
-        TYPE_POLICY,
-        TYPE_ROUTE,
-        TYPE_TCP,
-        TYPE_VERBATIM
-    };
+    enum Type { TYPE_ERROR, TYPE_POLICY, TYPE_ROUTE, TYPE_TCP, TYPE_VERBATIM };
 
     /**
      * Convenience typedefs.
@@ -34,9 +29,7 @@ public:
     /**
      * Implements a virtual destructor to allow virtual methods.
      */
-    virtual ~IHopDirective() {
-        // empty
-    }
+    virtual ~IHopDirective() = default;
 
     /**
      * Returns the type of directive that this is.
@@ -51,7 +44,7 @@ public:
      * @param dir The directive to compare this to.
      * @return True if this matches the argument.
      */
-    virtual bool matches(const IHopDirective &dir) const = 0;
+    virtual bool matches(const IHopDirective& dir) const = 0;
 
     /**
      * Returns a string representation of this that can be parsed.
@@ -68,5 +61,4 @@ public:
     virtual string toDebugString() const = 0;
 };
 
-} // mbus
-
+} // namespace mbus

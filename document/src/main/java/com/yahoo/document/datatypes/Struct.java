@@ -20,7 +20,6 @@ import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Set;
 
-
 /**
  * @author Håkon Humberset
  */
@@ -127,11 +126,12 @@ public class Struct extends StructuredFieldValue {
             throw new IllegalArgumentException("Invalid null field pointer");
         }
         Field myField = getDataType().getField(field.getId());
-        if (myField==null) {
-            throw new IllegalArgumentException("No such field in "+getDataType()+" : "+field.getName());
+        if (myField == null) {
+            throw new IllegalArgumentException("No such field in " + getDataType() + ": " + field.getName());
         }
         if (!myField.getDataType().isValueCompatible(value)) {
-            throw new IllegalArgumentException("Incompatible data types. Got " + value.getDataType() + ", expected " + myField.getDataType());
+            throw new IllegalArgumentException("Incompatible data types in field '" + field.getName() +
+                                               "'. Got " + value.getDataType() + ", expected " + myField.getDataType());
         }
 
         if (myField.getId() != field.getId()) {
@@ -153,7 +153,7 @@ public class Struct extends StructuredFieldValue {
         if (found != null) {
             Hashlet<Integer, FieldValue> copy = new Hashlet<>();
             copy.reserve(values.size() - 1);
-            for (int i=0; i < values.size(); i++) {
+            for (int i = 0; i < values.size(); i++) {
                 if (values.key(i) != field.getId()) {
                     copy.put(values.key(i), values.value(i));
                 }
@@ -174,7 +174,7 @@ public class Struct extends StructuredFieldValue {
                 setFieldValue(otherEntry.getKey(), otherEntry.getValue());
             }
         } else {
-            throw new IllegalArgumentException("Type " + o.getClass() + " can not specify a " + getClass() + " instance");
+            throw new IllegalArgumentException("Type " + o.getClass() + " cannot specify a " + getClass() + " instance");
         }
     }
 
@@ -210,10 +210,12 @@ public class Struct extends StructuredFieldValue {
     public String toString() {
         StringBuilder retVal = new StringBuilder();
         retVal.append("Struct (").append(getDataType()).append("): ");
-        int [] increasing = getInOrder();
+        int[] increasing = getInOrder();
         for (int id : increasing) {
             retVal.append(getDataType().getField(id)).append("=").append(values.get(id)).append(", ");
         }
+        if (increasing.length > 0)
+            retVal.setLength(retVal.length() - 2);
         return retVal.toString();
     }
 

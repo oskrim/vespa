@@ -1,12 +1,9 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "signalhandler.h"
+
 #include "backtrace.h"
-#ifdef __APPLE__
-#define BOOST_STACKTRACE_GNU_SOURCE_NOT_REQUIRED
-#endif
-#include <boost/stacktrace/safe_dump_to.hpp> // Header-only dependency
-#include <boost/stacktrace/frame.hpp>
+
 #include <array>
 #include <atomic>
 #include <cassert>
@@ -24,12 +21,9 @@ namespace {
 // 31 bit concurrency counter, 1 (lsb) bit indicating shutdown
 std::atomic<int> signal_counter;
 
-class Shutdown
-{
+class Shutdown {
 public:
-    ~Shutdown() {
-        SignalHandler::shutdown();
-    }
+    ~Shutdown() { SignalHandler::shutdown(); }
 };
 
 struct SharedBacktraceData {
@@ -37,13 +31,13 @@ struct SharedBacktraceData {
     uint32_t              _n_dumped_frames{0};
     std::atomic<bool>     _want_backtrace{false};
     std::atomic<bool>     _signal_handler_done{false};
-    bool                  _signal_is_hooked{false}; // Non-atomic; written at process init time before threads are started
+    bool _signal_is_hooked{false}; // Non-atomic; written at process init time before threads are started
 };
 
 // We make the assumption that no extra threads can exist (and be traced) prior to global ctors being invoked.
 SharedBacktraceData _shared_backtrace_data;
 
-}
+} // namespace
 
 SignalHandler SignalHandler::HUP(SIGHUP);
 SignalHandler SignalHandler::INT(SIGINT);
@@ -63,9 +57,7 @@ SignalHandler SignalHandler::USR2(SIGUSR2);
 // Clear SignalHandler::_handlers in a slightly less unsafe manner.
 Shutdown shutdown;
 
-void
-SignalHandler::handleSignal(int signal) noexcept
-{
+void SignalHandler::handleSignal(int signal) noexcept {
     static_assert(std::atomic<int>::is_always_lock_free, "signal_counter must be lock free");
     if ((signal_counter.fetch_add(2) & 1) == 0) {
         if ((((size_t)signal) < _handlers.size()) && (_handlers[signal] != nullptr)) {
@@ -75,9 +67,7 @@ SignalHandler::handleSignal(int signal) noexcept
     signal_counter.fetch_sub(2);
 }
 
-void
-SignalHandler::gotSignal() noexcept
-{
+void SignalHandler::gotSignal() noexcept {
     if (_signal != SIGUSR2) {
         _gotSignal.store(1, std::memory_order_relaxed);
     } else {
@@ -85,26 +75,19 @@ SignalHandler::gotSignal() noexcept
     }
 }
 
-void
-SignalHandler::dump_current_thread_stack_to_shared_state() noexcept
-{
+void SignalHandler::dump_current_thread_stack_to_shared_state() noexcept {
     // Best-effort attempt at making signal handler reentrancy-safe
     bool expected = true;
     if (!_shared_backtrace_data._want_backtrace.compare_exchange_strong(expected, false)) {
         return; // Someone else is already inside the house...!
     }
-    auto& frames_buf = _shared_backtrace_data._stack_frames;
-    static_assert(std::is_same_v<const void*, boost::stacktrace::frame::native_frame_ptr_t>);
-    // Note: safe_dump_to() takes in buffer size in _bytes_, not in number of frames.
-    const auto n_frames = boost::stacktrace::safe_dump_to(frames_buf.data(), frames_buf.size() * sizeof(void*));
+    auto&        frames_buf = _shared_backtrace_data._stack_frames;
+    const size_t n_frames = signal_safe_collect_stack_frames(frames_buf.data(), frames_buf.size());
     _shared_backtrace_data._n_dumped_frames = static_cast<uint32_t>(n_frames);
     _shared_backtrace_data._signal_handler_done.store(true);
 }
 
-SignalHandler::SignalHandler(int signal)
-    : _signal(signal),
-      _gotSignal(0)
-{
+SignalHandler::SignalHandler(int signal) : _signal(signal), _gotSignal(0) {
     assert(signal >= 0);
     while (_handlers.size() < ((size_t)(signal + 1))) {
         _handlers.push_back(nullptr);
@@ -113,9 +96,7 @@ SignalHandler::SignalHandler(int signal)
     _handlers[signal] = this;
 }
 
-void
-SignalHandler::hook()
-{
+void SignalHandler::hook() {
     struct sigaction act;
     act.sa_handler = handleSignal;
     sigemptyset(&act.sa_mask);
@@ -123,9 +104,7 @@ SignalHandler::hook()
     sigaction(_signal, &act, nullptr);
 }
 
-void
-SignalHandler::ignore()
-{
+void SignalHandler::ignore() {
     struct sigaction act;
     act.sa_handler = SIG_IGN;
     sigemptyset(&act.sa_mask);
@@ -133,21 +112,15 @@ SignalHandler::ignore()
     sigaction(_signal, &act, nullptr);
 }
 
-bool
-SignalHandler::check() const
-{
+bool SignalHandler::check() const {
     return (_gotSignal.load(std::memory_order_relaxed) != 0);
 }
 
-void
-SignalHandler::clear()
-{
+void SignalHandler::clear() {
     _gotSignal.store(0, std::memory_order_relaxed);
 }
 
-void
-SignalHandler::unhook()
-{
+void SignalHandler::unhook() {
     struct sigaction act;
     act.sa_handler = SIG_DFL;
     sigemptyset(&act.sa_mask);
@@ -155,9 +128,7 @@ SignalHandler::unhook()
     sigaction(_signal, &act, nullptr);
 }
 
-void
-SignalHandler::enable_cross_thread_stack_tracing()
-{
+void SignalHandler::enable_cross_thread_stack_tracing() {
     USR2.hook(); // Our secret sauce
     _shared_backtrace_data._signal_is_hooked = true;
 }
@@ -184,9 +155,7 @@ SignalHandler::enable_cross_thread_stack_tracing()
  *  4. Caller exits poll-loop and assembles a complete stack trace from the frame
  *     addresses in the shared buffer, all demangled and shiny.
  */
-std::string
-SignalHandler::get_cross_thread_stack_trace(pthread_t thread_id)
-{
+std::string SignalHandler::get_cross_thread_stack_trace(pthread_t thread_id) {
     if (!_shared_backtrace_data._signal_is_hooked) {
         return "(cross-thread stack tracing is not enabled in process)";
     }
@@ -196,7 +165,7 @@ SignalHandler::get_cross_thread_stack_trace(pthread_t thread_id)
     }
 
     static std::mutex stack_dump_caller_mutex;
-    std::lock_guard guard(stack_dump_caller_mutex);
+    std::lock_guard   guard(stack_dump_caller_mutex);
 
     assert(!_shared_backtrace_data._want_backtrace.load());
     _shared_backtrace_data._want_backtrace.store(true);
@@ -211,13 +180,11 @@ SignalHandler::get_cross_thread_stack_trace(pthread_t thread_id)
         expected_done = true;
     }
     constexpr int frames_to_skip = 4; // handleSignal() -> gotSignal() -> dump_current_thread_...() -> backtrace()
-    return vespalib::getStackTrace(frames_to_skip, _shared_backtrace_data._stack_frames.data(),
-                                   static_cast<int>(_shared_backtrace_data._n_dumped_frames));
+    return getStackTrace(frames_to_skip, _shared_backtrace_data._stack_frames.data(),
+                         static_cast<int>(_shared_backtrace_data._n_dumped_frames));
 }
 
-void
-SignalHandler::shutdown()
-{
+void SignalHandler::shutdown() {
     while ((signal_counter.fetch_or(1) & ~1) != 0) {
         std::this_thread::sleep_for(10ms);
     }
@@ -231,7 +198,7 @@ SignalHandler::shutdown()
             }
         }
     }
-    std::vector<SignalHandler *>().swap(_handlers);
+    std::vector<SignalHandler*>().swap(_handlers);
 }
 
-} // vespalib
+} // namespace vespalib

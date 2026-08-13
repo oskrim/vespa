@@ -1,6 +1,5 @@
 package com.yahoo.vespa.indexinglanguage.expressions;
 
-import com.yahoo.document.DataType;
 import com.yahoo.document.datatypes.FieldValue;
 import com.yahoo.document.datatypes.NumericFieldValue;
 
@@ -12,9 +11,8 @@ import com.yahoo.document.datatypes.NumericFieldValue;
  */
 public final class BusyWaitExpression extends Expression {
 
-    public BusyWaitExpression() {
-        super(UnresolvedDataType.INSTANCE);
-    }
+    @Override
+    public boolean isMutating() { return false; }
 
     @Override
     protected void doExecute(ExecutionContext context) {
@@ -37,8 +35,8 @@ public final class BusyWaitExpression extends Expression {
         return (24 * (a+2))/(double)(a*(a+1)*(a+2)*(a+3));
     }
 
-    @Override public DataType createdOutputType() { return null; }
     @Override public String toString() { return "busy_wait"; }
     @Override public boolean equals(Object obj) { return obj instanceof BusyWaitExpression; }
     @Override public int hashCode() { return getClass().hashCode(); }
+
 }

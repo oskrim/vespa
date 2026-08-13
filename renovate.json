@@ -1,36 +1,44 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
-    "config:base"
+    "local>vespa-engine/renovate-config"
   ],
-  "dependencyDashboardApproval": true,
-  "transitiveRemediation": true,
   "prHourlyLimit": 20,
   "prConcurrentLimit": 20,
-  "ignorePaths": [],
-  "ignoreDeps": [],
-  "schedule": ["before 6am on thursday"],
-  "minimumReleaseAge": "14 days",
   "packageRules": [
     {
-      "description": "Disable version updates for Vespa artifacts",
-      "matchPackagePatterns": ["^com\\.yahoo\\.vespa"],
-      "matchManagers": ["maven"],
-      "enabled": false
-    },
-    {
-      "description": "Disable automatic PRs for artifacts, e.g. fixed version required like ZK dependencies or released to frequently. PRs can still be created manually from dependency dashboard.",
       "matchPackageNames": [
-        "javax.servlet:javax.servlet-api",
-        "io.dropwizard.metrics:metrics-core",
-        "org.apache.zookeeper:zookeeper"
+        "net.bytebuddy:byte-buddy",
+        "net.bytebuddy:byte-buddy-agent"
       ],
-      "dependencyDashboardApproval": true
+      "allowedVersions": "!/-jdk5$/"
     },
+    // Need to wait for Vespa 9 before using Jetty 12.1.x or higher
     {
-      "description": "Disable automatic PRs for new major versions. PRs can still be created manually from dependency dashboard.",
-      "matchUpdateTypes": ["major"],
-      "dependencyDashboardApproval": true
+      "matchUpdateTypes": ["minor"],
+      "enabled": false,
+      "matchPackageNames": [
+        "org.eclipse.jetty:{/,}**",
+        "org.eclipse.jetty.http2:{/,}**"
+      ]
+    },
+    // Jackson 2.21 is the Long Term support release, stick to that until next LTS release (2.22 and 2.23 are not LTS)
+    {
+      "matchPackageNames": [
+        "com.fasterxml.jackson.core:{/,}**",
+        "com.fasterxml.jackson.dataformat:{/,}**",
+        "com.fasterxml.jackson.datatype:{/,}**",
+        "com.fasterxml.jackson.module:{/,}**",
+      ],
+      "allowedVersions": "< 2.22.0 || >= 2.24.0"
+    },
+    // Don't update, need to keep it in sync with netty and we have a check through netty bom that takes care of that
+    {
+      "matchPackageNames": [
+	"io.netty:netty-tcnative",
+	"io.netty:netty-tcnative-boringssl-static"
+      ],
+      "enabled": false
     }
   ]
 }

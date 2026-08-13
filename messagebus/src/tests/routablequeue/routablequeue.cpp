@@ -3,40 +3,50 @@
 #include <vespa/messagebus/routablequeue.h>
 #include <vespa/messagebus/testlib/simplemessage.h>
 #include <vespa/messagebus/testlib/simplereply.h>
-#include <vespa/vespalib/testkit/test_kit.h>
+#include <vespa/vespalib/gtest/gtest.h>
 
 using namespace mbus;
 
 class TestMessage : public SimpleMessage {
 private:
-    uint32_t _id;
+    uint32_t        _id;
     static uint32_t _cnt;
+
 public:
     TestMessage(uint32_t id) : SimpleMessage(""), _id(id) { ++_cnt; }
-    ~TestMessage() { --_cnt; }
+    ~TestMessage() override;
     uint32_t getType() const override { return _id; }
     static uint32_t getCnt() { return _cnt; }
 };
 uint32_t TestMessage::_cnt = 0;
 
+TestMessage::~TestMessage() {
+    --_cnt;
+}
+
 class TestReply : public SimpleReply {
 private:
-    uint32_t _id;
+    uint32_t        _id;
     static uint32_t _cnt;
+
 public:
     TestReply(uint32_t id) : SimpleReply(""), _id(id) { ++_cnt; }
-    ~TestReply() { --_cnt; }
+    ~TestReply() override;
     uint32_t getType() const override { return _id; }
     static uint32_t getCnt() { return _cnt; }
 };
 uint32_t TestReply::_cnt = 0;
 
-TEST("routablequeue_test") {
+TestReply::~TestReply() {
+    --_cnt;
+}
+
+TEST(RoutableQueueTest, routablequeue_test) {
     {
         RoutableQueue rq;
         EXPECT_TRUE(rq.size() == 0);
-        EXPECT_TRUE(rq.dequeue().get() == 0);
-        EXPECT_TRUE(rq.dequeue(100ms).get() == 0);
+        EXPECT_TRUE(rq.dequeue().get() == nullptr);
+        EXPECT_TRUE(rq.dequeue(100ms).get() == nullptr);
         EXPECT_TRUE(TestMessage::getCnt() == 0);
         EXPECT_TRUE(TestReply::getCnt() == 0);
         rq.enqueue(Routable::UP(new TestMessage(101)));
@@ -100,4 +110,4 @@ TEST("routablequeue_test") {
     EXPECT_TRUE(TestReply::getCnt() == 0);
 }
 
-TEST_MAIN() { TEST_RUN_ALL(); }
+GTEST_MAIN_RUN_ALL_TESTS()

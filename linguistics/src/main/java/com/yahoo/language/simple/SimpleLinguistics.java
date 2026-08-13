@@ -2,7 +2,6 @@
 package com.yahoo.language.simple;
 
 import com.yahoo.component.annotation.Inject;
-import com.yahoo.component.AbstractComponent;
 import com.yahoo.language.Linguistics;
 import com.yahoo.language.detect.Detector;
 import com.yahoo.language.process.CharacterClasses;
@@ -70,5 +69,10 @@ public class SimpleLinguistics implements Linguistics {
 
     @Override
     public boolean equals(Linguistics other) { return (other instanceof SimpleLinguistics); }
+
+    @Override
+    public String toString() {
+        return "SimpleLinguistics";
+    }
 
 }

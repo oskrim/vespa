@@ -32,24 +32,17 @@ import java.util.Set;
  * @author baldersheim
  * @author arnej
  */
+@SuppressWarnings({"deprecation", "removal"})
 public class DocumentManager {
-
-    private boolean useV8GeoPositions = false;
-
-    public DocumentManager useV8GeoPositions(boolean useV8GeoPositions) {
-        this.useV8GeoPositions = useV8GeoPositions;
-        return this;
-    }
 
     public DocumentmanagerConfig.Builder produce(DocumentModel model,
                                                  DocumentmanagerConfig.Builder documentConfigBuilder) {
         return produceDocTypes(model, documentConfigBuilder);
-    }   
+    }
 
     // Alternate (new) way to build config:
 
     public DocumentmanagerConfig.Builder produceDocTypes(DocumentModel model, DocumentmanagerConfig.Builder builder) {
-        builder.usev8geopositions(this.useV8GeoPositions);
         Map<NewDocumentType.Name, NewDocumentType> produced = new HashMap<>();
         var indexMap = new IdxMap();
         for (NewDocumentType documentType : model.getDocumentManager().getTypes()) {

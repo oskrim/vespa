@@ -11,7 +11,7 @@ import com.yahoo.language.process.Stemmer;
 import com.yahoo.language.process.StemmerImpl;
 import com.yahoo.language.process.Tokenizer;
 import com.yahoo.language.simple.SimpleLinguistics;
-import static com.yahoo.language.opennlp.OpenNlpTokenizer.Mode.*;
+import static com.yahoo.language.opennlp.OpenNlpTokenizer.Mode.query;
 
 /**
  * A linguistics implementation based on OpenNlp.
@@ -35,7 +35,7 @@ public class OpenNlpLinguistics extends SimpleLinguistics {
         this.snowballStemmingForEnglish = config.snowballStemmingForEnglish();
         this.cjk = config.cjk();
         this.createCjkGrams = config.createCjkGrams();
-        this.detector = new OpenNlpDetector();
+        this.detector = new OpenNlpDetector(config.detectConfidenceThreshold());
     }
 
     @Override
@@ -59,6 +59,11 @@ public class OpenNlpLinguistics extends SimpleLinguistics {
 
     @Override
     public boolean equals(Linguistics other) { return (other instanceof OpenNlpLinguistics); }
+
+    @Override
+    public String toString() {
+        return "OpenNlpLinguistics";
+    }
 
     private Tokenizer forQuerying(Tokenizer tokenizer) {
         if ( ! (tokenizer.getClass() == OpenNlpTokenizer.class)) // this has been subclassed and partially overridden

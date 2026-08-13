@@ -1,6 +1,5 @@
 package com.yahoo.vespa.indexinglanguage.expressions;
 
-import com.yahoo.document.DataType;
 import com.yahoo.document.datatypes.FieldValue;
 import com.yahoo.document.datatypes.NumericFieldValue;
 
@@ -12,12 +11,8 @@ import com.yahoo.document.datatypes.NumericFieldValue;
  */
 public final class SleepExpression extends Expression {
 
-    public SleepExpression() {
-        super(UnresolvedDataType.INSTANCE);
-    }
-
     @Override
-    protected void doVerify(VerificationContext context) { }
+    public boolean isMutating() { return false; }
 
     @Override
     protected void doExecute(ExecutionContext context) {
@@ -33,7 +28,6 @@ public final class SleepExpression extends Expression {
         }
     }
 
-    @Override public DataType createdOutputType() { return null; }
     @Override public String toString() { return "sleep"; }
     @Override public boolean equals(Object obj) { return obj instanceof SleepExpression; }
     @Override public int hashCode() { return getClass().hashCode(); }

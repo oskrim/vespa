@@ -2,7 +2,7 @@
 package com.yahoo.vespa.model.application.validation;
 
 import com.yahoo.config.model.NullConfigModelRegistry;
-import com.yahoo.config.model.deploy.DeployState;
+import com.yahoo.config.model.deploy.TestDeployState;
 import com.yahoo.config.model.test.MockApplicationPackage;
 import com.yahoo.vespa.model.VespaModel;
 import org.junit.jupiter.api.Test;
@@ -34,6 +34,25 @@ public class DeploymentSpecValidatorTest {
                 "deployment.xml does not match any container cluster ID", deploymentXml);
     }
 
+    @Test
+    void requireUniqueInstanceId() {
+        String deploymentXml = """
+                    <deployment version="1.0" cloud-account="aws:010438471985">
+                    <instance id="default" tags="search">
+                        <prod>
+                            <region>aws-us-west-2a</region>
+                        </prod>
+                    </instance>
+                    <instance id="default" tags="canary">
+                        <prod>
+                            <region>aws-us-west-2a</region>
+                        </prod>
+                    </instance>
+                </deployment>
+                """;
+        assertValidationError("Duplicate instance name 'default' specified in deployment.xml.", deploymentXml);
+    }
+
     private static void assertValidationError(String message, String deploymentXml) {
         var simpleHosts = "<?xml version=\"1.0\" encoding=\"utf-8\" ?>" +
                           "<hosts>  " +
@@ -59,9 +78,8 @@ public class DeploymentSpecValidatorTest {
                 .withServices(services)
                 .withDeploymentSpec(deploymentXml)
                 .build();
-        var builder = new DeployState.Builder().applicationPackage(app);
+        var deployState = TestDeployState.create(app);
         try {
-            var deployState = builder.build();
             VespaModel model = new VespaModel(new NullConfigModelRegistry(), deployState);
             ValidationTester.validate(new DeploymentSpecValidator(), model, deployState);
             fail("Did not get expected exception");

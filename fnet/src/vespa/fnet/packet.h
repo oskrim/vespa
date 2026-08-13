@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include <cstdint>
 #include <memory>
 #include <string>
 
@@ -15,8 +16,7 @@ class FNET_DataBuffer;
  * object. The content of a DataBuffer may also be decoded into packet
  * member variables.
  **/
-class FNET_Packet
-{
+class FNET_Packet {
 public:
     using UP = std::unique_ptr<FNET_Packet>;
     using SP = std::shared_ptr<FNET_Packet>;
@@ -25,8 +25,7 @@ public:
     FNET_Packet() {}
 
     /** Does nothing. **/
-    virtual ~FNET_Packet() {}
-
+    virtual ~FNET_Packet() = default;
 
     /**
      * This method is called to indicate that there is no more need for
@@ -37,7 +36,6 @@ public:
      **/
     virtual void Free() { delete this; }
 
-
     /**
      * Check if this is a regular packet. A regular packet may be
      * encoded into a DataBuffer and sent accross the network. Regular
@@ -46,7 +44,6 @@ public:
      * @return whether this is a regular packet (true)
      **/
     virtual bool IsRegularPacket() { return true; }
-
 
     /**
      * Check if this is a control packet. A control packet is a special
@@ -57,7 +54,6 @@ public:
      * @return whether this is a control packet (false)
      **/
     virtual bool IsControlPacket() { return false; }
-
 
     /**
      * Method used to extract the command associated with this
@@ -70,7 +66,6 @@ public:
      **/
     virtual uint32_t GetCommand() { return 0; }
 
-
     /**
      * Convenience method used to check whether this packet is a control
      * packet signaling the loss of a channel. This method should return
@@ -82,7 +77,6 @@ public:
      * @return is this a channel lost packet ? (false)
      **/
     virtual bool IsChannelLostCMD() { return false; }
-
 
     /**
      * Convenience method used to check whether this packet is a control
@@ -99,7 +93,6 @@ public:
      **/
     virtual bool IsTimeoutCMD() { return false; }
 
-
     /**
      * Convenience method used to check whether this packet is a control
      * packet signaling a bad packet. This method should return true if
@@ -115,18 +108,15 @@ public:
      **/
     virtual bool IsBadPacketCMD() { return false; }
 
-
     /**
      * @return the packet code for this packet.
      **/
     virtual uint32_t GetPCODE() = 0;
 
-
     /**
      * @return encoded packet length in bytes
      **/
     virtual uint32_t GetLength() = 0;
-
 
     /**
      * Encode this packet into a DataBuffer. This method may only be
@@ -134,8 +124,7 @@ public:
      *
      * @param dst the target databuffer
      **/
-    virtual void Encode(FNET_DataBuffer *dst) = 0;
-
+    virtual void Encode(FNET_DataBuffer* dst) = 0;
 
     /**
      * Decode data from the given DataBuffer and store that information
@@ -146,8 +135,7 @@ public:
      * @param src the data source
      * @param len length of the streamed representation
      **/
-    virtual bool Decode(FNET_DataBuffer *src, uint32_t len) = 0;
-
+    virtual bool Decode(FNET_DataBuffer* src, uint32_t len) = 0;
 
     /**
      * Print a textual representation of this packet to stdout. This

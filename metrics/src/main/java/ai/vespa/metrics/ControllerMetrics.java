@@ -40,19 +40,27 @@ public enum ControllerMetrics implements VespaMetrics {
     DEPLOYMENT_BROKEN_SYSTEM_VERSION("deployment.brokenSystemVersion", Unit.BINARY, "Deployment: Value 1 for broken system versions, 0 if not"),
     REMAINING_ROTATIONS("remaining_rotations", Unit.ROTATION, "Remaining rotations"),
     DNS_QUEUED_REQUESTS("dns.queuedRequests", Unit.REQUEST, "Queued DNS requests"),
+    CLOUD_QUOTA_USAGE("cloud.quota.usage", Unit.FRACTION, "Cloud Quota usage per resource type"),
     ZMS_QUOTA_USAGE("zms.quota.usage", Unit.FRACTION, "ZMS Quota usage per resource type"),
+    STRONGDM_RESOURCES("strongdm.resources", Unit.ITEM, "The number of StrongDM resources"),
     COREDUMP_PROCESSED("coredump.processed", Unit.FAILURE,"Controller: Core dumps processed"),
     AUTH0_EXCEPTIONS("auth0.exceptions", Unit.FAILURE, "Controller: Auth0 exceptions"),
     CERTIFICATE_POOL_AVAILABLE("certificate_pool_available", Unit.FRACTION, "Available certificates in the pool, fraction of configured size"),
     CERTIFICATE_COUNT("certificate.activeCount", Unit.ITEM, "The total number of active certificates in the system"),
     CERTIFICATE_NAME_COUNT("certificate.activeNameCount", Unit.ITEM, "The total number of names (CN + SAN fields) across all active certificate in the system"),
+    CERTIFICATE_REQUEST_EXCEPTIONS("requestCaSignedCertificate.exception", Unit.FAILURE, "Controller: Exceptions when requesting CA signed certificates"),
     BILLING_CREDITS("billing.credits.remaining", Unit.DOLLAR, "Controller: Billing credits remaining"),
+    BILLING_CREDITS_GLOBAL("billing.credits.global_percent", Unit.PERCENTAGE, "Controller: total percentage of global hourly credit limit used"),
     BILLING_EXCEPTIONS("billing.exceptions", Unit.FAILURE, "Controller: Billing related exceptions"),
     BILLING_WEBHOOK_FAILURES("billing.webhook.failures", Unit.FAILURE, "Controller: webhook failures"),
     BILLING_WEBHOOK_REQUESTS("billing.webhook.requests", Unit.REQUEST, "Controller: webhook requests"),
     HUBSPOT_EXCEPTIONS("hubspot.exceptions", Unit.FAILURE, "Controller: Hubspot exceptions"),
     HUBSPOT_LAST_SUCCESS("hubspot.last_success", Unit.SECONDS_SINCE_EPOCH, "Controller: Last successful Hubspot synchronization"),
     TENANT_CREATED_LAST_SUCCESS("tenant.created.last_success", Unit.SECONDS_SINCE_EPOCH, "Controller: Last successful tenant creation"),
+    ATLASSIAN_EXCEPTIONS("atlassian.exceptions", Unit.FAILURE, "Controller: Atlassian exceptions"),
+    ATLASSIAN_LAST_SUCCESS("atlassian.last_success", Unit.SECONDS_SINCE_EPOCH, "Controller: Last successful Atlassian synchronization"),
+    ATLASSIAN_ASSETS("atlassian.assets", Unit.ITEM, "Controller: Number of assets in Atlassian"),
+    ATLASSIAN_SERVICEDESK_CUSTOMERS("atlassian.servicedesk.customers", Unit.ITEM, "Controller: Number of customers in the Atlassian Service Desk"),
 
     // Metrics per API, metrics names generated in ControllerMaintainer/MetricsReporter
     OPERATION_APPLICATION("operation.application", Unit.REQUEST, "Controller: Requests for /application API"),
@@ -76,7 +84,14 @@ public enum ControllerMetrics implements VespaMetrics {
 
     MAIL_SENT("mail.sent", Unit.OPERATION, "Mail sent"),
     MAIL_FAILED("mail.failed", Unit.OPERATION, "Mail delivery failed"),
-    MAIL_THROTTLED("mail.throttled", Unit.OPERATION, "Mail delivery throttled");
+    MAIL_THROTTLED("mail.throttled", Unit.OPERATION, "Mail delivery throttled"),
+
+    AWS_S3_POOL_LEASED_CONCURRENCY("aws.s3.pool.leased_concurrency", Unit.CONNECTION, "Controller: S3 connection pool leased connections"),
+    AWS_S3_POOL_AVAILABLE_CONCURRENCY("aws.s3.pool.available_concurrency", Unit.CONNECTION, "Controller: S3 connection pool available connections"),
+    AWS_S3_POOL_MAX_CONCURRENCY("aws.s3.pool.max_concurrency", Unit.CONNECTION, "Controller: S3 connection pool max connections"),
+    AWS_S3_POOL_PENDING_CONCURRENCY_ACQUIRES("aws.s3.pool.pending_concurrency_acquires", Unit.CONNECTION, "Controller: S3 connection pool pending acquire requests"),
+    AWS_S3_POOL_CONCURRENCY_ACQUIRE_DURATION("aws.s3.pool.concurrency_acquire_duration", Unit.MILLISECOND, "Controller: S3 connection pool acquire duration"),
+    AWS_S3_POOL_OPEN_STREAMS("aws.s3.pool.open_streams", Unit.CONNECTION, "Controller: S3 open response streams not yet closed");
 
 
     private final String name;

@@ -10,13 +10,16 @@ import com.yahoo.document.datatypes.StringFieldValue;
  */
 public final class HexEncodeExpression extends Expression {
 
-    public HexEncodeExpression() {
-        super(DataType.LONG);
+    @Override
+    public DataType setInputType(DataType inputType, TypeContext context) {
+        super.setInputType(inputType, DataType.LONG, context);
+        return DataType.STRING;
     }
 
     @Override
-    protected void doVerify(VerificationContext context) {
-        context.setCurrentType(createdOutputType());
+    public DataType setOutputType(DataType outputType, TypeContext context) {
+        super.setOutputType(DataType.STRING, outputType, null, context);
+        return DataType.LONG;
     }
 
     @Override
@@ -24,9 +27,6 @@ public final class HexEncodeExpression extends Expression {
         long input = ((LongFieldValue) context.getCurrentValue()).getLong();
         context.setCurrentValue(new StringFieldValue(Long.toHexString(input)));
     }
-
-    @Override
-    public DataType createdOutputType() { return DataType.STRING; }
 
     @Override
     public String toString() { return "hexencode"; }

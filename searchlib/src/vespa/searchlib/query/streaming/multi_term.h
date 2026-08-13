@@ -4,14 +4,18 @@
 
 #include "queryterm.h"
 
+#include <optional>
+
 namespace search::fef {
 
 class ITermData;
 class MatchData;
 
-}
+} // namespace search::fef
 
-namespace search::query { class TermVector; }
+namespace search::query {
+class TermVector;
+}
 
 namespace search::streaming {
 
@@ -23,6 +27,8 @@ namespace search::streaming {
 class MultiTerm : public QueryTerm {
 protected:
     std::vector<std::unique_ptr<QueryTerm>> _terms;
+    std::optional<bool>                     _cached_evaluate_result;
+
 public:
     MultiTerm(std::unique_ptr<QueryNodeResultBase> result_base, string index, uint32_t num_terms);
     MultiTerm(std::unique_ptr<QueryNodeResultBase> result_base, string index,
@@ -36,8 +42,9 @@ public:
      */
     virtual bool multi_index_terms() const noexcept;
     void reset() override;
-    bool evaluate() const override;
+    bool evaluate() override;
     const std::vector<std::unique_ptr<QueryTerm>>& get_terms() const noexcept { return _terms; }
+    virtual void get_element_ids(std::vector<uint32_t>& element_ids) override = 0;
 };
 
-}
+} // namespace search::streaming

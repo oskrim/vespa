@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.time.Duration;
@@ -45,7 +46,8 @@ class CliArgumentsTest {
                 "--show-errors",
                 "--show-all",
                 "--max-failure-seconds", "30",
-                "--proxy", "https://myproxy:1234"});
+                "--proxy", "https://myproxy:1234",
+                "--initial-inflight-factor", "64"});
         assertEquals(URI.create("https://vespa.ai:4443/"), args.endpoint());
         assertEquals(Paths.get("feed.json"), args.inputFile().get());
         assertEquals(10, args.connections().getAsInt());
@@ -70,6 +72,7 @@ class CliArgumentsTest {
         assertFalse(args.showProgress());
         assertEquals(Compression.gzip, args.compression());
         assertEquals(URI.create("https://myproxy:1234"), args.proxy().orElse(null));
+        assertEquals(64, args.initialInflightFactor().getAsInt());
     }
 
     @Test
@@ -107,8 +110,8 @@ class CliArgumentsTest {
 
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         args.printHelp(out);
-        String text = out.toString();
-        String expectedHelp = new String(Files.readAllBytes(Paths.get("src", "test", "resources", "help.txt")));
+        String text = out.toString(StandardCharsets.UTF_8);
+        String expectedHelp = new String(Files.readAllBytes(Paths.get("src", "test", "resources", "help.txt")), StandardCharsets.UTF_8);
         assertEquals(expectedHelp, text);
     }
 

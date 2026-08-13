@@ -13,8 +13,8 @@ class TlsStatsMap;
  */
 class ITlsStatsFactory {
 public:
-    virtual ~ITlsStatsFactory() { }
+    virtual ~ITlsStatsFactory() = default;
     virtual TlsStatsMap create() = 0;
 };
 
-}
+} // namespace proton::flushengine

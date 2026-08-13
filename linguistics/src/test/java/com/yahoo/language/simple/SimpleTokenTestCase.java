@@ -5,7 +5,12 @@ import com.yahoo.language.process.TokenScript;
 import com.yahoo.language.process.TokenType;
 import org.junit.Test;
 
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotEquals;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertSame;
+import static org.junit.Assert.assertTrue;
 
 /**
  * @author Simon Thoresen Hult
@@ -18,7 +23,7 @@ public class SimpleTokenTestCase {
         assertEquals("foo", token.getOrig());
 
         assertEquals(token, new SimpleToken("foo"));
-        assertFalse(token.equals(new SimpleToken("bar")));
+        assertNotEquals(token, new SimpleToken("bar"));
     }
 
     @Test
@@ -34,16 +39,16 @@ public class SimpleTokenTestCase {
         assertSame(baz, token.getComponent(1));
 
         SimpleToken other = new SimpleToken("foo");
-        assertFalse(token.equals(other));
+        assertNotEquals(token, other);
         other.addComponent(bar);
-        assertFalse(token.equals(other));
+        assertNotEquals(token, other);
         other.addComponent(baz);
         assertEquals(token, other);
 
         other = new SimpleToken("foo");
         other.addComponent(baz);
         other.addComponent(bar);
-        assertFalse(token.equals(other));
+        assertNotEquals(token, other);
     }
 
     @Test
@@ -63,7 +68,7 @@ public class SimpleTokenTestCase {
         token.setTokenString("bar");
         assertEquals("bar", token.getTokenString());
         SimpleToken other = new SimpleToken("foo");
-        assertFalse(token.equals(other));
+        assertNotEquals(token, other);
         other.setTokenString("bar");
         assertEquals(token, other);
     }
@@ -83,7 +88,7 @@ public class SimpleTokenTestCase {
             if (type == token.getType()) {
                 assertEquals(token, other);
             } else {
-                assertFalse(token.equals(other));
+                assertNotEquals(token, other);
             }
         }
     }
@@ -103,7 +108,7 @@ public class SimpleTokenTestCase {
             if (script == token.getScript()) {
                 assertEquals(token, other);
             } else {
-                assertFalse(token.equals(other));
+                assertNotEquals(token, other);
             }
         }
     }
@@ -119,7 +124,7 @@ public class SimpleTokenTestCase {
 
         SimpleToken other = new SimpleToken("foo");
         other.setSpecialToken(true);
-        assertFalse(token.equals(other));
+        assertNotEquals(token, other);
         other.setSpecialToken(false);
         assertEquals(token, other);
     }
@@ -132,9 +137,25 @@ public class SimpleTokenTestCase {
         assertEquals(69, token.getOffset());
 
         SimpleToken other = new SimpleToken("foo");
-        assertFalse(token.equals(other));
+        assertNotEquals(token, other);
         other.setOffset(69);
         assertEquals(token, other);
+    }
+
+    @Test
+    public void testToString() {
+        assertEquals("token 'foo'", new SimpleToken("foo", "foo").toString());
+
+        assertEquals("token 'foo' (original: 'Foo')", new SimpleToken("Foo", "foo").toString());
+
+        var token1 = new SimpleToken("Wi-Fi", "wi");
+        token1.addStem("wifi");
+        assertEquals("token 'wi' (stems: [wifi], original: 'Wi-Fi')", token1.toString());
+
+        var token2 = new SimpleToken("Wi-Fi", "wi");
+        token2.addStem("wifi");
+        token2.addStem("wiifi");
+        assertEquals("token 'wi' (stems: [wifi, wiifi], original: 'Wi-Fi')", token2.toString());
     }
 
     @Test
@@ -187,7 +208,7 @@ public class SimpleTokenTestCase {
 
     @Test
     public void requireThatEqualsIsImplemented() {
-        assertFalse(new SimpleToken("foo").equals(new Object()));
+        assertNotEquals(new SimpleToken("foo"), new Object());
         assertEquals(new SimpleToken("foo"), new SimpleToken("foo"));
     }
 

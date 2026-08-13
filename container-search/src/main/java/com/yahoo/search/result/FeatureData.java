@@ -1,21 +1,32 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.search.result;
+import java.nio.charset.StandardCharsets;
 
+import com.fasterxml.jackson.core.JsonFactory;
+import com.fasterxml.jackson.core.JsonGenerator;
 import com.yahoo.data.access.Inspector;
 import com.yahoo.data.access.Inspectable;
 import com.yahoo.data.access.Type;
+import com.yahoo.data.disclosure.DataSink;
+import com.yahoo.data.disclosure.DataSource;
 import com.yahoo.data.JsonProducer;
-import com.yahoo.data.access.simple.JsonRender;
 import com.yahoo.data.access.simple.Value;
+import com.yahoo.data.access.slime.SlimeAdapter;
 import com.yahoo.io.GrowableByteBuffer;
+import com.yahoo.search.rendering.JsonGeneratorDataSink;
+import com.yahoo.search.rendering.NonFiniteToNullDataSink;
+import com.yahoo.slime.Cursor;
+import com.yahoo.slime.Slime;
 import com.yahoo.tensor.Tensor;
+import com.yahoo.tensor.TensorDataSource;
 import com.yahoo.tensor.serialization.JsonFormat;
 import com.yahoo.tensor.serialization.TypedBinaryFormat;
 import static com.yahoo.searchlib.rankingexpression.Reference.wrapInRankingExpression;
 
-import java.nio.charset.StandardCharsets;
-import java.util.HashMap;
-import java.util.HashSet;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Objects;
@@ -28,34 +39,30 @@ import java.util.Set;
  *
  * @author bratseth
  */
-public class FeatureData implements Inspectable, JsonProducer {
+public class FeatureData implements Inspectable, JsonProducer, DataSource {
 
-    // WARNING: Not thread safe but using a shared empty. Take care if adding mutating methods.
-    private static final FeatureData empty = new FeatureData(Value.empty());
+    private static final JsonFactory jsonFactory = new JsonFactory();
 
-    /** If not null: The source of all the values of this. */
+    /** Whether values have been written to this (using set()) since it was constructed. */
+    private boolean mutated = false;
+
+    /** If not null: The initial source of values of this. */
     private final Inspector encodedValues;
 
-    /** If encodedValues is null: The content of this. If encodedValues is non-null: Lazily decoded values. */
+    /** Values that are either set in this or lazily decoded from encodedValues. */
     private Map<String, Tensor> values = null;
-
-    /** The lazily computed feature names of this */
-    private Set<String> featureNames = null;
-
-    /** The lazily computed json form of this */
-    private String jsonForm = null;
 
     public FeatureData(Inspector encodedValues) {
         this.encodedValues = Objects.requireNonNull(encodedValues);
     }
 
-    /** Creates a feature data from a map of values. This transfers ownership of the map to this object. */
+    /** Creates a feature data from a map of values. */
     public FeatureData(Map<String, Tensor> values) {
         this.encodedValues = null;
-        this.values = values;
+        this.values = new LinkedHashMap<>(values);
     }
 
-    public static FeatureData empty() { return empty; }
+    public static FeatureData empty() { return new FeatureData(Value.empty()); }
 
     /**
      * Returns the fields of this as an inspector, where tensors are represented as binary data
@@ -64,54 +71,99 @@ public class FeatureData implements Inspectable, JsonProducer {
      */
     @Override
     public Inspector inspect() {
-        if (encodedValues == null)
-            throw new IllegalStateException("FeatureData not created from an inspector cannot be inspected");
-        return encodedValues;
+        if (isEmpty()) return Value.empty();
+
+        // We may have cached values in values, but unless we have changed values we can still use the inspector
+        if (!mutated) return encodedValues;
+
+        decodeAll();
+        Slime slime = new Slime();
+        Cursor root = slime.setObject();
+        for (var entry : values.entrySet()) {
+            if (entry.getValue().type().rank() == 0)
+                root.setDouble(entry.getKey(), entry.getValue().asDouble());
+            else
+                root.setData(entry.getKey(), TypedBinaryFormat.encode(entry.getValue()));
+        }
+        return new SlimeAdapter(root);
     }
 
     @Override
     public String toJson() {
-        return toJson(false, false);
+        return toJson(new JsonFormat.EncodeOptions());
+    }
+
+    @Override
+    public void emit(DataSink sink) {
+        asDataSource(new JsonFormat.EncodeOptions()).emit(sink);
     }
 
     public String toJson(boolean tensorShortForm) {
-        return toJson(tensorShortForm, false);
+        return toJson(new JsonFormat.EncodeOptions(tensorShortForm));
     }
 
     public String toJson(boolean tensorShortForm, boolean tensorDirectValues) {
-        return writeJson(tensorShortForm, tensorDirectValues, new StringBuilder()).toString();
+        return toJson(new JsonFormat.EncodeOptions(tensorShortForm, tensorDirectValues));
+    }
+
+    public String toJson(JsonFormat.EncodeOptions tensorOptions) {
+        try (ByteArrayOutputStream out = new ByteArrayOutputStream();
+             JsonGenerator generator = jsonFactory.createGenerator(out)) {
+            asDataSource(tensorOptions).emit(new NonFiniteToNullDataSink(new JsonGeneratorDataSink(generator)));
+            generator.flush();
+            return out.toString(StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
+    public DataSource asDataSource(JsonFormat.EncodeOptions tensorOptions) {
+        return sink -> {
+            if (isEmpty()) {
+                sink.startObject();
+                sink.endObject();
+                return;
+            }
+
+            sink.startObject();
+            if (encodedValues != null && !mutated) {
+                encodedValues.traverse((String name, Inspector value) -> {
+                    sink.fieldName(name);
+                    if (value.type() == Type.DOUBLE) {
+                        sink.doubleValue(value.asDouble());
+                    } else if (value.type() == Type.DATA) {
+                        Tensor tensor = tensorFromData(value.asData());
+                        new TensorDataSource(tensor, tensorOptions).emit(sink);
+                    } else {
+                        throw new IllegalStateException("Unexpected feature value type " + value.type());
+                    }
+                });
+            } else {
+                decodeAll();
+                for (var entry : values.entrySet()) {
+                    sink.fieldName(entry.getKey());
+                    if (entry.getValue().type().rank() == 0) {
+                        sink.doubleValue(entry.getValue().asDouble());
+                    } else {
+                        new TensorDataSource(entry.getValue(), tensorOptions).emit(sink);
+                    }
+                }
+            }
+            sink.endObject();
+        };
     }
 
     @Override
     public StringBuilder writeJson(StringBuilder target) {
-        return JsonRender.render(encodedValues, new Encoder(target, true, false, false));
+        return target.append(toJson());
     }
 
-    private StringBuilder writeJson(boolean tensorShortForm, boolean tensorDirectValues, StringBuilder target) {
-        if (this == empty) return target.append("{}");
-        if (jsonForm != null) return target.append(jsonForm);
-
-        if (encodedValues != null)
-            return JsonRender.render(encodedValues, new Encoder(target, true, tensorShortForm, tensorDirectValues));
-        else
-            return writeJson(values, tensorShortForm, tensorDirectValues, target);
-    }
-
-    private StringBuilder writeJson(Map<String, Tensor> values, boolean tensorShortForm, boolean tensorDirectValues, StringBuilder target) {
-        target.append("{");
-        for (Map.Entry<String, Tensor> entry : values.entrySet()) {
-            target.append("\"").append(entry.getKey()).append("\":");
-            if (entry.getValue().type().rank() == 0) {
-                target.append(entry.getValue().asDouble());
-            } else {
-                byte[] encodedTensor = JsonFormat.encode(entry.getValue(), tensorShortForm, tensorDirectValues);
-                target.append(new String(encodedTensor, StandardCharsets.UTF_8));
-            }
-            target.append(",");
-        }
-        if (!values.isEmpty()) target.setLength(target.length() - 1); // remove last comma
-        target.append("}");
-        return target;
+    private void decodeAll() {
+        if (encodedValues == null) return;
+        encodedValues.traverse((String name, Inspector value) -> {
+            if ( ! values.containsKey(name))
+                values.put(name, decodeTensor(value));
+        });
     }
 
     /**
@@ -131,7 +183,7 @@ public class FeatureData implements Inspectable, JsonProducer {
      */
     public Tensor getTensor(String featureName) {
         if (values == null)
-            values = new HashMap<>();
+            values = new LinkedHashMap<>();
 
         Tensor value = values.get(featureName);
         if (value != null) return value;
@@ -143,13 +195,34 @@ public class FeatureData implements Inspectable, JsonProducer {
         return value;
     }
 
+    /** Sets a new or modified value in this. */
+    public void set(String featureName, Tensor value) {
+        mutated = true;
+        if (values == null)
+            values = new LinkedHashMap<>();
+        values.put(featureName, value);
+    }
+
+    /** Sets a new or modified value in this. */
+    public void set(String featureName, double value) {
+        set(featureName, Tensor.from(value));
+    }
+
+    public boolean isEmpty() {
+        return (encodedValues == null || encodedValues.type() == Type.EMPTY) &&
+               (values == null || values.isEmpty());
+    }
+
     private Tensor decodeTensor(String featureName) {
-        Inspector featureValue = getInspector(featureName);
+        return decodeTensor(getInspector(featureName));
+    }
+
+    private Tensor decodeTensor(Inspector featureValue) {
         if ( ! featureValue.valid()) return null;
 
         return switch (featureValue.type()) {
             case DOUBLE -> Tensor.from(featureValue.asDouble());
-            case DATA -> TypedBinaryFormat.decode(Optional.empty(), GrowableByteBuffer.wrap(featureValue.asData()));
+            case DATA -> tensorFromData(featureValue.asData());
             default -> throw new IllegalStateException("Unexpected feature value type " + featureValue.type());
         };
     }
@@ -163,19 +236,20 @@ public class FeatureData implements Inspectable, JsonProducer {
     }
 
     /** Returns the names of the features available in this */
+    // TODO: Not used by us - deprecate?
     public Set<String> featureNames() {
-        if (this == empty) return Set.of();
-        if (featureNames != null) return featureNames;
-        if (encodedValues == null) return values.keySet();
-
-        featureNames = new LinkedHashSet<>();
-        encodedValues.fields().forEach(field -> featureNames.add(field.getKey()));
+        if (isEmpty()) return Set.of();
+        Set<String> featureNames = new LinkedHashSet<>();
+        if (encodedValues != null)
+            encodedValues.fields().forEach(field -> featureNames.add(field.getKey()));
+        if (values != null)
+            featureNames.addAll(values.keySet());
         return featureNames;
     }
 
     @Override
     public String toString() {
-        if (encodedValues != null && encodedValues.type() == Type.EMPTY) return "";
+        if (isEmpty()) return "";
         return toJson();
     }
 
@@ -189,26 +263,8 @@ public class FeatureData implements Inspectable, JsonProducer {
         return ((FeatureData)other).toJson().equals(this.toJson());
     }
 
-    /** A JSON encoder which encodes DATA as a tensor */
-    private static class Encoder extends JsonRender.StringEncoder {
-
-        private final boolean tensorShortForm;
-        private final boolean tensorDirectValues;
-
-        Encoder(StringBuilder out, boolean compact, boolean tensorShortForm, boolean tensorDirectValues) {
-            super(out, compact);
-            this.tensorShortForm = tensorShortForm;
-            this.tensorDirectValues = tensorDirectValues;
-        }
-
-        @Override
-        public void encodeDATA(byte[] value) {
-            // This could be done more efficiently ...
-            Tensor tensor = TypedBinaryFormat.decode(Optional.empty(), GrowableByteBuffer.wrap(value));
-            byte[] encodedTensor = JsonFormat.encode(tensor, tensorShortForm, tensorDirectValues);
-            target().append(new String(encodedTensor, StandardCharsets.UTF_8));
-        }
-
+    private static Tensor tensorFromData(byte[] value) {
+        return TypedBinaryFormat.decode(Optional.empty(), GrowableByteBuffer.wrap(value));
     }
 
 }

@@ -3,12 +3,12 @@
 
 #include "matchelem.h"
 #include "querynode.h"
+
 #include <memory>
 
 using key_occ_vector = std::vector<std::unique_ptr<key_occ>>;
 
-class key_occ : public MatchElement
-{
+class key_occ : public MatchElement {
 public:
     void set_valid() override;
     void add_to_keylist(keylist& kl) override;
@@ -26,8 +26,6 @@ public:
 private:
     const char* _term; // Pointer into first match (for debugging purposes only)
 
-    key_occ(key_occ &);
-    key_occ &operator=(key_occ &);
+    key_occ(key_occ&);
+    key_occ& operator=(key_occ&);
 };
-
-

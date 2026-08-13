@@ -2,6 +2,7 @@
 package com.yahoo.schema.derived;
 
 import com.yahoo.config.model.application.provider.BaseDeployLogger;
+import com.yahoo.config.model.deploy.TestProperties;
 import com.yahoo.config.model.test.MockApplicationPackage;
 import com.yahoo.document.PositionDataType;
 import com.yahoo.schema.RankProfileRegistry;
@@ -13,6 +14,7 @@ import com.yahoo.schema.document.SDField;
 import com.yahoo.schema.parser.ParseException;
 import com.yahoo.schema.processing.Processing;
 import com.yahoo.vespa.config.search.SummaryConfig;
+import com.yahoo.vespa.documentmodel.SummaryElementsSelector;
 import com.yahoo.vespa.documentmodel.SummaryTransform;
 import com.yahoo.vespa.model.container.search.QueryProfiles;
 import org.junit.jupiter.api.Test;
@@ -173,8 +175,9 @@ public class SummaryTestCase extends AbstractSchemaTestCase {
         String fieldName = "location";
         SDField field = document.addField(fieldName, PositionDataType.INSTANCE);
         field.parseIndexingScript(schema.getName(), "{ attribute | summary }");
-        new Processing().process(schema, new BaseDeployLogger(), new RankProfileRegistry(), new QueryProfiles(),
-                true, false, Set.of());
+        new Processing(new TestProperties())
+                .process(schema, new BaseDeployLogger(), new RankProfileRegistry(), new QueryProfiles(),
+                         true, false, Set.of());
 
         var summary = new SummaryClass(schema, schema.getSummary("default"), new BaseDeployLogger());
         var fields = summary.fields().values().iterator();
@@ -195,27 +198,35 @@ public class SummaryTestCase extends AbstractSchemaTestCase {
     }
 
     @Test
-    void source_field_is_passed_as_argument_in_matched_elements_filter_transforms() throws ParseException {
-        assertOverride(joinLines("field my_field type map<string, string> {",
+    void matched_elements_only_works_with_attribute_combiner() throws ParseException {
+        var schema = buildSchema(joinLines("field my_field type map<string, string> {",
                 "  indexing: summary",
                 "  summary: matched-elements-only",
                 "  struct-field key { indexing: attribute }",
-                "}"), "my_field", SummaryTransform.MATCHED_ELEMENTS_FILTER.getName());
+                "}"), "");
+        assertOverride(schema, "my_field", "", "");
+        assertElementSelect(schema, "my_field", SummaryConfig.Classes.Fields.Elements.Select.Enum.BY_MATCH, "", "default");
 
-        assertOverride(joinLines("field my_field type map<string, string> {",
+        schema = buildSchema(joinLines("field my_field type map<string, string> {",
                 "  indexing: summary",
                 "  summary: matched-elements-only",
                 "  struct-field key { indexing: attribute }",
                 "  struct-field value { indexing: attribute }",
-                "}"), "my_field", SummaryTransform.MATCHED_ATTRIBUTE_ELEMENTS_FILTER.getName());
+                "}"), "");
+        assertOverride(schema, "my_field", SummaryTransform.ATTRIBUTECOMBINER.getName(), "");
+        assertElementSelect(schema, "my_field", SummaryConfig.Classes.Fields.Elements.Select.Enum.BY_MATCH, "", "default");
     }
 
     @Test
     void commands_that_are_dynamic_and_require_the_query() {
         assertTrue(SummaryClass.commandRequiringQuery("dynamicteaser"));
-        assertTrue(SummaryClass.commandRequiringQuery(SummaryTransform.MATCHED_ELEMENTS_FILTER.getName()));
-        assertTrue(SummaryClass.commandRequiringQuery(SummaryTransform.MATCHED_ATTRIBUTE_ELEMENTS_FILTER.getName()));
         assertFalse(SummaryClass.commandRequiringQuery(SummaryTransform.ATTRIBUTE.getName()));
+    }
+
+    @Test
+    void elements_selectors_that_are_dynamic_and_require_the_query() {
+        assertFalse(SummaryClass.elementsSelectorRequiringQuery(SummaryElementsSelector.selectAll()));
+        assertTrue(SummaryClass.elementsSelectorRequiringQuery(SummaryElementsSelector.selectByMatch()));
     }
 
     @Test
@@ -262,21 +273,62 @@ public class SummaryTestCase extends AbstractSchemaTestCase {
         assertFalse(SummaryTransform.DOCUMENT_ID.isInMemory());
     }
 
-    private void assertOverride(String fieldContent, String expFieldName, String expCommand) throws ParseException {
-        assertOverride(buildSchema(fieldContent, ""), expFieldName, expCommand, expFieldName);
+    @Test
+    void matched_elements_only_sets_selement_selector() throws ParseException {
+        var schema = buildSchema("field foo type array<string> { indexing: attribute | summary }",
+                joinLines("document-summary bar {",
+                        "    summary baz {",
+                        "        source: foo ",
+                        "        matched-elements-only",
+                        "     }",
+                        "    from-disk",
+                        "}"));
+        assertElementSelect(schema, "baz", SummaryConfig.Classes.Fields.Elements.Select.Enum.BY_MATCH, "", "bar");
+        assert(!schema.getSummary("default").getSummaryFields().containsKey("baz"));
     }
 
-    private void assertOverride(Schema schema, String expFieldName, String expCommand, String expSource) throws ParseException {
+    @Test
+    void select_elements_by_sets_element_selector() throws ParseException {
+        var schema = buildSchema("field foo type array<string> { indexing: attribute | summary }",
+            joinLines("document-summary bar {",
+                "    summary baz {",
+                "        source: foo ",
+                "        select-elements-by: elementwise(bm25(foo),x,double)",
+                "     }",
+                "    from-disk",
+                "}",
+                "rank-profile xyzzy {",
+                "  summary-features {",
+                "    elementwise(bm25(foo),x,double)",
+                "  }",
+                "}")
+        );
+        var summary = new SummaryClass(schema, schema.getSummary("bar"), new BaseDeployLogger());
+        assertElementSelect(schema, "baz", SummaryConfig.Classes.Fields.Elements.Select.Enum.BY_SUMMARY_FEATURE,
+            "elementwise(bm25(foo),x,double)", "bar");
+        assert(!schema.getSummary("default").getSummaryFields().containsKey("baz"));
+    }
+
+    private void assertOverride(Schema schema, String expFieldName, String expCommand, String expSource) {
         assertOverride(schema, expFieldName, expCommand, expSource, "default");
     }
 
-    private void assertOverride(Schema schema, String expFieldName, String expCommand, String expSource, String summaryClass) throws ParseException {
+    private void assertOverride(Schema schema, String expFieldName, String expCommand, String expSource, String summaryClass) {
         var summary = new SummaryClass(schema, schema.getSummary(summaryClass), new BaseDeployLogger());
         var cfg = new SummaryConfig.Classes(summary.getSummaryClassConfig());
         var field = cfg.fields(0);
         assertEquals(expFieldName, field.name());
         assertEquals(expCommand, field.command());
         assertEquals(expSource, field.source());
+    }
+
+    private void assertElementSelect(Schema schema, String expFieldName, SummaryConfig.Classes.Fields.Elements.Select.Enum expSelect, String expSummaryFeature, String summaryClass) {
+        var summary = new SummaryClass(schema, schema.getSummary(summaryClass), new BaseDeployLogger());
+        var cfg = new SummaryConfig.Classes(summary.getSummaryClassConfig());
+        var field = cfg.fields(0);
+        assertEquals(expFieldName, field.name());
+        assertEquals(expSelect, field.elements().select());
+        assertEquals(expSummaryFeature, field.elements().summary_feature());
     }
 
     private Schema buildSchema(String field, String documentSummary) throws ParseException {

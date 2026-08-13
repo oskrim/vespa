@@ -2,45 +2,41 @@
 
 #include "featureset.h"
 
+#include <algorithm>
+
 namespace vespalib {
 
-FeatureSet::FeatureSet()
-    : _names(),
-      _docIds(),
-      _values()
-{
+FeatureSet::FeatureSet() : _names(), _docIds(), _values() {
 }
 
-FeatureSet::~FeatureSet() {}
+FeatureSet::~FeatureSet() = default;
 
-FeatureSet::FeatureSet(const StringVector &names, uint32_t expectDocs)
-    : _names(names),
-      _docIds(),
-      _values()
-{
+FeatureSet::FeatureSet(const StringVector& names, uint32_t expectDocs) : _names(names), _docIds(), _values() {
     _docIds.reserve(expectDocs);
     _values.reserve(expectDocs * names.size());
 }
 
-bool
-FeatureSet::equals(const FeatureSet &rhs) const
-{
-    return ((_docIds == rhs._docIds) &&
-            (_values == rhs._values) &&
+bool FeatureSet::equals(const FeatureSet& rhs) const {
+    return ((_docIds == rhs._docIds) && (_values == rhs._values) &&
             (_names == rhs._names)); // do names last, as they are most likely to match
 }
 
-uint32_t
-FeatureSet::addDocId(uint32_t docId)
-{
+std::optional<uint32_t> FeatureSet::get_name_idx(const std::string& name) const {
+    auto itr = std::find(_names.begin(), _names.end(), name);
+    if (itr != _names.end()) {
+        return itr - _names.begin();
+    } else {
+        return std::nullopt;
+    }
+}
+
+uint32_t FeatureSet::addDocId(uint32_t docId) {
     _docIds.push_back(docId);
     _values.resize(_names.size() * _docIds.size());
     return (_docIds.size() - 1);
 }
 
-bool
-FeatureSet::contains(const std::vector<uint32_t> &docIds) const
-{
+bool FeatureSet::contains(const std::vector<uint32_t>& docIds) const {
     using ITR = std::vector<uint32_t>::const_iterator;
     ITR myPos = _docIds.begin();
     ITR myEnd = _docIds.end();
@@ -59,18 +55,21 @@ FeatureSet::contains(const std::vector<uint32_t> &docIds) const
     return true;
 }
 
-FeatureSet::Value *
-FeatureSet::getFeaturesByIndex(uint32_t idx)
-{
+FeatureSet::Value* FeatureSet::getFeaturesByIndex(uint32_t idx) {
     if (idx >= _docIds.size()) {
-        return 0;
+        return nullptr;
     }
     return &(_values[idx * _names.size()]);
 }
 
-const FeatureSet::Value *
-FeatureSet::getFeaturesByDocId(uint32_t docId) const
-{
+const FeatureSet::Value* FeatureSet::getFeaturesByIndex(uint32_t idx) const {
+    if (idx >= _docIds.size()) {
+        return nullptr;
+    }
+    return &(_values[idx * _names.size()]);
+}
+
+const FeatureSet::Value* FeatureSet::getFeaturesByDocId(uint32_t docId) const {
     uint32_t low = 0;
     uint32_t hi = _docIds.size();
     while (low < hi) {
@@ -84,14 +83,14 @@ FeatureSet::getFeaturesByDocId(uint32_t docId) const
             return &(_values[pos * _names.size()]);
         }
     }
-    return 0;
+    return nullptr;
 }
 
 FeatureValues::FeatureValues() noexcept = default;
 FeatureValues::FeatureValues(const FeatureValues& rhs) = default;
 FeatureValues::FeatureValues(FeatureValues&& rhs) noexcept = default;
 FeatureValues::~FeatureValues() noexcept = default;
-FeatureValues& FeatureValues::operator=(const FeatureValues& rhs) = default;;
+FeatureValues& FeatureValues::operator=(const FeatureValues& rhs) = default;
 FeatureValues& FeatureValues::operator=(FeatureValues&& rhs) noexcept = default;
 
-}
+} // namespace vespalib

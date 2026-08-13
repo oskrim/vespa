@@ -4,12 +4,22 @@ package com.yahoo.searchlib.aggregation;
 import com.yahoo.document.DocumentId;
 import com.yahoo.document.GlobalId;
 import com.yahoo.io.GrowableByteBuffer;
-import com.yahoo.searchlib.expression.*;
+import com.yahoo.searchlib.expression.AttributeNode;
+import com.yahoo.searchlib.expression.CatFunctionNode;
+import com.yahoo.searchlib.expression.DocumentFieldNode;
+import com.yahoo.searchlib.expression.FloatResultNode;
+import com.yahoo.searchlib.expression.GetDocIdNamespaceSpecificFunctionNode;
+import com.yahoo.searchlib.expression.IntegerResultNode;
+import com.yahoo.searchlib.expression.MD5BitFunctionNode;
+import com.yahoo.searchlib.expression.MinFunctionNode;
+import com.yahoo.searchlib.expression.XorBitFunctionNode;
 import com.yahoo.vespa.objects.BufferSerializer;
 import com.yahoo.vespa.objects.Identifiable;
 import com.yahoo.vespa.objects.ObjectOperation;
 import com.yahoo.vespa.objects.ObjectPredicate;
 import org.junit.Test;
+
+import java.util.List;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -26,37 +36,122 @@ public class AggregationTestCase {
         SumAggregationResult a = new SumAggregationResult();
         a.setExpression(new AttributeNode("attributeA"));
         a.setSum(new IntegerResultNode(7));
-        assertEquals(a.getSum().getInteger(), 7);
+        assertEquals(7, a.getSum().getInteger());
         SumAggregationResult b = (SumAggregationResult)serializeDeserialize(a);
-        assertEquals(b.getSum().getInteger(), 7);
+        assertEquals(7, b.getSum().getInteger());
         b.merge(a);
-        assertEquals(b.getSum().getInteger(), 14);
+        assertEquals(14, b.getSum().getInteger());
     }
 
     @Test
     public void testXorAggregationResult() {
         XorAggregationResult a = new XorAggregationResult(6);
         a.setExpression(new AttributeNode("attributeA"));
-        assertEquals(a.getXor(), 6);
+        assertEquals(6, a.getXor());
         a.setXor(7);
-        assertEquals(a.getXor(), 7);
+        assertEquals(7, a.getXor());
         XorAggregationResult b = (XorAggregationResult)serializeDeserialize(a);
-        assertEquals(b.getXor(), 7);
+        assertEquals(7, b.getXor());
         b.merge(a);
-        assertEquals(b.getXor(), 0);
+        assertEquals(0, b.getXor());
     }
 
     @Test
     public void testCountAggregationResult() {
         CountAggregationResult a = new CountAggregationResult(6);
         a.setExpression(new AttributeNode("attributeA"));
-        assertEquals(a.getCount(), 6);
+        assertEquals(6, a.getCount());
         a.setCount(7);
-        assertEquals(a.getCount(), 7);
+        assertEquals(7, a.getCount());
         CountAggregationResult b = (CountAggregationResult)serializeDeserialize(a);
-        assertEquals(b.getCount(), 7);
+        assertEquals(7, b.getCount());
         b.merge(a);
-        assertEquals(b.getCount(), 14);
+        assertEquals(14, b.getCount());
+    }
+
+    @Test
+    public void testQuantileAggregationResultSingle() {
+        QuantileAggregationResult a = new QuantileAggregationResult(List.of(0.5));
+        a.updateSketch(4);
+        a.updateSketch(5);
+        a.updateSketch(6);
+        a.setExpression(new AttributeNode("attributeA"));
+        assertEquals(a.getQuantiles(), List.of(0.5));
+        assertEquals(a.getQuantileResults(), new QuantileAggregationResult.QuantileResult.Builder().add(0.5, 5).build());
+
+        QuantileAggregationResult b = (QuantileAggregationResult)serializeDeserialize(a);
+        assertEquals(b.getQuantiles(), List.of(0.5));
+        assertEquals(b.getQuantileResults(), new QuantileAggregationResult.QuantileResult.Builder().add(0.5, 5).build());
+
+        QuantileAggregationResult c = (QuantileAggregationResult)serializeDeserialize(a);
+        c.updateSketch(7);
+        c.updateSketch(8);
+        c.updateSketch(9);
+        c.updateSketch(10);
+        assertEquals(c.getQuantileResults(), new QuantileAggregationResult.QuantileResult.Builder().add(0.5, 7).build());
+        b.merge(c);
+        assertEquals(b.getQuantiles(), List.of(0.5));
+        assertEquals(b.getQuantileResults(), new QuantileAggregationResult.QuantileResult.Builder().add(0.5, 6).build());
+    }
+
+    @Test
+    public void testQuantileAggregationResultMulti() {
+        QuantileAggregationResult a = new QuantileAggregationResult(List.of(0.25, 0.5, 0.9));
+        a.updateSketch(4);
+        a.updateSketch(5);
+        a.updateSketch(6);
+        a.setExpression(new AttributeNode("attributeA"));
+
+        assertEquals(a.getQuantiles(), List.of(0.25, 0.5, 0.9));
+        assertEquals(
+            a.getQuantileResults(),
+            new QuantileAggregationResult.QuantileResult.Builder()
+                .add(0.25, 4)   // values: [4,5,6]
+                .add(0.5,  5)
+                .add(0.9,  6)
+                .build()
+        );
+
+        // Round-trip
+        QuantileAggregationResult b = (QuantileAggregationResult) serializeDeserialize(a);
+        assertEquals(b.getQuantiles(), List.of(0.25, 0.5, 0.9));
+        assertEquals(
+            b.getQuantileResults(),
+            new QuantileAggregationResult.QuantileResult.Builder()
+                .add(0.25, 4)
+                .add(0.5,  5)
+                .add(0.9,  6)
+                .build()
+        );
+
+        // Create C from A, then add more data
+        QuantileAggregationResult c = (QuantileAggregationResult) serializeDeserialize(a);
+        c.updateSketch(7);
+        c.updateSketch(8);
+        c.updateSketch(9);
+        c.updateSketch(10);
+
+        assertEquals(
+            c.getQuantileResults(),
+            new QuantileAggregationResult.QuantileResult.Builder()
+                .add(0.25, 5)   // values: [4,5,6,7,8,9,10]
+                .add(0.5,  7)
+                .add(0.9, 10)
+                .build()
+        );
+
+        // Merge C into B (B had [4,5,6]; C has [4..10]; merged multiset size = 10)
+        b.merge(c);
+
+        assertEquals(b.getQuantiles(), List.of(0.25, 0.5, 0.9));
+        assertEquals(
+            b.getQuantileResults(),
+            new QuantileAggregationResult.QuantileResult.Builder()
+                .add(0.25, 5)   // merged values: [4,4,5,5,6,6,7,8,9,10]
+                .add(0.5,  6)
+                .add(0.9,  9)
+                .build()
+        );
     }
 
     @Test
@@ -245,7 +340,7 @@ public class AggregationTestCase {
         assertEquals(expected, obj.count);
     }
 
-    private class CountFS4Hits implements ObjectPredicate, ObjectOperation {
+    private static class CountFS4Hits implements ObjectPredicate, ObjectOperation {
         int count;
         public boolean check(Object obj) {
             return obj instanceof FS4Hit;
@@ -255,7 +350,7 @@ public class AggregationTestCase {
         }
     }
 
-    private class CountVdsHits implements ObjectPredicate, ObjectOperation {
+    private static class CountVdsHits implements ObjectPredicate, ObjectOperation {
         int count;
         public boolean check(Object obj) {
             return obj instanceof VdsHit;

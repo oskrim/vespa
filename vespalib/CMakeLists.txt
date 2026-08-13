@@ -13,9 +13,10 @@ vespa_define_module(
     xxhash
     zstd
     ${VESPA_URING_LIB}
+    absl::stacktrace
+    absl::symbolize
 
     APPS
-    src/apps/make_fixture_macros
     src/apps/vespa-detect-hostname
     src/apps/vespa-drop-file-from-cache
     src/apps/vespa-probe-io-uring
@@ -32,7 +33,9 @@ vespa_define_module(
     src/tests/array
     src/tests/arrayqueue
     src/tests/assert
+    src/tests/atomics
     src/tests/barrier
+    src/tests/barrier_bench
     src/tests/benchmark
     src/tests/benchmark_timer
     src/tests/box
@@ -82,7 +85,6 @@ vespa_define_module(
     src/tests/executor
     src/tests/executor_idle_tracking
     src/tests/explore_modern_cpp
-    src/tests/false
     src/tests/fastlib/io
     src/tests/fastlib/text
     src/tests/fastos
@@ -101,7 +103,7 @@ vespa_define_module(
     src/tests/io/mapped_file_input
     src/tests/latch
     src/tests/left_right_heap
-    src/tests/make_fixture_macros
+    src/tests/quant
     src/tests/memory
     src/tests/memorydatastore
     src/tests/metrics
@@ -139,7 +141,6 @@ vespa_define_module(
     src/tests/rendezvous
     src/tests/runnable_pair
     src/tests/rusage
-    src/tests/rw_spin_lock
     src/tests/sequencedtaskexecutor
     src/tests/sha1
     src/tests/shared_operation_throttler
@@ -152,20 +153,11 @@ vespa_define_module(
     src/tests/slime/are_equal
     src/tests/slime/external_data_value
     src/tests/slime/summary-feature-benchmark
-    src/tests/spin_lock
     src/tests/stash
     src/tests/state_server
     src/tests/stllike
     src/tests/stringfmt
     src/tests/sync
-    src/tests/testapp-debug
-    src/tests/testapp-generic
-    src/tests/testapp-main
-    src/tests/testapp-state
-    src/tests/testkit-mt
-    src/tests/testkit-subset
-    src/tests/testkit-testhook
-    src/tests/testkit-time_bomb
     src/tests/text/lowercase
     src/tests/text/stringtokenizer
     src/tests/text/utf8
@@ -174,18 +166,12 @@ vespa_define_module(
     src/tests/time_tracer
     src/tests/trace
     src/tests/traits
-    src/tests/true
-    src/tests/tutorial
-    src/tests/tutorial/checks
-    src/tests/tutorial/fixtures
-    src/tests/tutorial/minimal
-    src/tests/tutorial/simple
-    src/tests/tutorial/threads
     src/tests/unwind_message
     src/tests/util
     src/tests/util/generationhandler_stress
     src/tests/util/hamming
     src/tests/util/md5
+    src/tests/util/mimalloc
     src/tests/valgrind
     src/tests/visit_ranges
     src/tests/wakeup
@@ -218,10 +204,10 @@ vespa_define_module(
     src/vespa/vespalib/objects
     src/vespa/vespalib/portal
     src/vespa/vespalib/process
+    src/vespa/vespalib/quant
     src/vespa/vespalib/regex
     src/vespa/vespalib/stllike
     src/vespa/vespalib/test
-    src/vespa/vespalib/testkit
     src/vespa/vespalib/text
     src/vespa/vespalib/time
     src/vespa/vespalib/trace

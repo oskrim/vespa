@@ -9,7 +9,6 @@ import com.yahoo.document.datatypes.WeightedSet;
 import com.yahoo.vespa.indexinglanguage.SimpleTestAdapter;
 import org.junit.Test;
 
-import static com.yahoo.vespa.indexinglanguage.expressions.ExpressionAssert.assertVerifyThrows;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 
@@ -55,22 +54,20 @@ public class ToWsetTestCase {
     }
 
     private static void assertVerify(boolean createIfNonExistent, boolean removeIfZero) {
-        Expression exp = new ToWsetExpression(createIfNonExistent, removeIfZero);
-        ExpressionAssert.assertVerify(DataType.INT, exp,
+        ExpressionAssert.assertVerify(DataType.INT, new ToWsetExpression(createIfNonExistent, removeIfZero),
                                       DataType.getWeightedSet(DataType.INT, createIfNonExistent, removeIfZero));
-        ExpressionAssert.assertVerify(DataType.STRING, exp,
+        ExpressionAssert.assertVerify(DataType.STRING, new ToWsetExpression(createIfNonExistent, removeIfZero),
                                       DataType.getWeightedSet(DataType.STRING, createIfNonExistent, removeIfZero));
-        assertVerifyThrows(null, exp, "Expected any input, but no input is specified");
     }
 
     private static void assertConvert(boolean createIfNonExistent, boolean removeIfZero) {
-        ExecutionContext ctx = new ExecutionContext(new SimpleTestAdapter());
-        ctx.setCurrentValue(new StringFieldValue("69")).execute(new ToWsetExpression(createIfNonExistent, removeIfZero));
+        ExecutionContext context = new ExecutionContext(new SimpleTestAdapter());
+        context.setCurrentValue(new StringFieldValue("69")).execute(new ToWsetExpression(createIfNonExistent, removeIfZero));
 
-        FieldValue val = ctx.getCurrentValue();
-        assertEquals(WeightedSet.class, val.getClass());
+        FieldValue value = context.getCurrentValue();
+        assertEquals(WeightedSet.class, value.getClass());
 
-        WeightedSet wset = (WeightedSet)val;
+        WeightedSet wset = (WeightedSet)value;
         WeightedSetDataType type = wset.getDataType();
         assertEquals(DataType.STRING, type.getNestedType());
         assertEquals(createIfNonExistent, type.createIfNonExistent());
@@ -81,8 +78,9 @@ public class ToWsetTestCase {
     }
 
     private static void assertAccessors(boolean createIfNonExistent, boolean removeIfZero) {
-        ToWsetExpression exp = new ToWsetExpression(createIfNonExistent, removeIfZero);
-        assertEquals(createIfNonExistent, exp.getCreateIfNonExistent());
-        assertEquals(removeIfZero, exp.getRemoveIfZero());
+        ToWsetExpression expression = new ToWsetExpression(createIfNonExistent, removeIfZero);
+        assertEquals(createIfNonExistent, expression.getCreateIfNonExistent());
+        assertEquals(removeIfZero, expression.getRemoveIfZero());
     }
+
 }

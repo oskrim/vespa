@@ -1,7 +1,9 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "move_operation_limiter.h"
+
 #include "i_blockable_maintenance_job.h"
+
 #include <cassert>
 
 namespace proton {
@@ -14,52 +16,57 @@ struct MoveOperationLimiter::Callback : public vespalib::IDestructorCallback {
     ~Callback() override { _limiter->endOperation(); }
 };
 
-bool
-MoveOperationLimiter::isOnLimit(const LockGuard &) const
-{
+bool MoveOperationLimiter::isOnLimit(const LockGuard&) const {
     return (_outstandingOps == _maxOutstandingOps);
 }
 
-void
-MoveOperationLimiter::endOperation()
-{
+void MoveOperationLimiter::endOperation() {
     LockGuard guard(_mutex);
-    bool considerUnblock = isOnLimit(guard);
+    bool      considerUnblock = isOnLimit(guard);
     assert(_outstandingOps > 0);
     --_outstandingOps;
     if (_job && considerUnblock) {
         _job->unBlock(BlockedReason::OUTSTANDING_OPS);
     }
+    if (_draining && _outstandingOps == 0) {
+        _draining = false;
+        if (_job != nullptr) {
+            _job->unBlock(BlockedReason::DRAIN_OUTSTANDING_OPS);
+        }
+    }
 }
 
-MoveOperationLimiter::MoveOperationLimiter(IBlockableMaintenanceJob *job,
-                                           uint32_t maxOutstandingOps)
-    : _mutex(),
-      _job(job),
-      _outstandingOps(0),
-      _maxOutstandingOps(maxOutstandingOps)
-{
+MoveOperationLimiter::MoveOperationLimiter(IBlockableMaintenanceJob* job, uint32_t maxOutstandingOps)
+    : _mutex(), _job(job), _outstandingOps(0), _maxOutstandingOps(maxOutstandingOps), _draining(false) {
 }
 
 MoveOperationLimiter::~MoveOperationLimiter() = default;
 
-void
-MoveOperationLimiter::clearJob()
-{
+void MoveOperationLimiter::clearJob() {
     LockGuard guard(_mutex);
     _job = nullptr;
 }
 
-size_t
-MoveOperationLimiter::numPending() const
-{
+size_t MoveOperationLimiter::numPending() const {
     LockGuard guard(_mutex);
     return _outstandingOps;
 }
 
-std::shared_ptr<vespalib::IDestructorCallback>
-MoveOperationLimiter::beginOperation()
-{
+bool MoveOperationLimiter::drain() noexcept {
+    LockGuard guard(_mutex);
+    if (_outstandingOps == 0) {
+        return true;
+    }
+    if (!_draining) {
+        _draining = true;
+        if (_job != nullptr) {
+            _job->setBlocked(BlockedReason::DRAIN_OUTSTANDING_OPS);
+        }
+    }
+    return false;
+}
+
+std::shared_ptr<vespalib::IDestructorCallback> MoveOperationLimiter::beginOperation() {
     LockGuard guard(_mutex);
     ++_outstandingOps;
     if (_job && isOnLimit(guard)) {
@@ -69,4 +76,4 @@ MoveOperationLimiter::beginOperation()
     return std::make_shared<Callback>(std::move(thisPtr));
 }
 
-}
+} // namespace proton

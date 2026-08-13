@@ -14,7 +14,6 @@ import com.yahoo.vespa.model.admin.LogserverContainer;
 import com.yahoo.vespa.model.admin.LogserverContainerCluster;
 import com.yahoo.vespa.model.admin.Slobrok;
 import com.yahoo.vespa.model.admin.otel.OpenTelemetryCollector;
-import com.yahoo.vespa.model.admin.otel.OpenTelemetryConfigGenerator;
 import com.yahoo.vespa.model.container.Container;
 import com.yahoo.vespa.model.container.ContainerModel;
 import org.w3c.dom.Element;
@@ -26,8 +25,10 @@ import java.util.Optional;
 import java.util.logging.Level;
 import java.util.stream.Collectors;
 
+import static java.util.logging.Level.WARNING;
+
 /**
- * Builds the admin model from a version 4 XML tag, or as a default when an admin 3 tag or no admin tag is used.
+ * Builds the admin model from a version 4 XML tag, or as a default when no admin tag is used.
  *
  * @author bratseth
  */
@@ -49,8 +50,7 @@ public class DomAdminV4Builder extends DomAdminBuilderBase {
         admin.addConfigservers(getConfigServersFromSpec(deployState, admin));
 
         // Note: These two elements only exists in admin version 4.0
-        // This build handles admin version 3.0 by ignoring its content (as the content is not useful)
-        Optional<NodesSpecification> requestedSlobroks = 
+        Optional<NodesSpecification> requestedSlobroks =
                 NodesSpecification.optionalDedicatedFromParent(adminElement.child("slobroks"), context);
         Optional<NodesSpecification> requestedLogservers = 
                 NodesSpecification.optionalDedicatedFromParent(adminElement.child("logservers"), context);
@@ -60,6 +60,9 @@ public class DomAdminV4Builder extends DomAdminBuilderBase {
 
         addLogForwarders(adminElement.child("logforwarding"), admin, deployState);
         addLoggingSpecs(adminElement.child("logging"), admin);
+        addTelemetryExport(adminElement.child("telemetry"), admin);
+
+        validateAdminV20Elements(deployState, adminElement);
     }
 
     private void assignSlobroks(DeployState deployState, NodesSpecification nodesSpecification, Admin admin) {
@@ -134,7 +137,7 @@ public class DomAdminV4Builder extends DomAdminBuilderBase {
         return nodesSpecification.provision(hostSystem, 
                                             ClusterSpec.Type.admin, 
                                             ClusterSpec.Id.from(clusterId), 
-                                            context.getDeployLogger(),
+                                            context.getDeployState(),
                                             false,
                                             context.clusterInfo().build())
                                  .keySet();
@@ -145,7 +148,7 @@ public class DomAdminV4Builder extends DomAdminBuilderBase {
      * The list returns the same nodes on each invocation given the same available nodes.
      *
      * @param count the desired number of nodes. More nodes may be returned to ensure a smooth transition
-     *        on topology changes, and less nodes may be returned if fewer are available
+     *        on topology changes, and fewer nodes may be returned if fewer are available
      * @param minHostsPerContainerCluster the desired number of hosts per cluster
      */
     private List<HostResource> pickContainerHostsForSlobrok(int count, int minHostsPerContainerCluster) {
@@ -202,6 +205,17 @@ public class DomAdminV4Builder extends DomAdminBuilderBase {
             slobrok.initService(deployState);
         }
         admin.addSlobroks(slobroks);
+    }
+
+    // Validate elements allowed from version 2.0, but log a warning about it
+    private static void validateAdminV20Elements(DeployState deployState, ModelElement adminElement) {
+        var validForVersion2Elements = List.of("adminserver", "cluster-controllers", "configservers", "logserver", "monitoring", "slobroks");
+        var used = validForVersion2Elements.stream()
+                                           .filter(e -> ! adminElement.children(e).isEmpty())
+                                           .map(e -> "'" + e + "'")
+                                           .collect(Collectors.joining(", "));
+        if ( ! used.isEmpty())
+            deployState.getDeployLogger().logApplicationPackage(WARNING, "Elements " + used + " in <admin> are deprecated and ignored, please remove");
     }
 
 }

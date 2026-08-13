@@ -2,6 +2,8 @@
 export TOP := $(realpath $(dir $(lastword $(MAKEFILE_LIST))))
 
 export ARCH ?= $(shell if [[ $$(arch) == x86_64 ]]; then echo amd64; else echo arm64; fi)
+export VESPA_BUILDOS_LABEL ?= alma8
+export VESPA_MAJOR_VERSION_LABEL ?= vespa8
 
 export LOG_DIR ?= $(shell pwd)
 export SOURCE_DIR ?= $(shell pwd)
@@ -17,23 +19,30 @@ export LOCAL_MVN_REPO ?= $(WORKDIR)/artifacts/$(ARCH)/maven-repo
 export VESPA_MAVEN_EXTRA_OPTS ?= --show-version --batch-mode --no-snapshot-updates  \
 	-DaltDeploymentRepository=local-repo::default::file:$(LOCAL_MVN_REPO)
 
+export LOCAL_RPM_REPO ?= $(WORKDIR)/artifacts/$(ARCH)/rpms
+
 export NUM_CPU_LIMIT ?= $(shell nproc)
 export NUM_CPP_THREADS := $(shell echo $$(( $(NUM_CPU_LIMIT)*2/3 )))
 export NUM_MVN_THREADS := $(shell echo $$(( $(NUM_CPU_LIMIT)*2/3 )))
 
+export MAVEN_OPTS ?= -Xms1g -Xmx$(NUM_MVN_THREADS)g
+
 export BUILDKITE ?= false
 export BUILDKITE_PULL_REQUEST ?= true
-ifeq ($(BUILDKITE_PULL_REQUEST),false)        
+ifeq ($(BUILDKITE_PULL_REQUEST),false)
 	export VESPA_MAVEN_TARGET ?= deploy
 else
 	export VESPA_MAVEN_TARGET ?= install
 	export VESPA_MAVEN_EXTRA_OPTS := $(VESPA_MAVEN_EXTRA_OPTS) -Dmaven.source.skip=true -Dmaven.javadoc.skip=true
 endif
 
+# This must be set by Buildkite pipelines; we provide a default for testing only.
+export VESPA_CONTAINER_IMAGE_VERSION_TAG_SUFFIX ?= -dev-only
+
 .DEFAULT_GOAL := pr
 
-main: build-rpms cpp-test quick-start-guide publish-container publish-artifacts
-pr: build-rpms cpp-test basic-search-test
+main: cpp-test java-test quick-start-guide publish-container publish-artifacts
+pr: basic-search-test
 
 check:
 	@shellcheck -x $(TOP)/*.sh
@@ -50,19 +59,22 @@ bootstrap-cmake: bootstrap
 java: bootstrap
 	@$(TOP)/execute.sh $@
 
+java-test: install
+	@$(TOP)/execute.sh $@
+
 cpp: bootstrap-cmake
 	@$(TOP)/execute.sh $@
 
-cpp-test: cpp
+cpp-test: install
 	@$(TOP)/execute.sh $@
 
-install: cpp java cpp-test
+install: cpp java
 	@$(TOP)/execute.sh $@
 
 build-rpms: install
 	@$(TOP)/execute.sh $@
 
-basic-search-test: build-rpms
+basic-search-test: build-rpms cpp-test java-test
 	@$(TOP)/execute.sh $@
 
 build-container: build-rpms
@@ -74,10 +86,10 @@ quick-start-guide: build-container
 publish-container: build-container
 	@$(TOP)/execute.sh $@
 
-publish-artifacts: java build-rpms
+publish-artifacts: build-rpms
 	@$(TOP)/execute.sh $@
 
-upload-test-results: java cpp-test
+upload-test-results: java-test cpp-test
 	@$(TOP)/execute.sh $@
 
 .PHONY: \
@@ -87,6 +99,7 @@ upload-test-results: java cpp-test
 	bootstrap \
 	bootstrap-cmake \
 	java \
+	java-test \
 	cpp \
 	cpp-test \
 	install \

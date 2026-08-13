@@ -8,8 +8,9 @@ import org.eclipse.lsp4j.Diagnostic;
 import ai.vespa.schemals.context.ParseContext;
 import ai.vespa.schemals.index.Symbol.SymbolStatus;
 import ai.vespa.schemals.parser.ast.fieldElm;
+import ai.vespa.schemals.tree.Node;
 import ai.vespa.schemals.tree.SchemaNode;
-import ai.vespa.schemals.tree.SchemaNode.LanguageType;
+import ai.vespa.schemals.tree.Node.LanguageType;
 
 /**
  * ResolverTraversal
@@ -23,9 +24,8 @@ public class ResolverTraversal {
     }
 
     private static void traverse(ParseContext context, SchemaNode currentNode, List<Diagnostic> diagnostics, boolean insideRankExpression) {
-
         if (currentNode.getLanguageType() == LanguageType.RANK_EXPRESSION && !insideRankExpression) {
-            RankExpressionSymbolResolver.resolveRankExpression(currentNode, context);
+            RankExpressionSymbolResolver.resolveRankExpression(currentNode, context, diagnostics);
         }
 
         if (currentNode.hasSymbol() && currentNode.getSymbol().getStatus() == SymbolStatus.UNRESOLVED) {
@@ -36,8 +36,8 @@ public class ResolverTraversal {
             IndexingLanguageResolver.resolveIndexingLanguage(context, currentNode, diagnostics);
         }
 
-        for (SchemaNode child : currentNode) {
-            traverse(context, child, diagnostics, insideRankExpression || currentNode.getLanguageType() == LanguageType.RANK_EXPRESSION);
+        for (Node child : currentNode) {
+            traverse(context, child.getSchemaNode(), diagnostics, insideRankExpression || currentNode.getLanguageType() == LanguageType.RANK_EXPRESSION);
         }
 
         // Some things need run after the children has run.

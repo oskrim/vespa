@@ -1,16 +1,6 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.indexinglanguage.expressions;
 
-import com.yahoo.document.DataType;
-import com.yahoo.document.DocumentType;
-import com.yahoo.document.FieldPath;
-import com.yahoo.vespa.objects.ObjectOperation;
-import com.yahoo.vespa.objects.ObjectPredicate;
-
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Objects;
-
 /**
  * Returns the current execution value, that is the value passed to this expression.
  * Referring to this explicitly is useful e.g to concatenate it to some other string:
@@ -20,17 +10,10 @@ import java.util.Objects;
  */
 public final class ExecutionValueExpression extends Expression {
 
-    public ExecutionValueExpression() {
-        super(null);
-    }
-
     @Override
     protected void doExecute(ExecutionContext context) {
         // Noop: Set the output execution value to the current execution value
     }
-
-    @Override
-    public DataType createdOutputType() { return UnresolvedDataType.INSTANCE; }
 
     @Override
     public String toString() { return "_"; }

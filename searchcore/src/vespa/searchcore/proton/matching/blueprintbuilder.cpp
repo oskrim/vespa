@@ -1,15 +1,18 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "blueprintbuilder.h"
+
 #include "querynodes.h"
-#include "same_element_builder.h"
+
 #include <vespa/searchcorespi/index/indexsearchable.h>
+#include <vespa/searchlib/fef/matchdatalayout.h>
 #include <vespa/searchlib/query/tree/customtypevisitor.h>
-#include <vespa/searchlib/queryeval/leaf_blueprints.h>
-#include <vespa/searchlib/queryeval/intermediate_blueprints.h>
+#include <vespa/searchlib/queryeval/create_blueprint_params.h>
 #include <vespa/searchlib/queryeval/equiv_blueprint.h>
 #include <vespa/searchlib/queryeval/get_weight_from_node.h>
-#include <vespa/searchlib/attribute/attribute_blueprint_params.h>
+#include <vespa/searchlib/queryeval/intermediate_blueprints.h>
+#include <vespa/searchlib/queryeval/leaf_blueprints.h>
+#include <vespa/searchlib/queryeval/same_element_blueprint.h>
 #include <vespa/vespalib/util/issue.h>
 
 using namespace search::queryeval;
@@ -22,23 +25,23 @@ namespace {
 struct Mixer {
     std::unique_ptr<OrBlueprint> attributes;
 
-    Mixer() noexcept: attributes() {}
+    Mixer() noexcept : attributes() {}
 
     void addAttribute(Blueprint::UP attr) {
-        if ( ! attributes) {
+        if (!attributes) {
             attributes = std::make_unique<OrBlueprint>();
         }
         attributes->addChild(std::move(attr));
     }
 
     Blueprint::UP mix(Blueprint::UP indexes) {
-        if ( ! attributes) {
-            if ( ! indexes) {
+        if (!attributes) {
+            if (!indexes) {
                 return std::make_unique<EmptyBlueprint>();
             }
             return indexes;
         }
-        if ( ! indexes) {
+        if (!indexes) {
             if (attributes->childCnt() == 1) {
                 return attributes->removeChild(0);
             } else {
@@ -53,82 +56,116 @@ struct Mixer {
 /**
  * requires that match data space has been reserved
  */
-class BlueprintBuilderVisitor :
-        public search::query::CustomTypeVisitor<ProtonNodeTypes>
-{
+class BlueprintBuilderVisitor : public search::query::CustomTypeVisitor<ProtonNodeTypes> {
 private:
-    const IRequestContext & _requestContext;
-    ISearchContext &_context;
-    Blueprint::UP   _result;
+    const IRequestContext&        _requestContext;
+    ISearchContext&               _context;
+    search::fef::MatchDataLayout& _global_layout;
+    Blueprint::UP                 _result;
 
-    void buildChildren(IntermediateBlueprint &parent, const std::vector<Node *> &children);
-    bool is_search_multi_threaded() const noexcept {
-        return _requestContext.thread_bundle().size() > 1;
-    }
+    void buildChildren(IntermediateBlueprint& parent, const std::vector<Node*>& children);
+    bool is_search_multi_threaded() const noexcept { return _requestContext.thread_bundle().size() > 1; }
 
     template <typename NodeType>
-    void buildIntermediate(IntermediateBlueprint *b, NodeType &n) __attribute__((noinline));
+    void buildIntermediate(IntermediateBlueprint* b, NodeType& n) __attribute__((noinline));
 
-    void buildWeakAnd(ProtonWeakAnd &n) {
-        auto *wand = new WeakAndBlueprint(n.getTargetNumHits(),
-                                          _requestContext.get_attribute_blueprint_params().weakand_range,
-                                          _requestContext.get_attribute_blueprint_params().weakand_stop_word_strategy,
-                                          is_search_multi_threaded());
+    void buildWeakAnd(ProtonWeakAnd& n) {
+        auto*         wand = new WeakAndBlueprint(n.getTargetNumHits(),
+                                                  _requestContext.get_create_blueprint_params().weakand_stop_word_strategy,
+                                                  is_search_multi_threaded());
         Blueprint::UP result(wand);
         for (auto node : n.getChildren()) {
             uint32_t weight = getWeightFromNode(*node).percent();
-            wand->addTerm(build(_requestContext, *node, _context), weight);
+            wand->addTerm(build(_requestContext, *node, _context, _global_layout), weight);
         }
         _result = std::move(result);
     }
 
-    void buildEquiv(ProtonEquiv &n) {
-        double eqw = n.getWeight().percent();
+    void buildEquiv(ProtonEquiv& n) {
+        double            eqw = n.getWeight().percent();
         FieldSpecBaseList specs;
         specs.reserve(n.numFields());
         for (size_t i = 0; i < n.numFields(); ++i) {
             specs.add(n.field(i).fieldSpec());
         }
-        auto *eq = new EquivBlueprint(std::move(specs), n.children_mdl);
-        _result.reset(eq);
+        auto eq = std::make_unique<EquivBlueprint>(std::move(specs), EquivBlueprint::allocate_outside_equiv_tag{});
         for (auto node : n.getChildren()) {
             double w = getWeightFromNode(*node).percent();
-            eq->addTerm(build(_requestContext, *node, _context), w / eqw);
+            eq->addTerm(build(_requestContext, *node, _context, _global_layout), w / eqw);
         }
-        _result->setDocIdLimit(_context.getDocIdLimit());
-        n.setDocumentFrequency(_result->getState().estimate().estHits, _context.getDocIdLimit());
+        eq->setDocIdLimit(_context.getDocIdLimit());
+        n.setDocumentFrequency(eq->getState().estimate().estHits, _context.getDocIdLimit());
+        _result = std::move(eq);
     }
 
-    void buildSameElement(ProtonSameElement &n) {
+    void buildWordAlternatives(ProtonWordAlternatives& n) {
+        const auto& children = n.getChildren();
+        assert(children.size() == n.getNumTerms());
+        double                                  eqw = n.getWeight().percent();
+        std::vector<std::unique_ptr<Blueprint>> term_bps;
+        for (const auto& child : children) {
+            term_bps.emplace_back(build(_requestContext, *child, _context, _global_layout));
+        }
+        FieldSpecBaseList specs;
+        specs.reserve(n.numFields());
+        for (size_t i = 0; i < n.numFields(); ++i) {
+            specs.add(n.field(i).fieldSpec());
+        }
+        auto eq = std::make_unique<EquivBlueprint>(std::move(specs), EquivBlueprint::allocate_outside_equiv_tag{});
+        assert(term_bps.size() == n.getNumTerms());
+        for (uint32_t idx = 0; idx < n.getNumTerms(); idx++) {
+            const auto& child = children[idx];
+            double      w = child->getWeight().percent();
+            eq->addTerm(std::move(term_bps[idx]), w / eqw);
+        }
+        eq->setDocIdLimit(_context.getDocIdLimit());
+        n.setDocumentFrequency(eq->getState().estimate().estHits, _context.getDocIdLimit());
+        _result = std::move(eq);
+    }
+
+    void buildSameElement(ProtonSameElement& n) {
         if (n.numFields() == 1) {
-            SameElementBuilder builder(_requestContext, _context, n.field(0).fieldSpec(), n.is_expensive());
-            for (Node *node: n.getChildren()) {
-                builder.add_child(*node);
+            auto se = std::make_unique<SameElementBlueprint>(n.field(0).fieldSpec(), n.descendants_index_handles,
+                                                             n.is_expensive(), n.expose_match_data_for_same_element,
+                                                             n.get_element_filter()); // Copy element filter
+            for (auto* node : n.getChildren()) {
+                se->addChild(build(_requestContext, *node, _context, _global_layout));
             }
-            _result = builder.build();
+            _result = std::move(se);
         } else {
-            vespalib::Issue::report("SameElement operator searches in unexpected number of fields. Expected 1 but was %zu", n.numFields());
+            // numFields() == 0 happens if multiple schemas are queried and the current schema does not contain the
+            // searched field. Produce a more meaningful error message in this case.
+            std::string document_type_name(_context.get_document_type_name());
+            if (n.numFields() == 0) {
+                vespalib::Issue::report(
+                    "SameElement operator does not search in a field. Is '%s' a field of document type '%s'?",
+                    n.getView().c_str(), document_type_name.c_str());
+            } else if (n.numFields() > 1) {
+                vespalib::Issue::report("SameElement operator searches in more than one field: '%s' maps to "
+                                        "%zu fields of document type '%s'.",
+                                        n.getView().c_str(), n.numFields(), document_type_name.c_str());
+            }
             _result = std::make_unique<EmptyBlueprint>();
         }
     }
 
-    template <typename NodeType>
-    void buildTerm(NodeType &n) {
+    template <typename NodeType> void buildTerm(NodeType& n) {
         FieldSpecList indexFields;
-        Mixer mixer;
+        Mixer         mixer;
         for (size_t i = 0; i < n.numFields(); ++i) {
-            const ProtonTermData::FieldEntry &field = n.field(i);
+            const ProtonTermData::FieldEntry& field = n.field(i);
             assert(field.getFieldId() != search::fef::IllegalFieldId);
             assert(field.getHandle() != search::fef::IllegalHandle);
             if (field.attribute_field) {
-                mixer.addAttribute(_context.getAttributes().createBlueprint(_requestContext, field.fieldSpec(), n));
+                mixer.addAttribute(
+                    _context.getAttributes().createBlueprint(_requestContext, field.fieldSpec(), n, _global_layout));
             } else {
                 indexFields.add(field.fieldSpec());
             }
         }
         Blueprint::UP indexBlueprint;
         if (!indexFields.empty()) {
-            indexBlueprint = _context.getIndexes().createBlueprint(_requestContext, indexFields, n);
+            indexBlueprint = _context.getIndexes().createBlueprint(_requestContext, indexFields, n, _global_layout);
         }
         _result = mixer.mix(std::move(indexBlueprint));
         _result->setDocIdLimit(_context.getDocIdLimit());
@@ -136,113 +173,104 @@ private:
     }
 
 protected:
-    void visit(ProtonAnd &n)         override { buildIntermediate(new AndBlueprint(), n); }
-    void visit(ProtonAndNot &n)      override { buildIntermediate(new AndNotBlueprint(), n); }
-    void visit(ProtonOr &n)          override { buildIntermediate(new OrBlueprint(), n); }
-    void visit(ProtonWeakAnd &n)     override { buildWeakAnd(n); }
-    void visit(ProtonEquiv &n)       override { buildEquiv(n); }
-    void visit(ProtonRank &n)        override { buildIntermediate(new RankBlueprint(), n); }
-    void visit(ProtonNear &n)        override { buildIntermediate(new NearBlueprint(n.getDistance()), n); }
-    void visit(ProtonONear &n)       override { buildIntermediate(new ONearBlueprint(n.getDistance()), n); }
-    void visit(ProtonSameElement &n) override { buildSameElement(n); }
-
-    void visit(ProtonWeightedSetTerm &n) override { buildTerm(n); }
-    void visit(ProtonDotProduct &n)      override { buildTerm(n); }
-    void visit(ProtonWandTerm &n)        override { buildTerm(n); }
-
-    void visit(ProtonPhrase &n)          override { buildTerm(n); }
-    void visit(ProtonNumberTerm &n)      override { buildTerm(n); }
-    void visit(ProtonLocationTerm &n)    override { buildTerm(n); }
-    void visit(ProtonPrefixTerm &n)      override { buildTerm(n); }
-    void visit(ProtonRangeTerm &n)       override { buildTerm(n); }
-    void visit(ProtonStringTerm &n)      override { buildTerm(n); }
-    void visit(ProtonSubstringTerm &n)   override { buildTerm(n); }
-    void visit(ProtonSuffixTerm &n)      override { buildTerm(n); }
-    void visit(ProtonPredicateQuery &n)  override { buildTerm(n); }
-    void visit(ProtonRegExpTerm &n)      override { buildTerm(n); }
-    void visit(ProtonNearestNeighborTerm &n) override { buildTerm(n); }
-    void visit(ProtonTrue &) override {
-        _result = std::make_unique<AlwaysTrueBlueprint>();
+    void visit(ProtonAnd& n) override { buildIntermediate(new AndBlueprint(), n); }
+    void visit(ProtonAndNot& n) override { buildIntermediate(new AndNotBlueprint(n.elementwise), n); }
+    void visit(ProtonOr& n) override { buildIntermediate(new OrBlueprint(), n); }
+    void visit(ProtonWeakAnd& n) override { buildWeakAnd(n); }
+    void visit(ProtonEquiv& n) override { buildEquiv(n); }
+    void visit(ProtonWordAlternatives& n) override { buildWordAlternatives(n); }
+    void visit(ProtonRank& n) override { buildIntermediate(new RankBlueprint(), n); }
+    void visit(ProtonNear& n) override {
+        buildIntermediate(new NearBlueprint(n.getDistance(), n.num_negative_terms(), n.exclusion_distance(),
+                                            _requestContext.get_element_gap_inspector()),
+                          n);
     }
-    void visit(ProtonFalse &) override {
-        _result = std::make_unique<EmptyBlueprint>();
+    void visit(ProtonONear& n) override {
+        buildIntermediate(new ONearBlueprint(n.getDistance(), n.num_negative_terms(), n.exclusion_distance(),
+                                             _requestContext.get_element_gap_inspector()),
+                          n);
     }
-    void visit(ProtonFuzzyTerm &n)      override { buildTerm(n); }
-    void visit(ProtonInTerm& n)         override { buildTerm(n); }
+    void visit(ProtonSameElement& n) override { buildSameElement(n); }
+
+    void visit(ProtonWeightedSetTerm& n) override { buildTerm(n); }
+    void visit(ProtonDotProduct& n) override { buildTerm(n); }
+    void visit(ProtonWandTerm& n) override { buildTerm(n); }
+
+    void visit(ProtonPhrase& n) override { buildTerm(n); }
+    void visit(ProtonNumberTerm& n) override { buildTerm(n); }
+    void visit(ProtonLocationTerm& n) override { buildTerm(n); }
+    void visit(ProtonPrefixTerm& n) override { buildTerm(n); }
+    void visit(ProtonRangeTerm& n) override { buildTerm(n); }
+    void visit(ProtonStringTerm& n) override { buildTerm(n); }
+    void visit(ProtonSubstringTerm& n) override { buildTerm(n); }
+    void visit(ProtonSuffixTerm& n) override { buildTerm(n); }
+    void visit(ProtonPredicateQuery& n) override { buildTerm(n); }
+    void visit(ProtonRegExpTerm& n) override { buildTerm(n); }
+    void visit(ProtonNearestNeighborTerm& n) override { buildTerm(n); }
+    void visit(ProtonTrue&) override { _result = std::make_unique<AlwaysTrueBlueprint>(); }
+    void visit(ProtonFalse&) override { _result = std::make_unique<EmptyBlueprint>(); }
+    void visit(ProtonFuzzyTerm& n) override { buildTerm(n); }
+    void visit(ProtonInTerm& n) override { buildTerm(n); }
 
 public:
-    BlueprintBuilderVisitor(const IRequestContext & requestContext, ISearchContext &context) :
-        _requestContext(requestContext),
-        _context(context),
-        _result()
-    { }
+    BlueprintBuilderVisitor(const IRequestContext& requestContext, ISearchContext& context,
+                            search::fef::MatchDataLayout& global_layout)
+        : _requestContext(requestContext), _context(context), _global_layout(global_layout), _result() {}
     Blueprint::UP build() {
         assert(_result);
         return std::move(_result);
     }
-    static Blueprint::UP build(const IRequestContext & requestContext, Node &node, ISearchContext &context) {
-        BlueprintBuilderVisitor visitor(requestContext, context);
+    static Blueprint::UP build(const IRequestContext& requestContext, Node& node, ISearchContext& context,
+                               search::fef::MatchDataLayout& global_layout) {
+        CreateBlueprintProfilerGuard profiler_guard;
+        BlueprintBuilderVisitor      visitor(requestContext, context, global_layout);
         node.accept(visitor);
         Blueprint::UP result = visitor.build();
+        profiler_guard.set_name_with(*result);
         return result;
-
     }
 };
 
-void
-BlueprintBuilderVisitor::buildChildren(IntermediateBlueprint &parent, const std::vector<Node *> &children)
-{
+void BlueprintBuilderVisitor::buildChildren(IntermediateBlueprint& parent, const std::vector<Node*>& children) {
     parent.reserve(children.size());
     for (auto child : children) {
-        parent.addChild(build(_requestContext, *child, _context));
+        parent.addChild(build(_requestContext, *child, _context, _global_layout));
     }
 }
 
-template <typename NodeType>
-void
-BlueprintBuilderVisitor::buildIntermediate(IntermediateBlueprint *b, NodeType &n) {
+template <typename NodeType> void BlueprintBuilderVisitor::buildIntermediate(IntermediateBlueprint* b, NodeType& n) {
     std::unique_ptr<IntermediateBlueprint> blueprint(b);
     buildChildren(*blueprint, n.getChildren());
     _result = std::move(blueprint);
 }
 
-IntermediateBlueprint *
-asRankOrAndNot(Blueprint * blueprint) {
-    return ((blueprint->isAndNot() || blueprint->isRank()))
-           ? blueprint->asIntermediate()
-           : nullptr;
+IntermediateBlueprint* asRankOrAndNot(Blueprint* blueprint) {
+    return ((blueprint->isAndNot() || blueprint->isRank())) ? blueprint->asIntermediate() : nullptr;
 }
 
-IntermediateBlueprint *
-lastConsequtiveRankOrAndNot(Blueprint * blueprint) {
-    IntermediateBlueprint * prev = nullptr;
-    IntermediateBlueprint * curr = asRankOrAndNot(blueprint);
+IntermediateBlueprint* lastConsequtiveRankOrAndNot(Blueprint* blueprint) {
+    IntermediateBlueprint* prev = nullptr;
+    IntermediateBlueprint* curr = asRankOrAndNot(blueprint);
     while (curr != nullptr) {
-        prev =  curr;
+        prev = curr;
         curr = asRankOrAndNot(&curr->getChild(0));
     }
     return prev;
 }
 
-} // namespace proton::matching::<unnamed>
+} // namespace
 
-Blueprint::UP
-BlueprintBuilder::build(const IRequestContext & requestContext,
-                        Node &node, Blueprint::UP whiteList, ISearchContext &context)
-{
-    auto blueprint = BlueprintBuilderVisitor::build(requestContext, node, context);
+Blueprint::UP BlueprintBuilder::build(const IRequestContext& requestContext, Node& node, Blueprint::UP whiteList,
+                                      ISearchContext& context, MatchDataLayout& global_layout) {
+    auto blueprint = BlueprintBuilderVisitor::build(requestContext, node, context, global_layout);
     if (whiteList) {
-        auto andBlueprint = std::make_unique<AndBlueprint>();
-        IntermediateBlueprint * rankOrAndNot = lastConsequtiveRankOrAndNot(blueprint.get());
+        auto                   andBlueprint = std::make_unique<AndBlueprint>();
+        IntermediateBlueprint* rankOrAndNot = lastConsequtiveRankOrAndNot(blueprint.get());
         if (rankOrAndNot != nullptr) {
-            (*andBlueprint)
-                    .addChild(rankOrAndNot->removeChild(0))
-                    .addChild(std::move(whiteList));
+            (*andBlueprint).addChild(rankOrAndNot->removeChild(0)).addChild(std::move(whiteList));
             rankOrAndNot->insertChild(0, std::move(andBlueprint));
         } else {
-            (*andBlueprint)
-                    .addChild(std::move(blueprint))
-                    .addChild(std::move(whiteList));
+            (*andBlueprint).addChild(std::move(blueprint)).addChild(std::move(whiteList));
             blueprint = std::move(andBlueprint);
         }
     }
@@ -250,4 +278,4 @@ BlueprintBuilder::build(const IRequestContext & requestContext,
     return blueprint;
 }
 
-}
+} // namespace proton::matching

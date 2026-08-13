@@ -17,6 +17,7 @@ func (arr *arrayValue) Entry(index int) Value {
 	}
 	return Invalid
 }
+
 func (arr *arrayValue) EachEntry(f func(index int, value Value)) {
 	for i, x := range arr.value {
 		f(i, x)
@@ -26,4 +27,18 @@ func (arr *arrayValue) EachEntry(f func(index int, value Value)) {
 func (arr *arrayValue) Add(value Value) Value {
 	arr.value = append(arr.value, value)
 	return value
+}
+
+func (arr *arrayValue) Emit(dst DataSink) {
+	dst.Array()
+	for _, value := range arr.value {
+		value.Emit(dst)
+	}
+	dst.End()
+}
+
+func MakeArray(fill func(arr Value)) Value {
+	arr := Array()
+	fill(arr)
+	return arr
 }

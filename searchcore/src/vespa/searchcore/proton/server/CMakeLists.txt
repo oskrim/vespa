@@ -6,11 +6,12 @@ vespa_add_library(searchcore_server STATIC
     bootstrapconfigmanager.cpp
     buckethandler.cpp
     bucketmovejob.cpp
+    clear_imported_attribute_search_cache_job.cpp
     clusterstatehandler.cpp
     combiningfeedview.cpp
     ddbstate.cpp
-    disk_mem_usage_filter.cpp
-    disk_mem_usage_forwarder.cpp
+    detached_rpc_request.cpp
+    detached_rpc_requests_owner.cpp
     disk_mem_usage_metrics.cpp
     disk_mem_usage_sampler.cpp
     docstorevalidator.cpp
@@ -18,8 +19,10 @@ vespa_add_library(searchcore_server STATIC
     document_db_directory_holder.cpp
     document_db_explorer.cpp
     document_db_flush_config.cpp
+    document_db_initialization_status.cpp
     document_db_maintenance_config.cpp
     document_db_reconfig.cpp
+    document_meta_store_config.cpp
     document_meta_store_read_guards.cpp
     document_scan_iterator.cpp
     document_subdb_collection_explorer.cpp
@@ -60,15 +63,19 @@ vespa_add_library(searchcore_server STATIC
     idocumentdbowner.cpp
     ifeedview.cpp
     initialize_threads_calculator.cpp
+    initialization_handler.cpp
     ireplayconfig.cpp
     job_tracked_maintenance_job.cpp
     lid_space_compaction_handler.cpp
     lid_space_compaction_job.cpp
     maintenance_controller_explorer.cpp
+    maintenance_job_token.cpp
+    maintenance_job_token_source.cpp
     maintenance_jobs_injector.cpp
     maintenancecontroller.cpp
     maintenancedocumentsubdb.cpp
     maintenancejobrunner.cpp
+    malloc_info_explorer.cpp
     matchers.cpp
     matchview.cpp
     memory_flush_config_updater.cpp
@@ -79,11 +86,14 @@ vespa_add_library(searchcore_server STATIC
     operationdonecontext.cpp
     persistencehandlerproxy.cpp
     prepare_restart_handler.cpp
+    prepare_restart_rpc_handler.cpp
+    prepare_restart2_rpc_handler.cpp
     proton.cpp
     proton_config_fetcher.cpp
     proton_config_snapshot.cpp
     proton_configurer.cpp
     proton_disk_layout.cpp
+    proton_initialization_status.cpp
     proton_thread_pools_explorer.cpp
     pruneremoveddocumentsjob.cpp
     putdonecontext.cpp
@@ -92,6 +102,10 @@ vespa_add_library(searchcore_server STATIC
     removedonecontext.cpp
     replaypacketdispatcher.cpp
     resource_usage_explorer.cpp
+    resource_usage_forwarder.cpp
+    resource_usage_notifier.cpp
+    resource_usage_state.cpp
+    resource_usage_write_filter.cpp
     rpc_hooks.cpp
     sample_attribute_usage_job.cpp
     searchable_doc_subdb_configurer.cpp
@@ -101,6 +115,7 @@ vespa_add_library(searchcore_server STATIC
     searchhandlerproxy.cpp
     searchview.cpp
     sequenced_task_executor_explorer.cpp
+    set_flush_strategy_rpc_handler.cpp
     shared_threading_service.cpp
     shared_threading_service_config.cpp
     simpleflush.cpp

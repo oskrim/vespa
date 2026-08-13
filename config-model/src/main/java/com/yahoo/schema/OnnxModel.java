@@ -2,6 +2,7 @@
 package com.yahoo.schema;
 
 import com.yahoo.config.model.api.OnnxModelOptions;
+import com.yahoo.searchlib.ranking.features.FeatureNames;
 import com.yahoo.searchlib.rankingexpression.Reference;
 import com.yahoo.tensor.TensorType;
 import com.yahoo.vespa.model.ml.OnnxModelInfo;
@@ -29,6 +30,7 @@ public class OnnxModel extends DistributableResource implements Cloneable {
 
     // Runtime options
     private OnnxModelOptions onnxModelOptions = OnnxModelOptions.empty();
+    private boolean optimizeModel = true;
 
     public OnnxModel(String name) {
         super(name);
@@ -162,7 +164,7 @@ public class OnnxModel extends DistributableResource implements Cloneable {
     }
 
     public void setGpuDevice(int deviceNumber, boolean required) {
-        if (deviceNumber >= 0) {
+        if (deviceNumber >= -1) {
             onnxModelOptions = onnxModelOptions.withGpuDevice(new OnnxModelOptions.GpuDevice(deviceNumber, required));
         }
     }
@@ -172,5 +174,13 @@ public class OnnxModel extends DistributableResource implements Cloneable {
     }
 
     public OnnxModelOptions onnxModelOptions() { return onnxModelOptions; }
+
+    public void setOptimizeModel(boolean optimizeModel) {
+        this.optimizeModel = optimizeModel;
+    }
+
+    public boolean getOptimizeModel() {
+        return optimizeModel;
+    }
 
 }

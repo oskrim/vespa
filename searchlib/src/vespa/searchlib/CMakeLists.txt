@@ -16,7 +16,6 @@ vespa_add_library(vespa_searchlib
     $<TARGET_OBJECTS:searchlib_fef>
     $<TARGET_OBJECTS:searchlib_fef_test>
     $<TARGET_OBJECTS:searchlib_fef_test_plugin>
-    $<TARGET_OBJECTS:searchlib_grouping>
     $<TARGET_OBJECTS:searchlib_memoryindex>
     $<TARGET_OBJECTS:searchlib_parsequery>
     $<TARGET_OBJECTS:searchlib_predicate>
@@ -37,6 +36,7 @@ vespa_add_library(vespa_searchlib
     INSTALL lib64
     DEPENDS
     vespalib
+    vespalib_quant
     ICU::i18n
     ICU::uc
     protobuf::libprotobuf

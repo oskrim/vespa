@@ -2,6 +2,7 @@
 
 #include "empty_docsum_field_writer_state.h"
 
+using search::common::ElementIds;
 using vespalib::slime::Inserter;
 
 namespace search::docsummary {
@@ -10,9 +11,7 @@ EmptyDocsumFieldWriterState::EmptyDocsumFieldWriterState() = default;
 
 EmptyDocsumFieldWriterState::~EmptyDocsumFieldWriterState() = default;
 
-void
-EmptyDocsumFieldWriterState::insertField(uint32_t, Inserter&)
-{
+void EmptyDocsumFieldWriterState::insertField(uint32_t, ElementIds, Inserter&) {
 }
 
-}
+} // namespace search::docsummary

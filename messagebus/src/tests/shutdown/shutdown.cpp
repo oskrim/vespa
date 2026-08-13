@@ -7,54 +7,46 @@
 #include <vespa/messagebus/testlib/simpleprotocol.h>
 #include <vespa/messagebus/testlib/slobrok.h>
 #include <vespa/messagebus/testlib/testserver.h>
-#include <vespa/vespalib/testkit/test_kit.h>
+#include <vespa/vespalib/gtest/gtest.h>
 #include <vespa/vespalib/util/exceptions.h>
 
 using namespace mbus;
 
 static const duration TIMEOUT = 120s;
 
-TEST("requireThatListenFailedIsExceptionSafe")
-{
+TEST(ShutdownTest, requireThatListenFailedIsExceptionSafe) {
     fnet::frt::StandaloneFRT orb;
     ASSERT_TRUE(orb.supervisor().Listen(0));
 
     Slobrok slobrok;
     try {
         TestServer bar(MessageBusParams(),
-                       RPCNetworkParams(slobrok.config())
-                       .setListenPort(orb.supervisor().GetListenPort()));
+                       RPCNetworkParams(slobrok.config()).setListenPort(orb.supervisor().GetListenPort()));
         EXPECT_TRUE(false);
-    } catch (vespalib::Exception &e) {
-        EXPECT_EQUAL("Failed to start network.", e.getMessage());
+    } catch (vespalib::Exception& e) {
+        EXPECT_EQ("Failed to start network.", e.getMessage());
     }
 }
 
-TEST("requireThatShutdownOnSourceWithPendingIsSafe")
-{
-    Slobrok slobrok;
-    TestServer dstServer(MessageBusParams()
-                         .addProtocol(std::make_shared<SimpleProtocol>()),
-                         RPCNetworkParams(slobrok.config())
-                         .setIdentity(Identity("dst")));
-    Receptor dstHandler;
+TEST(ShutdownTest, requireThatShutdownOnSourceWithPendingIsSafe) {
+    Slobrok                slobrok;
+    TestServer             dstServer(MessageBusParams().addProtocol(std::make_shared<SimpleProtocol>()),
+                                     RPCNetworkParams(slobrok.config()).setIdentity(Identity("dst")));
+    Receptor               dstHandler;
     DestinationSession::UP dstSession = dstServer.mb.createDestinationSession(
-            DestinationSessionParams()
-            .setName("session")
-            .setMessageHandler(dstHandler));
+        DestinationSessionParams().setName("session").setMessageHandler(dstHandler));
     ASSERT_TRUE(dstSession);
 
     for (uint32_t i = 0; i < 10; ++i) {
         Message::UP msg(new SimpleMessage("msg"));
         {
-            TestServer srcServer(MessageBusParams()
-                    .setRetryPolicy(std::make_shared<RetryTransientErrorsPolicy>())
-                    .addProtocol(std::make_shared<SimpleProtocol>()),
-                    RPCNetworkParams(slobrok.config()));
-            Receptor srcHandler;
-            SourceSession::UP srcSession = srcServer.mb.createSourceSession(SourceSessionParams()
-                    .setThrottlePolicy(IThrottlePolicy::SP())
-                    .setReplyHandler(srcHandler));
+            TestServer        srcServer(MessageBusParams()
+                                            .setRetryPolicy(std::make_shared<RetryTransientErrorsPolicy>())
+                                            .addProtocol(std::make_shared<SimpleProtocol>()),
+                                        RPCNetworkParams(slobrok.config()));
+            Receptor          srcHandler;
+            SourceSession::UP srcSession = srcServer.mb.createSourceSession(
+                SourceSessionParams().setThrottlePolicy(IThrottlePolicy::SP()).setReplyHandler(srcHandler));
             ASSERT_TRUE(srcSession);
             ASSERT_TRUE(srcServer.waitSlobrok("dst/session", 1));
             ASSERT_TRUE(srcSession->send(std::move(msg), "dst/session", true).isAccepted());
@@ -65,45 +57,37 @@ TEST("requireThatShutdownOnSourceWithPendingIsSafe")
     }
 }
 
-TEST("requireThatShutdownOnIntermediateWithPendingIsSafe")
-{
-    Slobrok slobrok;
-    TestServer dstServer(MessageBusParams()
-                         .addProtocol(std::make_shared<SimpleProtocol>()),
-                         RPCNetworkParams(slobrok.config())
-                         .setIdentity(Identity("dst")));
-    Receptor dstHandler;
+TEST(ShutdownTest, requireThatShutdownOnIntermediateWithPendingIsSafe) {
+    Slobrok                slobrok;
+    TestServer             dstServer(MessageBusParams().addProtocol(std::make_shared<SimpleProtocol>()),
+                                     RPCNetworkParams(slobrok.config()).setIdentity(Identity("dst")));
+    Receptor               dstHandler;
     DestinationSession::UP dstSession = dstServer.mb.createDestinationSession(
-            DestinationSessionParams()
-            .setName("session")
-            .setMessageHandler(dstHandler));
+        DestinationSessionParams().setName("session").setMessageHandler(dstHandler));
     ASSERT_TRUE(dstSession);
 
-    TestServer srcServer(MessageBusParams()
-                         .setRetryPolicy(IRetryPolicy::SP())
-                         .addProtocol(std::make_shared<SimpleProtocol>()),
-                         RPCNetworkParams(slobrok.config()));
-    Receptor srcHandler;
-    SourceSession::UP srcSession = srcServer.mb.createSourceSession(SourceSessionParams()
-            .setThrottlePolicy(IThrottlePolicy::SP())
-            .setReplyHandler(srcHandler));
+    TestServer srcServer(
+        MessageBusParams().setRetryPolicy(IRetryPolicy::SP()).addProtocol(std::make_shared<SimpleProtocol>()),
+        RPCNetworkParams(slobrok.config()));
+    Receptor          srcHandler;
+    SourceSession::UP srcSession = srcServer.mb.createSourceSession(
+        SourceSessionParams().setThrottlePolicy(IThrottlePolicy::SP()).setReplyHandler(srcHandler));
     ASSERT_TRUE(srcSession);
     ASSERT_TRUE(srcServer.waitSlobrok("dst/session", 1));
 
     for (uint32_t i = 0; i < 10; ++i) {
         Message::UP msg = std::make_unique<SimpleMessage>("msg");
         {
-            TestServer itrServer(MessageBusParams()
-                    .setRetryPolicy(std::make_shared<RetryTransientErrorsPolicy>())
-                    .addProtocol(std::make_shared<SimpleProtocol>()),
-                    RPCNetworkParams(slobrok.config())
-                    .setIdentity(Identity("itr")));
-            Receptor itrHandler;
-            IntermediateSession::UP itrSession = itrServer.mb.createIntermediateSession(
-                    IntermediateSessionParams()
-                    .setName("session")
-                    .setMessageHandler(itrHandler)
-                    .setReplyHandler(itrHandler));
+            TestServer              itrServer(MessageBusParams()
+                                                  .setRetryPolicy(std::make_shared<RetryTransientErrorsPolicy>())
+                                                  .addProtocol(std::make_shared<SimpleProtocol>()),
+                                              RPCNetworkParams(slobrok.config()).setIdentity(Identity("itr")));
+            Receptor                itrHandler;
+            IntermediateSession::UP itrSession =
+                itrServer.mb.createIntermediateSession(IntermediateSessionParams()
+                                                           .setName("session")
+                                                           .setMessageHandler(itrHandler)
+                                                           .setReplyHandler(itrHandler));
             ASSERT_TRUE(itrSession);
             ASSERT_TRUE(srcServer.waitSlobrok("itr/session", 1));
             ASSERT_TRUE(srcSession->send(std::move(msg), "itr/session dst/session", true).isAccepted());
@@ -119,4 +103,4 @@ TEST("requireThatShutdownOnIntermediateWithPendingIsSafe")
     }
 }
 
-TEST_MAIN() { TEST_RUN_ALL(); }
+GTEST_MAIN_RUN_ALL_TESTS()

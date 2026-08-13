@@ -3,6 +3,7 @@ package com.yahoo.vespa.model.application.validation;
 
 import com.yahoo.config.provision.Capacity;
 import com.yahoo.config.provision.CapacityPolicies;
+import com.yahoo.config.provision.ClusterMembership;
 import com.yahoo.config.provision.ClusterResources;
 import com.yahoo.config.provision.ClusterSpec;
 import com.yahoo.config.provision.Exclusivity;
@@ -33,9 +34,11 @@ public class QuotaValidator implements Validator {
     @Override
     public void validate(Context context) {
         var zone = context.deployState().zone();
-        var exclusivity = new Exclusivity(zone, context.deployState().featureFlags().sharedHosts());
-        var tuning = new CapacityPolicies.Tuning(context.deployState().featureFlags().adminClusterArchitecture(),
-                                                 context.deployState().featureFlags().logserverNodeMemory());
+        var featureFlags = context.deployState().featureFlags();
+        var exclusivity = new Exclusivity(zone, featureFlags.sharedHosts());
+        var tuning = new CapacityPolicies.Tuning(featureFlags.adminClusterArchitecture(),
+                                                 featureFlags.logserverNodeMemory(),
+                                                 featureFlags.clusterControllerNodeMemory());
         var capacityPolicies = new CapacityPolicies(zone, exclusivity, context.model().applicationPackage().getApplicationId(),
                                                     tuning);
         var quota = context.deployState().getProperties().quota();
@@ -45,19 +48,19 @@ public class QuotaValidator implements Validator {
 
     private void validateBudget(BigDecimal budget, Context context,
                                 CapacityPolicies capacityPolicies) {
-        var zone = context.deployState().getProperties().zone();
+        var zone = context.deployState().zone();
         var application = context.model().applicationPackage().getApplicationId();
 
         var maxSpend = 0.0;
-        for (var id : context.model().allClusters()) {
-            if (adminClusterIds(context.model()).contains(id)) continue;
-            var cluster = context.model().provisioned().clusters().get(id);
-            var capacity = context.model().provisioned().capacities().getOrDefault(id, zeroCapacity);
+        for (var clusterId : context.model().allClusters()) {
+            if (adminClusterIds(context.model()).contains(clusterId)) continue;
+            var cluster = context.model().provisioned().clusters().get(clusterId);
+            var capacity = context.model().provisioned().capacities().getOrDefault(clusterId, zeroCapacity);
             maxSpend += capacityPolicies.applyOn(capacity, cluster.isExclusive()).maxResources().cost();
         }
 
         var actualSpend = context.model().allocatedHosts().getHosts().stream()
-                         .filter(hostSpec -> hostSpec.membership().get().cluster().type() != ClusterSpec.Type.admin)
+                         .filter(hostSpec -> hostSpec.membership().get().type() != ClusterSpec.Type.admin)
                          .mapToDouble(hostSpec -> hostSpec.advertisedResources().cost())
                          .sum();
 
@@ -74,10 +77,10 @@ public class QuotaValidator implements Validator {
 
     private Set<ClusterSpec.Id> adminClusterIds(VespaModel model) {
         return model.allocatedHosts().getHosts().stream()
-                .map(hostSpec -> hostSpec.membership().orElseThrow().cluster())
+                .map(hostSpec -> hostSpec.membership().orElseThrow())
                 .filter(cluster -> cluster.type() == ClusterSpec.Type.admin)
-                .map(ClusterSpec::id)
-                .collect(Collectors.toCollection(() -> new LinkedHashSet<>()));
+                .map(ClusterMembership::id)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
     }
 
     /** Check that all clusters in the application do not exceed the quota max cluster size. */

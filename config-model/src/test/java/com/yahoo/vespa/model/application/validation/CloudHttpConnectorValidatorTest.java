@@ -8,6 +8,7 @@ import com.yahoo.config.model.api.ContainerEndpoint;
 import com.yahoo.config.model.deploy.DeployState;
 import com.yahoo.config.model.deploy.TestProperties;
 import com.yahoo.config.model.test.MockApplicationPackage;
+import com.yahoo.text.Text;
 import com.yahoo.vespa.model.VespaModel;
 import org.junit.jupiter.api.Test;
 
@@ -48,8 +49,8 @@ class CloudHttpConnectorValidatorTest {
     void fails_on_custom_ssl_for_cloud_application() {
         var exception = assertThrows(IllegalArgumentException.class, () -> runValidatorOnApp(true, "", CUSTOM_SSL_ON_8080));
         var expected = "Adding additional or modifying existing HTTPS connectors is not allowed for Vespa Cloud applications. " +
-                "Violating connectors: [default@8080]. See https://cloud.vespa.ai/en/security/whitepaper, " +
-                "https://cloud.vespa.ai/en/security/guide#data-plane.";
+                "Violating connectors: [default@8080]. See https://docs.vespa.ai/en/security/whitepaper.html, " +
+                "https://docs.vespa.ai/en/security/guide.html#data-plane.";
         assertEquals(expected, exception.getMessage());
     }
 
@@ -86,7 +87,7 @@ class CloudHttpConnectorValidatorTest {
     }
 
     private static void runValidatorOnApp(boolean hosted, String appTypeAttribute, String serverXml) throws Exception {
-        String servicesXml = """
+        String servicesXml = Text.format("""
                         <services version='1.0'%s>
                           <container version='1.0'>
                             <http>
@@ -94,7 +95,7 @@ class CloudHttpConnectorValidatorTest {
                             </http>
                           </container>
                         </services>
-                """.formatted(appTypeAttribute, serverXml);
+                """, appTypeAttribute, serverXml);
         var state = new DeployState.Builder()
                 .applicationPackage(
                         new MockApplicationPackage.Builder()

@@ -1,36 +1,36 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
-#include <vespa/messagebus/testlib/simpleprotocol.h>
+#include <vespa/messagebus/ireplyhandler.h>
+#include <vespa/messagebus/routing/routingcontext.h>
 #include <vespa/messagebus/testlib/simplemessage.h>
+#include <vespa/messagebus/testlib/simpleprotocol.h>
 #include <vespa/messagebus/testlib/simplereply.h>
 #include <vespa/messagebus/testlib/slobrok.h>
 #include <vespa/messagebus/testlib/testserver.h>
-#include <vespa/messagebus/ireplyhandler.h>
-#include <vespa/messagebus/routing/routingcontext.h>
-#include <vespa/vespalib/testkit/test_kit.h>
 #include <vespa/vespalib/component/vtag.h>
+#include <vespa/vespalib/gtest/gtest.h>
 
 using namespace mbus;
 
-TEST("simpleprotocol_test") {
+TEST(SimpleProtocolTest, simpleprotocol_test) {
 
     vespalib::Version version = vespalib::Vtag::currentVersion;
-    SimpleProtocol protocol;
+    SimpleProtocol    protocol;
     EXPECT_TRUE(protocol.getName() == "Simple");
 
-    EXPECT_EQUAL(24u + 2 *sizeof(std::string), sizeof(Result));
-    EXPECT_EQUAL(8u + 2 *sizeof(std::string), sizeof(Error));
-    EXPECT_EQUAL(56u, sizeof(Routable));
+    EXPECT_EQ(24u + 2 * sizeof(std::string), sizeof(Result));
+    EXPECT_EQ(8u + 2 * sizeof(std::string), sizeof(Error));
+    EXPECT_EQ(56u, sizeof(Routable));
     {
         // test protocol
         IRoutingPolicy::UP bogus = protocol.createPolicy("bogus", "");
         EXPECT_FALSE(bogus);
     }
-    TEST_FLUSH();
     {
         // test SimpleMessage
-        EXPECT_EQUAL(104u, sizeof(Message));
-        EXPECT_EQUAL(120u + sizeof(std::string), sizeof(SimpleMessage));
+        EXPECT_EQ(104u, sizeof(Message));
+        constexpr size_t dummy_metadata_overhead = sizeof(std::optional<std::string>) * 2;
+        EXPECT_EQ(sizeof(Message) + 16u + dummy_metadata_overhead + sizeof(std::string), sizeof(SimpleMessage));
         auto msg = std::make_unique<SimpleMessage>("test");
         EXPECT_TRUE(!msg->isReply());
         EXPECT_TRUE(msg->getProtocol() == SimpleProtocol::NAME);
@@ -45,11 +45,10 @@ TEST("simpleprotocol_test") {
         EXPECT_TRUE(tmp->getType() == SimpleProtocol::MESSAGE);
         EXPECT_TRUE(static_cast<SimpleMessage&>(*tmp).getValue() == "test");
     }
-    TEST_FLUSH();
     {
         // test SimpleReply
-        EXPECT_EQUAL(96u, sizeof(Reply));
-        EXPECT_EQUAL(96u + sizeof(std::string), sizeof(SimpleReply));
+        EXPECT_EQ(96u, sizeof(Reply));
+        EXPECT_EQ(96u + sizeof(std::string), sizeof(SimpleReply));
         auto reply = std::make_unique<SimpleReply>("reply");
         EXPECT_TRUE(reply->isReply());
         EXPECT_TRUE(reply->getProtocol() == SimpleProtocol::NAME);
@@ -66,4 +65,4 @@ TEST("simpleprotocol_test") {
     }
 }
 
-TEST_MAIN() { TEST_RUN_ALL(); }
+GTEST_MAIN_RUN_ALL_TESTS()

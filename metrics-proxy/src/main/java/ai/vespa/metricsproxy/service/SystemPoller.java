@@ -4,8 +4,11 @@ package ai.vespa.metricsproxy.service;
 import ai.vespa.metricsproxy.metric.Metric;
 import ai.vespa.metricsproxy.metric.Metrics;
 import ai.vespa.metricsproxy.metric.model.MetricId;
+import com.yahoo.system.ProcessExecuter;
+import com.yahoo.text.Utf8;
 
-import java.io.Reader;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.HashMap;
@@ -38,6 +41,7 @@ public class SystemPoller {
     private static final MetricId CPU_UTIL = MetricId.toMetricId("cpu_util");
     private static final MetricId MEMORY_VIRT = MetricId.toMetricId("memory_virt");
     private static final MetricId MEMORY_RSS = MetricId.toMetricId("memory_rss");
+    private static final int pageSize = getPageSize();
 
     private final Duration interval;
     private final List<VespaService> services;
@@ -100,48 +104,40 @@ public class SystemPoller {
     }
 
     /**
-     * Return memory usage for a given process, both resident and virtual is
+     * Return memory usage in bytes for a given process, both resident and virtual is
      * returned.
      *
      * @param service The instance to get memory usage for
-     * @return array[0] = memoryResident, array[1] = memoryVirtual (kB units)
+     * @return array[0] = memoryResident, array[1] = memoryVirtual (both in bytes)
      */
     static long[] getMemoryUsage(VespaService service) {
-        BufferedReader br;
+        String s;
         int pid = service.getPid();
 
         try {
-            br = new BufferedReader(new FileReader("/proc/" + pid + "/smaps"));
-        } catch (FileNotFoundException ex) {
+            s = Files.readString(Path.of("/proc/" + pid + "/statm"));
+        } catch (IOException ex) {
             service.setAlive(false);
             return new long[2];
         }
         try {
-            return getMemoryUsage(br);
+            return getMemoryUsage(s, pageSize);
         } catch (IOException ex) {
-            log.log(Level.FINE, "Unable to read line from smaps file", ex);
+            log.log(Level.FINE, "Unable to read line from statm file", ex);
             return new long[2];
-        } finally {
-            try {
-                br.close();
-            } catch (IOException ex) {
-                log.log(Level.FINE, "Closing of smaps file failed", ex);
-            }
         }
     }
-    static long[] getMemoryUsage(BufferedReader br) throws IOException{
-        String line;
+
+    static long[] getMemoryUsage(String s, int pageSize) throws IOException{
         long[] size = new long[2];
-        while ((line = br.readLine()) != null) {
-            /* Memory size is given in kB - convert to bytes by multiply with 1024*/
-            if (line.startsWith("Rss:")) {
-                String remain = line.substring(4).trim();
-                size[memoryTypeResident] += Long.parseLong(remain.substring(0, remain.indexOf(' '))) * 1024;
-            } else if (line.startsWith("Size:")) {
-                String remain = line.substring(5).trim();
-                size[memoryTypeVirtual] += Long.parseLong(remain.substring(0, remain.indexOf(' '))) * 1024;
-            }
-        }
+        // statm line: "size rss shared text lib data dt"
+        // all values are number of pages, return values from this method are values in bytes
+        var statmOutputs = s.split(" ");
+        size[memoryTypeVirtual] = Long.parseLong(statmOutputs[0]) * pageSize;
+        // Note 1: From man proc_pid_statm man page: rss is the same as VmRSS in /proc/pid/status
+        // Note 2: From man proc_pid_status:  VmRSS  Resident set size.  Note that the value here is the sum of RssAnon, RssFile, and  RssShmem.
+        // Note 3: 'shared' is RssFile+RssShmem, so subtraction below gives us the same value as RssAnon
+        size[memoryTypeResident] = (Long.parseLong(statmOutputs[1]) - Long.parseLong(statmOutputs[2])) * pageSize;
 
         return size;
     }
@@ -208,7 +204,7 @@ public class SystemPoller {
     static long getPidJiffies(VespaService service) {
         int pid = service.getPid();
         try {
-            BufferedReader in = new BufferedReader(new FileReader("/proc/" + pid + "/stat"));
+            BufferedReader in = new BufferedReader(Utf8.createReader("/proc/" + pid + "/stat"));
             return getPidJiffies(in);
         } catch (FileNotFoundException ex) {
             log.log(Level.FINE, () -> "Unable to find pid " + pid + " in proc directory, for service " + service.getInstanceName());
@@ -236,7 +232,7 @@ public class SystemPoller {
 
     private static JiffiesAndCpus getTotalSystemJiffies() {
         try {
-            BufferedReader in = new BufferedReader(new FileReader("/proc/stat"));
+            BufferedReader in = new BufferedReader(Utf8.createReader("/proc/stat"));
             return getTotalSystemJiffies(in);
         } catch (FileNotFoundException ex) {
             log.log(Level.SEVERE, "Unable to open stat file", ex);
@@ -305,4 +301,13 @@ public class SystemPoller {
             poller.poll();
         }
     }
+
+    private static int getPageSize() {
+        try {
+            return Integer.parseInt(new ProcessExecuter().exec("getconf PAGESIZE").getSecond().trim());
+        } catch (IOException e) {
+            throw new RuntimeException("Getting page size failed");
+        }
+    }
+
 }

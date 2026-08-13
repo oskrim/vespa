@@ -1,7 +1,8 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
-#include <vespa/vespalib/testkit/test_kit.h>
-#include <vbench/test/all.h>
+#include <vespa/vespalib/gtest/gtest.h>
 #include <vespa/vespalib/util/time.h>
+
+#include <vbench/test/all.h>
 
 using namespace vbench;
 
@@ -18,8 +19,8 @@ MyHandler::~MyHandler() = default;
 
 VESPA_THREAD_STACK_TAG(test_thread);
 
-TEST("handler thread") {
-    MyHandler handler;
+TEST(HandlerThreadTest, handler_thread) {
+    MyHandler          handler;
     HandlerThread<int> th(handler, test_thread);
     th.handle(std::unique_ptr<int>(new int(1)));
     th.handle(std::unique_ptr<int>(new int(2)));
@@ -27,10 +28,10 @@ TEST("handler thread") {
     th.join();
     th.handle(std::unique_ptr<int>(new int(4)));
     th.handle(std::unique_ptr<int>(new int(5)));
-    ASSERT_EQUAL(3u, handler.values.size());
-    EXPECT_EQUAL(1, handler.values[0]);
-    EXPECT_EQUAL(2, handler.values[1]);
-    EXPECT_EQUAL(3, handler.values[2]);
+    ASSERT_EQ(3u, handler.values.size());
+    EXPECT_EQ(1, handler.values[0]);
+    EXPECT_EQ(2, handler.values[1]);
+    EXPECT_EQ(3, handler.values[2]);
 }
 
-TEST_MAIN() { TEST_RUN_ALL(); }
+GTEST_MAIN_RUN_ALL_TESTS()

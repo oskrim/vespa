@@ -1,6 +1,8 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.search.rendering;
 
+import com.yahoo.data.disclosure.DataSink;
+import com.yahoo.data.disclosure.DataSource;
 import com.yahoo.json.Jackson;
 import com.fasterxml.jackson.core.JsonEncoding;
 import com.fasterxml.jackson.core.JsonFactory;
@@ -8,14 +10,14 @@ import com.fasterxml.jackson.core.JsonFactoryBuilder;
 import com.fasterxml.jackson.core.JsonGenerator;
 import com.fasterxml.jackson.core.StreamReadConstraints;
 import com.fasterxml.jackson.core.TreeNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.dataformat.cbor.CBORFactory;
 import com.google.common.base.Preconditions;
 import com.yahoo.container.logging.TraceRenderer;
 import com.yahoo.data.JsonProducer;
 import com.yahoo.data.access.Inspectable;
 import com.yahoo.data.access.Inspector;
 import com.yahoo.data.access.Type;
-import com.yahoo.data.access.simple.JsonRender;
-import com.yahoo.data.access.simple.Value;
 import com.yahoo.document.datatypes.FieldValue;
 import com.yahoo.document.datatypes.StringFieldValue;
 import com.yahoo.document.datatypes.TensorFieldValue;
@@ -46,6 +48,7 @@ import com.yahoo.search.result.Hit;
 import com.yahoo.search.result.HitGroup;
 import com.yahoo.search.result.NanNumber;
 import com.yahoo.tensor.Tensor;
+import com.yahoo.tensor.TensorDataSource;
 import com.yahoo.tensor.TensorType;
 import com.yahoo.tensor.serialization.JsonFormat;
 
@@ -61,6 +64,7 @@ import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.Set;
 import java.util.concurrent.Executor;
 import java.util.function.LongSupplier;
@@ -76,6 +80,7 @@ import static com.fasterxml.jackson.databind.SerializationFeature.FLUSH_AFTER_WR
 // NOTE: The JSON format is a public API. If new elements are added be sure to update the reference doc.
 public class JsonRenderer extends AsynchronousSectionedRenderer<Result> {
 
+    private static final CompoundName RAW_AS_BASE64 = CompoundName.from("renderer.json.rawAsBase64");
     private static final CompoundName WRAP_DEEP_MAPS = CompoundName.from("renderer.json.jsonMaps");
     private static final CompoundName WRAP_WSETS = CompoundName.from("renderer.json.jsonWsets");
     private static final CompoundName DEBUG_RENDERING_KEY = CompoundName.from("renderer.json.debug");
@@ -94,6 +99,7 @@ public class JsonRenderer extends AsynchronousSectionedRenderer<Result> {
     private static final String COVERAGE_DEGRADE_MATCHPHASE = "match-phase";
     private static final String COVERAGE_DEGRADE_TIMEOUT = "timeout";
     private static final String COVERAGE_DEGRADE_ADAPTIVE_TIMEOUT = "adaptive-timeout";
+    private static final String COVERAGE_DEGRADE_ANN_TIMEOUT = "anntimeout";
     private static final String COVERAGE_DEGRADED_NON_IDEAL_STATE = "non-ideal-state";
     private static final String COVERAGE_FULL = "full";
     private static final String COVERAGE_NODES = "nodes";
@@ -106,6 +112,7 @@ public class JsonRenderer extends AsynchronousSectionedRenderer<Result> {
     private static final String ERROR_STACK_TRACE = "stackTrace";
     private static final String ERROR_SUMMARY = "summary";
     private static final String FIELDS = "fields";
+    private static final String SEARCH_GROUP = "searchGroup";
     private static final String ID = "id";
     private static final String LABEL = "label";
     private static final String RELEVANCE = "relevance";
@@ -120,11 +127,25 @@ public class JsonRenderer extends AsynchronousSectionedRenderer<Result> {
     private static final String GROUPING_VALUE = "value";
     private static final String VESPA_HIDDEN_FIELD_PREFIX = "$";
 
-    private static final JsonFactory generatorFactory = createGeneratorFactory();
+    private static final JsonFactory jsonGeneratorFactory = createJsonFactory();
+    private static final CBORFactory cborGeneratorFactory = createCborFactory();
 
     private volatile JsonGenerator generator;
     private volatile FieldConsumer fieldConsumer;
     private volatile Deque<Integer> renderedChildren;
+    private volatile RenderTarget renderTarget;
+
+    /** Which target we are rendering to */
+    enum RenderTarget {
+        Json("application/json"),
+        Cbor("application/cbor");
+
+        final String mimeType;
+
+        RenderTarget(String mimeType) {
+            this.mimeType = mimeType;
+        }
+    }
 
     static class FieldConsumerSettings {
         volatile boolean debugRendering = false;
@@ -132,8 +153,9 @@ public class JsonRenderer extends AsynchronousSectionedRenderer<Result> {
         volatile boolean jsonWsets = true;
         volatile boolean jsonMapsAll = true;
         volatile boolean jsonWsetsAll = false;
-        volatile boolean tensorShortForm = true;
-        volatile boolean tensorDirectValues = false;
+        volatile boolean enableRawAsBase64 = false;
+        volatile JsonFormat.EncodeOptions tensorOptions;
+        RenderTarget renderTarget;
         boolean convertDeep() { return (jsonDeepMaps || jsonWsets); }
         void init() {
             this.debugRendering = false;
@@ -141,8 +163,8 @@ public class JsonRenderer extends AsynchronousSectionedRenderer<Result> {
             this.jsonWsets = true;
             this.jsonMapsAll = true;
             this.jsonWsetsAll = true;
-            this.tensorShortForm = true;
-            this.tensorDirectValues = false;
+            this.tensorOptions = new JsonFormat.EncodeOptions(true, false, false);
+            this.renderTarget = RenderTarget.Json;
         }
         void getSettings(Query q) {
             if (q == null) {
@@ -153,12 +175,16 @@ public class JsonRenderer extends AsynchronousSectionedRenderer<Result> {
             this.debugRendering = props.getBoolean(DEBUG_RENDERING_KEY, false);
             this.jsonDeepMaps = props.getBoolean(WRAP_DEEP_MAPS, true);
             this.jsonWsets = props.getBoolean(WRAP_WSETS, true);
-            // we may need more fine tuning, but for now use the same query parameters here:
+            this.enableRawAsBase64 = props.getBoolean(RAW_AS_BASE64, true);
+
+            // we may need more finetuning, but for now use the same query parameters here:
             this.jsonMapsAll = props.getBoolean(WRAP_DEEP_MAPS, true);
             this.jsonWsetsAll = props.getBoolean(WRAP_WSETS, true);
-            this.tensorShortForm = q.getPresentation().getTensorShortForm();
-            this.tensorDirectValues = q.getPresentation().getTensorDirectValues();
-            }
+            this.tensorOptions = new JsonFormat.EncodeOptions(
+                    q.getPresentation().getTensorShortForm(),
+                    q.getPresentation().getTensorDirectValues(),
+                    q.getPresentation().getTensorHexDense());
+        }
     }
 
     private volatile FieldConsumerSettings fieldConsumerSettings;
@@ -177,54 +203,75 @@ public class JsonRenderer extends AsynchronousSectionedRenderer<Result> {
         super(executor);
     }
 
-    private static JsonFactory createGeneratorFactory() {
+    private static JsonFactory createJsonFactory() {
         return Jackson.createMapper(new JsonFactoryBuilder()
                 .streamReadConstraints(StreamReadConstraints.builder().maxStringLength(Integer.MAX_VALUE).build()))
                 .disable(FLUSH_AFTER_WRITE_VALUE).getFactory();
     }
 
+    private static CBORFactory createCborFactory() {
+        CBORFactory factory = new CBORFactory();
+        factory.setStreamReadConstraints(StreamReadConstraints.builder().maxStringLength(Integer.MAX_VALUE).build());
+        ObjectMapper mapper = new ObjectMapper(factory);
+        mapper.disable(FLUSH_AFTER_WRITE_VALUE);
+        return (CBORFactory) mapper.getFactory();
+    }
+
     @Override
     public void init() {
         super.init();
+        renderTarget = defaultRenderTarget();
         fieldConsumerSettings = new FieldConsumerSettings();
         fieldConsumerSettings.init();
+        fieldConsumerSettings.renderTarget = renderTarget;
         setGenerator(null, fieldConsumerSettings);
         renderedChildren = null;
         timeSource = System::currentTimeMillis;
         stream = null;
     }
 
+    /** Returns the default render target for this renderer. Package-private for subclass override. */
+    RenderTarget defaultRenderTarget() {
+        return RenderTarget.Json;
+    }
+
     @Override
     public void beginResponse(OutputStream stream) throws IOException {
+        long renderingStartTimeMs = timeSource.getAsLong();
+
         beginJsonCallback(stream);
         fieldConsumerSettings.getSettings(getResult().getQuery());
-        setGenerator(generatorFactory.createGenerator(stream, JsonEncoding.UTF8), fieldConsumerSettings);
+
+        // Select appropriate factory based on format
+        JsonFactory factory = (renderTarget == RenderTarget.Cbor) ? cborGeneratorFactory : jsonGeneratorFactory;
+        setGenerator(factory.createGenerator(stream, JsonEncoding.UTF8), fieldConsumerSettings);
+
         renderedChildren = new ArrayDeque<>();
         generator.writeStartObject();
         renderTrace(getExecution().trace());
-        renderTiming();
+        renderTiming(renderingStartTimeMs);
         generator.writeFieldName(ROOT);
     }
 
-    private void renderTiming() throws IOException {
+    private void renderTiming(long renderingStartTimeMs) throws IOException {
         if (!getResult().getQuery().getPresentation().getTiming()) return;
 
         double milli = .001d;
-        long now = timeSource.getAsLong();
-        long searchTime = now - getResult().getElapsedTime().first();
-        double searchSeconds = searchTime * milli;
-
         generator.writeObjectFieldStart(TIMING);
+
         if (getResult().getElapsedTime().firstFill() != 0L) {
-            long queryTime = getResult().getElapsedTime().weightedSearchTime();
-            long summaryFetchTime = getResult().getElapsedTime().weightedFillTime();
-            double querySeconds = queryTime * milli;
-            double summarySeconds = summaryFetchTime * milli;
-            generator.writeNumberField(QUERY_TIME, querySeconds);
-            generator.writeNumberField(SUMMARY_FETCH_TIME, summarySeconds);
+            long queryTimeMs = getResult().getElapsedTime().weightedSearchTime();
+            long summaryFetchTimeMs = getResult().getElapsedTime().weightedFillTime();
+            generator.writeNumberField(QUERY_TIME, queryTimeMs * milli);
+            generator.writeNumberField(SUMMARY_FETCH_TIME, summaryFetchTimeMs * milli);
         }
 
-        generator.writeNumberField(SEARCH_TIME, searchSeconds);
+        long startTimeMs = getResult().getElapsedTime().first();
+        if (startTimeMs != 0) {
+            long searchTime = renderingStartTimeMs - startTimeMs;
+            generator.writeNumberField(SEARCH_TIME, searchTime * milli);
+        }
+
         generator.writeEndObject();
     }
 
@@ -292,32 +339,41 @@ public class JsonRenderer extends AsynchronousSectionedRenderer<Result> {
 
         generator.writeArrayFieldStart(ERRORS);
         for (ErrorMessage e : errors) {
-            String summary = e.getMessage();
-            String source = e.getSource();
-            Throwable cause = e.getCause();
-            String message = e.getDetailedMessage();
-            generator.writeStartObject();
-            generator.writeNumberField(ERROR_CODE, e.getCode());
-            generator.writeStringField(ERROR_SUMMARY, summary);
-            if (source != null) {
-                generator.writeStringField(ERROR_SOURCE, source);
-            }
-            if (message != null) {
-                generator.writeStringField(ERROR_MESSAGE, message);
-            }
-            if (cause != null && shouldRenderStacktraceOf(cause) && cause.getStackTrace().length > 0) {
-                StringWriter s = new StringWriter();
-                PrintWriter p = new PrintWriter(s);
-                cause.printStackTrace(p);
-                p.close();
-                generator.writeStringField(ERROR_STACK_TRACE, s.toString());
-            }
-            generator.writeEndObject();
+            renderError(generator, e);
         }
         generator.writeEndArray();
     }
 
-    protected boolean shouldRenderStacktraceOf(Throwable cause) {
+    static void renderError(JsonGenerator generator, ErrorMessage error) throws IOException {
+        var summary = error.getMessage();
+        var source = error.getSource();
+        var cause = error.getCause();
+        var message = error.getDetailedMessage();
+
+        generator.writeStartObject();
+        generator.writeNumberField(ERROR_CODE, error.getCode());
+        generator.writeStringField(ERROR_SUMMARY, summary);
+
+        if (source != null) {
+            generator.writeStringField(ERROR_SOURCE, source);
+        }
+
+        if (message != null) {
+            generator.writeStringField(ERROR_MESSAGE, message);
+        }
+
+        if (cause != null && shouldRenderStacktraceOf(cause) && cause.getStackTrace().length > 0) {
+            var stringWriter = new StringWriter();
+            var printWriter = new PrintWriter(stringWriter);
+            cause.printStackTrace(printWriter);
+            printWriter.close();
+            generator.writeStringField(ERROR_STACK_TRACE, stringWriter.toString());
+        }
+
+        generator.writeEndObject();
+    }
+
+    static boolean shouldRenderStacktraceOf(Throwable cause) {
         return  ! (cause instanceof IllegalArgumentException);
     }
 
@@ -333,6 +389,7 @@ public class JsonRenderer extends AsynchronousSectionedRenderer<Result> {
             generator.writeBooleanField(COVERAGE_DEGRADE_MATCHPHASE, c.isDegradedByMatchPhase());
             generator.writeBooleanField(COVERAGE_DEGRADE_TIMEOUT, c.isDegradedByTimeout());
             generator.writeBooleanField(COVERAGE_DEGRADE_ADAPTIVE_TIMEOUT, c.isDegradedByAdapativeTimeout());
+            generator.writeBooleanField(COVERAGE_DEGRADE_ANN_TIMEOUT, c.isDegradedByAnnTimeout());
             generator.writeBooleanField(COVERAGE_DEGRADED_NON_IDEAL_STATE, c.isDegradedByNonIdealState());
             generator.writeEndObject();
         }
@@ -439,13 +496,15 @@ public class JsonRenderer extends AsynchronousSectionedRenderer<Result> {
         }
     }
 
+    /** Render top level fields like totalCount, if we are at the top level, do nothing otherwise. */
     protected void renderTotalHitCount(Hit hit) throws IOException {
         if ( ! (getRecursionLevel() == 1 && hit instanceof HitGroup)) return;
 
         fieldConsumer.ensureFieldsField();
         generator.writeNumberField(TOTAL_COUNT, getResult().getTotalHitCount());
-        // alternative for the above two lines:
-        // fieldConsumer.accept(TOTAL_COUNT, getResult().getTotalHitCount());
+        OptionalInt group = getResult().hits().getSearchGroup();
+        if (group.isPresent())
+            generator.writeNumberField(SEARCH_GROUP, group.getAsInt());
     }
 
     @Override
@@ -478,7 +537,7 @@ public class JsonRenderer extends AsynchronousSectionedRenderer<Result> {
 
     @Override
     public String getMimeType() {
-        return "application/json";
+        return renderTarget.mimeType;
     }
 
     private Result getResult() {
@@ -499,6 +558,10 @@ public class JsonRenderer extends AsynchronousSectionedRenderer<Result> {
      */
     private void beginJsonCallback(OutputStream stream) throws IOException {
         if (shouldRenderJsonCallback()) {
+            if (renderTarget == RenderTarget.Cbor) {
+                getResult().hits().addError(ErrorMessage.createBadRequest("Cannot use jsoncallback with CBOR format"));
+                return;
+            }
             String jsonCallback = getJsonCallback() + "(";
             stream.write(jsonCallback.getBytes(StandardCharsets.UTF_8));
             this.stream = stream;
@@ -555,25 +618,35 @@ public class JsonRenderer extends AsynchronousSectionedRenderer<Result> {
     public static class FieldConsumer implements Hit.RawUtf8Consumer, TraceRenderer.FieldConsumer {
 
         private final JsonGenerator generator;
+        private final JsonGeneratorDataSink dataSink;
+        private final DataSink tensorDataSink;
         private final FieldConsumerSettings settings;
         private MutableBoolean hasFieldsField;
 
         /** Invoke this from your constructor when sub-classing {@link FieldConsumer} */
         protected FieldConsumer(boolean debugRendering, boolean tensorShortForm, boolean jsonMaps) {
-            this(null, debugRendering, tensorShortForm, jsonMaps);
+            this(null, debugRendering, new JsonFormat.EncodeOptions(tensorShortForm, false, false), jsonMaps);
         }
 
-        private FieldConsumer(JsonGenerator generator, boolean debugRendering, boolean tensorShortForm, boolean jsonMaps) {
+        private FieldConsumer(JsonGenerator generator, boolean debugRendering,
+                              JsonFormat.EncodeOptions tensorOptions,
+                              boolean jsonMaps) {
             this.generator = generator;
             this.settings = new FieldConsumerSettings();
             this.settings.debugRendering = debugRendering;
-            this.settings.tensorShortForm = tensorShortForm;
+            this.settings.tensorOptions = tensorOptions;
             this.settings.jsonDeepMaps = jsonMaps;
+            // if this is subclass, generator will be null, must mirror that behavior
+            this.dataSink = (generator == null) ? null : new JsonGeneratorDataSink(generator, settings.enableRawAsBase64);
+            this.tensorDataSink = (dataSink == null) ? null : new NonFiniteToNullDataSink(dataSink);
         }
 
         FieldConsumer(JsonGenerator generator, FieldConsumerSettings settings) {
             this.generator = generator;
             this.settings = settings;
+            // if this is subclass, generator will be null, must mirror that behavior
+            this.dataSink = (generator == null) ? null : new JsonGeneratorDataSink(generator, settings.enableRawAsBase64);
+            this.tensorDataSink = (dataSink == null) ? null : new NonFiniteToNullDataSink(dataSink);
         }
 
         /**
@@ -643,122 +716,135 @@ public class JsonRenderer extends AsynchronousSectionedRenderer<Result> {
             return true;
         }
 
-        private Inspector maybeConvertMap(Inspector data) {
-            var map = new Value.ObjectValue();
-            for (int i = 0; i < data.entryCount(); i++) {
+        /**
+         * Try to emit array as a map (array of {key, value} objects).
+         * Returns true if successful, false if data is not a valid map structure.
+         */
+        private boolean tryEmitAsMap(Inspector data) {
+            int entries = data.entryCount();
+            Inspector[] keys = new Inspector[entries];
+            Inspector[] values = new Inspector[entries];
+            // Extract and validate
+            for (int i = 0; i < entries; i++) {
                 Inspector obj = data.entry(i);
-                if (obj.type() != Type.OBJECT || obj.fieldCount() != 2) {
-                    return null;
-                }
+                if (obj.type() != Type.OBJECT || obj.fieldCount() != 2) return false;
                 Inspector key = obj.field("key");
                 Inspector value = obj.field("value");
-                if (! key.valid()) return null;
-                if (! value.valid()) return null;
-                if (key.type() != Type.STRING && !settings.jsonMapsAll) {
-                    return null;
-                }
-                if (settings.convertDeep()) {
-                    value = deepMaybeConvert(value);
-                }
-                if (key.type() == Type.STRING) {
-                    map.put(key.asString(), value);
+                if (!key.valid() || !value.valid()) return false;
+                if (key.type() != Type.STRING && !settings.jsonMapsAll) return false;
+                keys[i] = key;
+                values[i] = value;
+            }
+            // Emit
+            boolean convertDeep = settings.convertDeep();
+            dataSink().startObject();
+            for (int i = 0; i < entries; i++) {
+                dataSink().fieldNameFromPrimitive(keys[i]);
+                if (convertDeep) {
+                    emitWithConversion(values[i]);
                 } else {
-                    map.put(JsonRender.render(key, new StringBuilder(), true).toString(), value);
+                    values[i].emit(dataSink());
                 }
             }
-            return map;
+            dataSink().endObject();
+            return true;
         }
 
-        private Inspector maybeConvertWset(Inspector data) {
-            var wset = new Value.ObjectValue();
-            for (int i = 0; i < data.entryCount(); i++) {
+        /**
+         * Try to emit array as a weighted set (array of {item, weight} objects).
+         * Returns true if successful, false if data is not a valid wset structure.
+         */
+        private boolean tryEmitAsWset(Inspector data) {
+            int entries = data.entryCount();
+            Inspector[] items = new Inspector[entries];
+            long[] weights = new long[entries];
+            // Extract and validate
+            for (int i = 0; i < entries; i++) {
                 Inspector obj = data.entry(i);
-                if (obj.type() != Type.OBJECT || obj.fieldCount() != 2) {
-                    return null;
-                }
+                if (obj.type() != Type.OBJECT || obj.fieldCount() != 2) return false;
                 Inspector item = obj.field("item");
                 Inspector weight = obj.field("weight");
-                if (! item.valid()) return null;
-                if (! weight.valid()) return null;
-                // TODO support non-integer weights?
-                if (weight.type() != Type.LONG) return null;
-                if (item.type() == Type.STRING) {
-                    wset.put(item.asString(), weight.asLong());
-                } else if (settings.jsonWsetsAll) {
-                    wset.put(JsonRender.render(item, new StringBuilder(), true).toString(), weight.asLong());
-                } else {
-                    return null;
-                }
+                if (!item.valid() || !weight.valid()) return false;
+                if (weight.type() != Type.LONG) return false;
+                if (item.type() != Type.STRING && !settings.jsonWsetsAll) return false;
+                items[i] = item;
+                weights[i] = weight.asLong();
             }
-            return wset;
+            // Emit
+            dataSink().startObject();
+            for (int i = 0; i < entries; i++) {
+                dataSink().fieldNameFromPrimitive(items[i]);
+                dataSink().longValue(weights[i]);
+            }
+            dataSink().endObject();
+            return true;
         }
 
-        private Inspector convertInsideObject(Inspector data) {
-            var object = new Value.ObjectValue();
+        /** Emit an object with potential deep conversion of nested values */
+        private void emitObjectWithConversion(Inspector data) {
+            dataSink().startObject();
             for (var entry : data.fields()) {
-                object.put(entry.getKey(), deepMaybeConvert(entry.getValue()));
+                dataSink().fieldName(entry.getKey());
+                emitWithConversion(entry.getValue());
             }
-            return object;
+            dataSink().endObject();
         }
 
-        private Inspector deepMaybeConvert(Inspector data) {
+        /** Emit an array with potential deep conversion of nested values */
+        private void emitArrayWithConversion(Inspector data) {
+            int entries = data.entryCount();
+            dataSink().startArray();
+            for (int i = 0; i < entries; i++) {
+                emitWithConversion(data.entry(i));
+            }
+            dataSink().endArray();
+        }
+
+        /** Emit a value, applying map/wset conversion if applicable */
+        private void emitWithConversion(Inspector data) {
             if (data.type() == Type.ARRAY) {
-                if (settings.jsonDeepMaps) {
-                    var map = maybeConvertMap(data);
-                    if (map != null) return map;
+                if (settings.jsonDeepMaps && tryEmitAsMap(data)) {
+                    return;
                 }
-                if (settings.jsonWsets) {
-                    var wset = maybeConvertWset(data);
-                    if (wset != null) return wset;
-                }
-            }
-            if (data.type() == Type.OBJECT) {
-                return convertInsideObject(data);
-            }
-            return data;
-        }
-
-        private Inspector convertTopLevelArray(Inspector data) {
-            if (data.entryCount() > 0) {
-                var map = maybeConvertMap(data);
-                if (map != null) return map;
-                if (settings.jsonWsets) {
-                    var wset = maybeConvertWset(data);
-                    if (wset != null) return wset;
+                if (settings.jsonWsets && tryEmitAsWset(data)) {
+                    return;
                 }
                 if (settings.convertDeep()) {
-                    var array = new Value.ArrayValue(data.entryCount());
-                    for (int i = 0; i < data.entryCount(); i++) {
-                        Inspector obj = data.entry(i);
-                        array.add(deepMaybeConvert(obj));
-                    }
-                    return array;
+                    emitArrayWithConversion(data);
+                    return;
                 }
             }
-            return data;
+            if (data.type() == Type.OBJECT && settings.convertDeep()) {
+                emitObjectWithConversion(data);
+                return;
+            }
+            data.emit(dataSink());
         }
 
-        private Inspector maybeConvertData(Inspector data) {
-            if (data.type() == Type.ARRAY) {
-                return convertTopLevelArray(data);
+        /** Emit top-level data, applying conversions as configured */
+        private void emitTopLevel(Inspector data) {
+            if (data.type() == Type.ARRAY && data.entryCount() > 0) {
+                if (tryEmitAsMap(data)) {
+                    return;
+                }
+                if (settings.jsonWsets && tryEmitAsWset(data)) {
+                    return;
+                }
+                if (settings.convertDeep()) {
+                    emitArrayWithConversion(data);
+                    return;
+                }
             }
             if (settings.convertDeep() && data.type() == Type.OBJECT) {
-                return convertInsideObject(data);
+                emitObjectWithConversion(data);
+                return;
             }
-            return data;
-        }
-
-        private void renderInspector(Inspector data) throws IOException {
-            renderInspectorDirect(maybeConvertData(data));
-        }
-
-        private void renderInspectorDirect(Inspector data) throws IOException {
-            generator().writeRawValue(JsonRender.render(data, new StringBuilder(), true).toString());
+            data.emit(dataSink());
         }
 
         protected void renderFieldContents(Object field) throws IOException {
             if (field instanceof Inspectable && ! (field instanceof FeatureData)) {
-                renderInspector(((Inspectable)field).inspect());
+                emitTopLevel(((Inspectable)field).inspect());
             } else {
                 accept(field);
             }
@@ -768,27 +854,27 @@ public class JsonRenderer extends AsynchronousSectionedRenderer<Result> {
         public void accept(Object field) throws IOException {
             if (field == null) {
                 generator().writeNull();
-            } else if (field instanceof Boolean) {
-                generator().writeBoolean((Boolean)field);
-            } else if (field instanceof Number) {
-                renderNumberField((Number) field);
-            } else if (field instanceof TreeNode) {
-                generator().writeTree((TreeNode) field);
-            } else if (field instanceof Tensor) {
-                renderTensor(Optional.of((Tensor)field));
-            } else if (field instanceof FeatureData) {
-                generator().writeRawValue(((FeatureData)field).toJson(settings.tensorShortForm, settings.tensorDirectValues));
-            } else if (field instanceof Inspectable) {
-                renderInspectorDirect(((Inspectable)field).inspect());
-            } else if (field instanceof JsonProducer) {
-                generator().writeRawValue(((JsonProducer) field).toJson());
-            } else if (field instanceof StringFieldValue) {
-                generator().writeString(((StringFieldValue)field).getString());
-            } else if (field instanceof TensorFieldValue) {
-                renderTensor(((TensorFieldValue)field).getTensor());
-            } else if (field instanceof FieldValue) {
-                // the null below is the field which has already been written
-                ((FieldValue) field).serialize(null, new JsonWriter(generator));
+            } else if (field instanceof Boolean bool) {
+                generator().writeBoolean(bool);
+            } else if (field instanceof Number num) {
+                renderNumberField(num);
+            } else if (field instanceof TreeNode treenode) {
+                generator().writeTree(treenode);
+            } else if (field instanceof Tensor t) {
+                renderTensor(Optional.of(t));
+            } else if (field instanceof FeatureData featureData) {
+                featureData.asDataSource(settings.tensorOptions).emit(tensorDataSink());
+            } else if (field instanceof Inspectable i) {
+                i.inspect().emit(dataSink());
+            } else if (field instanceof DataSource ds) {
+                ds.emit(dataSink());
+            } else if (field instanceof JsonProducer jp) {
+                emitJsonProducer(jp);
+            } else if (field instanceof TensorFieldValue tfv) {
+                renderTensor(tfv.getTensor());
+            } else if (field instanceof FieldValue fv) {
+                // the null below is the field name which has already been written
+                fv.serialize(null, new JsonWriter(generator));
             } else {
                 generator().writeString(field.toString());
             }
@@ -797,27 +883,38 @@ public class JsonRenderer extends AsynchronousSectionedRenderer<Result> {
         private void renderNumberField(Number field) throws IOException {
             if (field instanceof Integer) {
                 generator().writeNumber(field.intValue());
-            }  else if (field instanceof Float) {
+            } else if (field instanceof Float) {
                 generator().writeNumber(field.floatValue());
-            }  else if (field instanceof Double) {
+            } else if (field instanceof Double) {
                 generator().writeNumber(field.doubleValue());
             } else if (field instanceof Long) {
                 generator().writeNumber(field.longValue());
             } else if (field instanceof Byte || field instanceof Short) {
                 generator().writeNumber(field.intValue());
-            } else if (field instanceof BigInteger) {
-                generator().writeNumber((BigInteger) field);
-            } else if (field instanceof BigDecimal) {
-                generator().writeNumber((BigDecimal) field);
+            } else if (field instanceof BigInteger bigint) {
+                generator().writeNumber(bigint);
+            } else if (field instanceof BigDecimal bigdec) {
+                generator().writeNumber(bigdec);
             } else {
                 generator().writeNumber(field.doubleValue());
             }
         }
 
-        private void renderTensor(Optional<Tensor> tensor) throws IOException {
-            generator().writeRawValue(new String(JsonFormat.encode(tensor.orElse(Tensor.Builder.of(TensorType.empty).build()),
-                                                                   settings.tensorShortForm, settings.tensorDirectValues),
-                                                 StandardCharsets.UTF_8));
+        /**
+         * If render target is JSON write raw. Else, convert from JSON to DataSource and
+         * emit to render target data source.
+         */
+        private void emitJsonProducer(JsonProducer jp) throws IOException {
+            if (settings.renderTarget == RenderTarget.Json) {
+                generator().writeRawValue(jp.toJson());
+            } else {
+                JsonDataSource.fromJson(jp.toJson()).emit(dataSink());
+            }
+        }
+
+        private void renderTensor(Optional<Tensor> tensor) {
+            var t = tensor.orElse(Tensor.Builder.of(TensorType.empty).build());
+            new TensorDataSource(t, settings.tensorOptions).emit(tensorDataSink());
         }
 
         private JsonGenerator generator() {
@@ -826,6 +923,8 @@ public class JsonRenderer extends AsynchronousSectionedRenderer<Result> {
                                                         "All accept() methods must be overridden when sub-classing FieldConsumer");
             return generator;
         }
+        private JsonGeneratorDataSink dataSink() { generator(); return dataSink; }
+        private DataSink tensorDataSink() { generator(); return tensorDataSink; }
 
     }
 

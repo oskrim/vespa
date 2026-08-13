@@ -4,9 +4,11 @@ import java.net.URI;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 import ai.vespa.schemals.common.ClientLogger;
 import ai.vespa.schemals.index.Symbol.SymbolStatus;
@@ -22,11 +24,12 @@ import ai.vespa.schemals.parser.ast.functionElm;
 import ai.vespa.schemals.parser.ast.inputName;
 import ai.vespa.schemals.parser.ast.namedDocument;
 import ai.vespa.schemals.parser.ast.onnxModel;
-import ai.vespa.schemals.parser.ast.onnxModelInProfile;
+import ai.vespa.schemals.parser.ast.onnxModelOutput;
 import ai.vespa.schemals.parser.ast.rankProfile;
 import ai.vespa.schemals.parser.ast.rootSchema;
 import ai.vespa.schemals.parser.ast.structDefinitionElm;
 import ai.vespa.schemals.parser.ast.structFieldDefinition;
+import com.yahoo.text.Text;
 
 public class SchemaIndex {
     public static final HashMap<Class<?>, SymbolType> IDENTIFIER_TYPE_MAP = new HashMap<>() {{
@@ -43,6 +46,7 @@ public class SchemaIndex {
         put(inputName.class, SymbolType.QUERY_INPUT);
         put(constantName.class, SymbolType.RANK_CONSTANT);
         put(onnxModel.class, SymbolType.ONNX_MODEL);
+        put(onnxModelOutput.class, SymbolType.ONNX_MODEL_OUTPUT);
     }};
 
     public static final HashMap<Class<?>, SymbolType> IDENTIFIER_WITH_DASH_TYPE_MAP = new HashMap<>() {{
@@ -56,6 +60,7 @@ public class SchemaIndex {
     private Map<SymbolType, List<Symbol>> symbolDefinitions;
     private Map<Symbol, List<Symbol>> symbolReferences;
     private Map<Symbol, Symbol> definitionOfReference;
+    private Set<Symbol> unresolvedSymbols;
 
     // TODO: bad to use string as node type here.
     private InheritanceGraph<String> documentInheritanceGraph;
@@ -65,7 +70,7 @@ public class SchemaIndex {
 
     // This is an inheritance graph, even though it doesn't model *inheritance* per se.
     private InheritanceGraph<Symbol> documentReferenceGraph;
-    
+
     public SchemaIndex(ClientLogger logger) {
         this.logger = logger;
         this.documentInheritanceGraph        = new InheritanceGraph<>();
@@ -77,6 +82,7 @@ public class SchemaIndex {
         this.symbolDefinitions     = new HashMap<>();
         this.symbolReferences      = new HashMap<>();
         this.definitionOfReference = new HashMap<>();
+        this.unresolvedSymbols     = new HashSet<>();
 
         for (SymbolType type : SymbolType.values()) {
             this.symbolDefinitions.put(type, new ArrayList<Symbol>());
@@ -154,6 +160,9 @@ public class SchemaIndex {
             }
         }
 
+        // Clear unresolved symbols from this document
+        this.unresolvedSymbols.removeIf(symbol -> symbol.fileURIEquals(fileURIURI));
+
         this.fieldIndex.clearFieldsByURI(fileURIURI);
 
         if (fileURI.endsWith(".sd")) {
@@ -213,7 +222,7 @@ public class SchemaIndex {
         // Special case for schema and document because a schema can sometimes refer to a document and vice versa
         if (type == SymbolType.SCHEMA || type == SymbolType.DOCUMENT) {
             SymbolType firstCheck = (type == SymbolType.SCHEMA ? SymbolType.SCHEMA : SymbolType.DOCUMENT);
-            List<Symbol> schemaDefinitions = 
+            List<Symbol> schemaDefinitions =
                 symbolDefinitions.get(firstCheck)
                                .stream()
                                .filter(symbolDefinition -> symbolDefinition.getShortIdentifier().equals(shortIdentifier))
@@ -241,7 +250,7 @@ public class SchemaIndex {
     }
 
     /*
-     * Given a scope, type and short identifier, find definitions defined inside the actual scope. 
+     * Given a scope, type and short identifier, find definitions defined inside the actual scope.
      * Will not search inheritance graphs.
      */
     private Optional<Symbol> findSymbolInConcreteScope(Symbol scope, SymbolType type, String shortIdentifier) {
@@ -301,7 +310,7 @@ public class SchemaIndex {
     public boolean isInScope(Symbol symbol, Symbol scope) {
         if (scope == null) return true; // lets say every symbol is in the empty scope
         if (scope.getType() == SymbolType.RANK_PROFILE) {
-            return !rankProfileInheritanceGraph.findFirstMatches(scope, 
+            return !rankProfileInheritanceGraph.findFirstMatches(scope,
                     rankProfileDefinitionSymbol -> {
                         if (rankProfileDefinitionSymbol.equals(symbol.getScope())) {
                             return Boolean.valueOf(true);
@@ -309,16 +318,16 @@ public class SchemaIndex {
                         return null;
             }).isEmpty();
         } else if (scope.getType() == SymbolType.STRUCT) {
-            return !structInheritanceGraph.findFirstMatches(scope, 
+            return !structInheritanceGraph.findFirstMatches(scope,
                     structDefinitionSymbol -> {
                         if (structDefinitionSymbol.equals(symbol.getScope())) {
                             return Boolean.valueOf(true);
                         }
                         return null;
             }).isEmpty();
-        } else if ((symbol.getScope() == null || symbol.getScope().getType() == SymbolType.SCHEMA || symbol.getScope().getType() == SymbolType.DOCUMENT) && 
+        } else if ((symbol.getScope() == null || symbol.getScope().getType() == SymbolType.SCHEMA || symbol.getScope().getType() == SymbolType.DOCUMENT) &&
                 (scope.getType() == SymbolType.SCHEMA || scope.getType() == SymbolType.DOCUMENT)) {
-            return !documentInheritanceGraph.findFirstMatches(scope.getFileURI(), 
+            return !documentInheritanceGraph.findFirstMatches(scope.getFileURI(),
                 ancestorURI -> {
                     if (symbol.getFileURI().equals(ancestorURI)) {
                         return Boolean.valueOf(true);
@@ -333,8 +342,8 @@ public class SchemaIndex {
 
     /**
      * Retrieves the definition of a symbol from a map.
-     * We have three versions of this, because definitions can reference other definitions. 
-     * For example, struct-field is both a definition (you want to jump there if you go-to-definition on field.structfield somewhere else), 
+     * We have three versions of this, because definitions can reference other definitions.
+     * For example, struct-field is both a definition (you want to jump there if you go-to-definition on field.structfield somewhere else),
      * and a reference (to the field inside the struct).
      *  {@link getSymbolDefinition} returns identity if you supply a definition.
      *  {@link getNextSymbolDefinition} always tries to interpret the argument as a reference (jumping one step even if argument is a definition).
@@ -442,6 +451,18 @@ public class SchemaIndex {
 
         definitionOfReference.put(reference, definition);
         list.add(reference);
+
+        if (reference.getType() == SymbolType.RANK_PROFILE && reference.getScope() != null) {
+            tryRegisterRankProfileInheritance(reference.getScope(), definition);
+        }
+
+        if (reference.getType() == SymbolType.STRUCT && reference.getScope() != null) {
+            tryRegisterStructInheritance(reference.getScope(), definition);
+        }
+
+        if (reference.getType() == SymbolType.DOCUMENT_SUMMARY && reference.getScope() != null) {
+            tryRegisterDocumentSummaryInheritance(reference.getScope(), definition);
+        }
     }
 
 
@@ -538,6 +559,15 @@ public class SchemaIndex {
         return ret;
     }
 
+    public void addUnresolvedSymbol(Symbol unresolvedSymbol) {
+        unresolvedSymbols.add(unresolvedSymbol);
+    }
+
+    public List<Symbol> getUnresolvedSymbols() {
+        unresolvedSymbols.removeIf(symbol -> getSymbolDefinition(symbol).isPresent());
+        return List.copyOf(unresolvedSymbols);
+    }
+
     /**
      * Dumps the index to the console.
      */
@@ -563,7 +593,7 @@ public class SchemaIndex {
 
         logger.info("\n === REFERENCES TO DEFINITIONS ===");
         for (var entry : definitionOfReference.entrySet()) {
-            String toPrint = String.format("%-50s -> %s", entry.getKey(), entry.getValue());
+            String toPrint = Text.format("%-50s -> %s", entry.getKey(), entry.getValue());
             logger.info(toPrint);
         }
 

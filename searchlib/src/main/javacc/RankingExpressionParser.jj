@@ -19,9 +19,11 @@ package com.yahoo.searchlib.rankingexpression.parser;
 
 import com.yahoo.searchlib.rankingexpression.Reference;
 import com.yahoo.searchlib.rankingexpression.rule.*;
+import com.yahoo.searchlib.rankingexpression.evaluation.NamedStringValue;
 import com.yahoo.searchlib.rankingexpression.evaluation.Value;
 import com.yahoo.searchlib.rankingexpression.evaluation.StringValue;
 import com.yahoo.searchlib.rankingexpression.evaluation.TensorValue;
+import com.yahoo.javacc.UnicodeUtilities;
 import com.yahoo.tensor.*;
 import com.yahoo.tensor.functions.*;
 import java.util.LinkedHashMap;
@@ -86,6 +88,9 @@ TOKEN :
 
     <IF: "if"> |
     <IN: "in"> |
+    <SWITCH: "switch"> |
+    <CASE: "case"> |
+    <SWITCHDEFAULT: "default"> |
     <F: "f"> |
 
     <NOT: "!"> |
@@ -129,6 +134,9 @@ TOKEN :
 
     <MAP: "map"> |
     <MAP_SUBSPACES: "map_subspaces"> |
+    <FILTER_SUBSPACES: "filter_subspaces"> |
+    <CELL_ORDER: "cell_order"> |
+    <TOP: "top"> |
     <UNPACK_BITS: "unpack_bits"> |
     <REDUCE: "reduce"> |
     <JOIN: "join"> |
@@ -250,6 +258,7 @@ ExpressionNode value() :
       [ LOOKAHEAD(2) <SUB>                                  { neg = true; } ]
       ( value = constantPrimitive(neg)                             |
         (
+          LOOKAHEAD(2) value = switchExpression()                    |
           LOOKAHEAD(2) value = ifExpression()                        |
           LOOKAHEAD(4) value = function()                            |
           value = feature()                                          |
@@ -279,6 +288,27 @@ IfNode ifExpression() :
     }
 }
 
+SwitchNode switchExpression() :
+{
+    ExpressionNode discriminant;
+    List<ExpressionNode> caseValues = new ArrayList<ExpressionNode>();
+    List<ExpressionNode> caseResults = new ArrayList<ExpressionNode>();
+    ExpressionNode caseValue, caseResult;
+    ExpressionNode defaultResult;
+}
+{
+    ( <SWITCH> <LBRACE> discriminant = expression() <RBRACE>
+      <LCURLY>
+      ( <CASE> caseValue = expression() <COLON> caseResult = expression() <COMMA>
+        { caseValues.add(caseValue); caseResults.add(caseResult); }
+      )+
+      <SWITCHDEFAULT> <COLON> defaultResult = expression()
+      <RCURLY> )
+    {
+        return new SwitchNode(discriminant, caseValues, caseResults, defaultResult);
+    }
+}
+
 ReferenceNode feature() :
 {
     List<ExpressionNode> args = null;
@@ -287,10 +317,23 @@ ReferenceNode feature() :
 {
     ( name = identifier() [ <LBRACE> args = args() <RBRACE> ] [ <DOT> out = outs() ] )
     {
-         if (args == null && out == null) // know the difference between "foo" and "foo()"
-             return new ReferenceNode(name);
-         else
-             return new ReferenceNode(name, args, out);
+        if (args == null && out == null) { // know the difference between "foo" and "foo()"
+            return new ReferenceNode(name);
+        }
+        if (name.equals("attribute") && args != null && args.size() == 1
+            && args.get(0) instanceof ReferenceNode)
+        {
+            Reference inner = ((ReferenceNode)args.get(0)).reference();
+            if (inner.arguments().expressions().isEmpty() && inner.output() != null) {
+                // an attribute name in the "foo.bar" form is parsed as the feature foo().bar,
+                // but we want the identifier "foo.bar" as the attribute name instead:
+                Reference attribute = Reference.simple(name, inner.toString());
+                if (out != null)
+                    attribute = attribute.withOutput(out);
+                return new ReferenceNode(attribute);
+            }
+        }
+        return new ReferenceNode(name, args, out);
     }
 }
 
@@ -330,13 +373,38 @@ String out() :
     { return null; }
 }
 
+private String tagValue() :
+{
+    String value;
+}
+{
+    ( value = tag() | value = string() )
+    { return value; }
+}
+
+private ExpressionNode argExpression() :
+{
+    String argName, argValue;
+    ExpressionNode node;
+}
+{
+    LOOKAHEAD(2) (
+        argName = identifier() <COLON> (
+            argValue = tagValue() {
+                node = new ConstantNode(new NamedStringValue(argName, argValue));
+                return node;
+            }
+        )
+    ) | ( node = expression() { return node; } )
+}
+
 List<ExpressionNode> args() :
 {
     List<ExpressionNode> arguments = new ArrayList<ExpressionNode>();
     ExpressionNode argument;
 }
 {
-    ( ( argument = expression() { arguments.add(argument); } ( <COMMA> argument = expression() { arguments.add(argument); } )* )? )
+    ( ( argument = argExpression() { arguments.add(argument); } ( <COMMA> argument = argExpression() { arguments.add(argument); } )* )? )
     { return arguments; }
 }
 
@@ -373,6 +441,9 @@ TensorFunctionNode tensorFunction() :
     (
         tensorExpression = tensorMap() |
         tensorExpression = tensorMapSubspaces() |
+        tensorExpression = tensorFilterSubspaces() |
+        tensorExpression = tensorCellOrder() |
+        tensorExpression = tensorTop() |
         tensorExpression = tensorReduce() |
         tensorExpression = tensorReduceComposites() |
         tensorExpression = tensorJoin() |
@@ -423,6 +494,51 @@ TensorFunctionNode tensorMapSubspaces() :
                       denseMapper.singleArgumentName(),
                       TensorFunctionNode.wrap(denseMapper.children().get(0))));
      }
+}
+
+TensorFunctionNode tensorFilterSubspaces() :
+{
+    ExpressionNode tensor;
+    LambdaFunctionNode denseMapper;
+}
+{
+    <FILTER_SUBSPACES> <LBRACE> tensor = expression() <COMMA> denseMapper = lambdaFunction() <RBRACE>
+    {
+        return new TensorFunctionNode(
+               new FilterSubspaces(
+                      TensorFunctionNode.wrap(tensor),
+                      denseMapper.singleArgumentName(),
+                      TensorFunctionNode.wrap(denseMapper.children().get(0))));
+     }
+}
+
+TensorFunctionNode tensorCellOrder() :
+{
+    ExpressionNode tensor;
+    CellOrder.Order orderType;
+}
+{
+    <CELL_ORDER> <LBRACE> tensor = expression() <COMMA> orderType = cellOrderType() <RBRACE>
+    { return new TensorFunctionNode(new CellOrder(TensorFunctionNode.wrap(tensor), orderType));}
+}
+
+CellOrder.Order cellOrderType() :
+{
+}
+{
+    ( <MAX> { return CellOrder.Order.MAX; }
+    | <MIN> { return CellOrder.Order.MIN; }
+    )
+}
+
+TensorFunctionNode tensorTop() :
+{
+    ExpressionNode n;
+    ExpressionNode arg;
+}
+{
+    <TOP> <LBRACE> n = expression() <COMMA> arg = expression() <RBRACE>
+    { return new TensorFunctionNode(new Top(TensorFunctionNode.wrap(n),TensorFunctionNode.wrap(arg))); }
 }
 
 TensorFunctionNode tensorReduce() :
@@ -762,28 +878,32 @@ String tensorFunctionName() :
     Reduce.Aggregator aggregator;
 }
 {
-    ( <F>            { return token.image; } ) |
-    ( <MAP>          { return token.image; } ) |
-    ( <REDUCE>       { return token.image; } ) |
-    ( <JOIN>         { return token.image; } ) |
-    ( <MERGE>        { return token.image; } ) |
-    ( <RENAME>       { return token.image; } ) |
-    ( <CONCAT>       { return token.image; } ) |
-    ( <TENSOR>       { return token.image; } ) |
-    ( <RANGE>        { return token.image; } ) |
-    ( <DIAG>         { return token.image; } ) |
-    ( <RANDOM>       { return token.image; } ) |
-    ( <L1_NORMALIZE> { return token.image; } ) |
-    ( <L2_NORMALIZE> { return token.image; } ) |
-    ( <EUCLIDEAN_DISTANCE> { return token.image; } ) |
-    ( <COSINE_SIMILARITY> { return token.image; } ) |
-    ( <MATMUL>       { return token.image; } ) |
-    ( <SOFTMAX>      { return token.image; } ) |
-    ( <XW_PLUS_B>    { return token.image; } ) |
-    ( <ARGMAX>       { return token.image; } ) |
-    ( <ARGMIN>       { return token.image; } ) |
-    ( <CELL_CAST>    { return token.image; } ) |
-    ( <EXPAND>       { return token.image; } ) |
+    ( <F>                    { return token.image; } ) |
+    ( <MAP>                  { return token.image; } ) |
+    ( <MAP_SUBSPACES>        { return token.image; } ) |
+    ( <FILTER_SUBSPACES>     { return token.image; } ) |
+    ( <CELL_ORDER>           { return token.image; } ) |
+    ( <TOP>                  { return token.image; } ) |
+    ( <REDUCE>               { return token.image; } ) |
+    ( <JOIN>                 { return token.image; } ) |
+    ( <MERGE>                { return token.image; } ) |
+    ( <RENAME>               { return token.image; } ) |
+    ( <CONCAT>               { return token.image; } ) |
+    ( <TENSOR>               { return token.image; } ) |
+    ( <RANGE>                { return token.image; } ) |
+    ( <DIAG>                 { return token.image; } ) |
+    ( <RANDOM>               { return token.image; } ) |
+    ( <L1_NORMALIZE>         { return token.image; } ) |
+    ( <L2_NORMALIZE>         { return token.image; } ) |
+    ( <EUCLIDEAN_DISTANCE>   { return token.image; } ) |
+    ( <COSINE_SIMILARITY>    { return token.image; } ) |
+    ( <MATMUL>               { return token.image; } ) |
+    ( <SOFTMAX>              { return token.image; } ) |
+    ( <XW_PLUS_B>            { return token.image; } ) |
+    ( <ARGMAX>               { return token.image; } ) |
+    ( <ARGMIN>               { return token.image; } ) |
+    ( <CELL_CAST>            { return token.image; } ) |
+    ( <EXPAND>               { return token.image; } ) |
     ( aggregator = tensorReduceAggregator() { return aggregator.toString(); } )
 }
 
@@ -870,6 +990,9 @@ String identifier() :
     func = binaryFunctionName() { return func.toString(); } |
     <IF>                        { return token.image; }     |
     <IN>                        { return token.image; }     |
+    <SWITCH>                    { return token.image; }     |
+    <CASE>                      { return token.image; }     |
+    <SWITCHDEFAULT>             { return token.image; }     |
     <IDENTIFIER>                { return token.image; }     |
     <TRUE>                      { return token.image; }     |
     <FALSE>                     { return token.image; }
@@ -1127,5 +1250,5 @@ String label() :
 
 String string() : {}
 {
-    <STRING> { return token.image.substring(1, token.image.length() - 1); }
+    <STRING> { return UnicodeUtilities.unquote(token.image); }
 }

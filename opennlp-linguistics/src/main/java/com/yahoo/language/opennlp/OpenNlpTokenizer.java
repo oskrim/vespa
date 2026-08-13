@@ -5,6 +5,7 @@ import com.huaban.analysis.jieba.JiebaSegmenter;
 import com.huaban.analysis.jieba.SegToken;
 import com.yahoo.language.Language;
 import com.yahoo.language.LinguisticsCase;
+import com.yahoo.language.process.LinguisticsParameters;
 import com.yahoo.language.process.Normalizer;
 import com.yahoo.language.process.SpecialTokenRegistry;
 import com.yahoo.language.process.StemMode;
@@ -92,15 +93,16 @@ public class OpenNlpTokenizer implements Tokenizer {
     }
 
     @Override
-    public Iterable<Token> tokenize(String input, Language language, StemMode stemMode, boolean removeAccents) {
-        if (chineseSegmenter.isPresent() && ( language == Language.CHINESE_SIMPLIFIED || language == Language.CHINESE_TRADITIONAL))
+    public Iterable<Token> tokenize(String input, LinguisticsParameters parameters) {
+        if (chineseSegmenter.isPresent() && ( parameters.language() == Language.CHINESE_SIMPLIFIED ||
+                                              parameters.language() == Language.CHINESE_TRADITIONAL))
             return segmentChinese(input);
 
-        Stemmer stemmer = stemmerFor(language, stemMode);
+        Stemmer stemmer = stemmerFor(parameters.language(), parameters.stemMode());
         if (stemmer == null)
-            return simpleTokenizer.tokenize(input, language, stemMode, removeAccents);
+            return simpleTokenizer.tokenize(input, parameters);
         else
-            return simpleTokenizer.tokenize(input, token -> processToken(token, language, stemMode, removeAccents, stemmer));
+            return simpleTokenizer.tokenize(input, token -> processToken(token, stemmer, parameters));
     }
 
     private Iterable<Token> segmentChinese(String input) {
@@ -122,13 +124,17 @@ public class OpenNlpTokenizer implements Tokenizer {
         return tokens;
     }
 
-    private String processToken(String token, Language language, StemMode stemMode, boolean removeAccents, Stemmer stemmer) {
+    private String processToken(String token, Stemmer stemmer, LinguisticsParameters linguisticsParameters) {
         token = normalizer.normalize(token);
-        token = LinguisticsCase.toLowerCase(token);
-        if (removeAccents)
-            token = transformer.accentDrop(token, language);
-        if (stemMode != StemMode.NONE)
-            token = stemmer.stem(token).toString();
+        if (linguisticsParameters.lowercase())
+            token = LinguisticsCase.toLowerCase(token);
+        if (linguisticsParameters.removeAccents())
+            token = transformer.accentDrop(token, linguisticsParameters.language());
+        if (linguisticsParameters.stemMode() != StemMode.NONE) {
+            String tokenOrEmpty = stemmer.stem(token).toString();
+            if (!tokenOrEmpty.isEmpty())
+                token = tokenOrEmpty;
+        }
         return token;
     }
 
@@ -170,6 +176,11 @@ public class OpenNlpTokenizer implements Tokenizer {
     /** Creates a copy of this with the given mode set. */
     OpenNlpTokenizer withMode(Mode mode) {
         return new OpenNlpTokenizer(mode, normalizer, transformer, snowballStemmingForEnglish, chineseSegmenter, createCjkGrams, specialTokenRegistry);
+    }
+
+    @Override
+    public String toString() {
+        return "tokenizer " + this.getClass().getName();
     }
 
 }

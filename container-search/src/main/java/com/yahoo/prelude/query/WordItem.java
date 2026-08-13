@@ -1,6 +1,7 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.prelude.query;
 
+import ai.vespa.searchlib.searchprotocol.protobuf.SearchProtocol;
 import com.yahoo.prelude.query.parser.Token;
 import com.yahoo.prelude.query.textualrepresentation.Discloser;
 import com.yahoo.protect.Validator;
@@ -31,8 +32,6 @@ public class WordItem extends TermItem {
     /** The word as it should be searched, never null */
     private String word;
 
-    private boolean lowercased = false;
-
     public WordItem(String word) {
         this(word, "");
     }
@@ -62,10 +61,12 @@ public class WordItem extends TermItem {
         setWord(word);
     }
 
+    @Override
     public ItemType getItemType() {
         return ItemType.WORD;
     }
 
+    @Override
     public String getName() {
         return "WORD";
     }
@@ -77,12 +78,12 @@ public class WordItem extends TermItem {
     }
 
     @Override
-    protected void encodeThis(ByteBuffer buffer) {
-        super.encodeThis(buffer); // takes care of index bytes
+    protected void encodeThis(ByteBuffer buffer, SerializationContext context) {
+        super.encodeThis(buffer, context); // takes care of index bytes
         putString(getEncodedWord(), buffer);
     }
 
-    /** Returns the word for encoding. By default simply the word */
+    /** Returns the word for encoding. By default, simply the word. */
     protected String getEncodedWord() {
         return getIndexedString();
     }
@@ -109,7 +110,7 @@ public class WordItem extends TermItem {
      */
     @Override
     public String getRawWord() {
-        if (getOrigin()!=null) return getOrigin().getValue();
+        if (getOrigin() != null) return getOrigin().getValue();
         return word;
     }
 
@@ -126,14 +127,6 @@ public class WordItem extends TermItem {
         this.fromSegmented = fromSegmented;
     }
 
-    public boolean isLowercased() {
-        return lowercased;
-    }
-
-    public void setLowercased(boolean lowercased) {
-        this.lowercased = lowercased;
-    }
-
     public int getSegmentIndex() {
         return segmentIndex;
     }
@@ -142,7 +135,7 @@ public class WordItem extends TermItem {
         this.segmentIndex = segmentIndex;
     }
 
-    /** Word items uses a empty heading instead of "WORD " */
+    /** Word items uses an empty heading instead of "WORD " */
     @Override
     protected void appendHeadingString(StringBuilder buffer) {}
 
@@ -155,13 +148,12 @@ public class WordItem extends TermItem {
         if ( this.fromSegmented != other.fromSegmented) return false;
         if ( this.segmentIndex != other.segmentIndex) return false;
         if ( ! Objects.equals(this.word, other.word)) return false;
-        if ( this.lowercased != other.lowercased) return false;
         return true;
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(super.hashCode(), words, stemmed, fromSegmented, segmentIndex, word, lowercased);
+        return Objects.hash(super.hashCode(), words, stemmed, fromSegmented, segmentIndex, word);
     }
 
     @Override
@@ -192,6 +184,16 @@ public class WordItem extends TermItem {
         discloser.addProperty("segmentIndex", segmentIndex);
         discloser.addProperty("stemmed", stemmed);
         discloser.addProperty("words", words);
+    }
+
+    @Override
+    SearchProtocol.QueryTreeItem toProtobuf(SerializationContext context) {
+        var builder = SearchProtocol.ItemWordTerm.newBuilder();
+        builder.setProperties(ToProtobuf.buildTermProperties(this, getIndexName()));
+        builder.setWord(getEncodedWord());
+        return SearchProtocol.QueryTreeItem.newBuilder()
+                .setItemWordTerm(builder.build())
+                .build();
     }
 
 }

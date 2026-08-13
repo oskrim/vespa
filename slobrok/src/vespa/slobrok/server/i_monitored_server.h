@@ -11,14 +11,12 @@ namespace slobrok {
  *
  * interface that must be implemented by owners of Monitor objects.
  **/
-class IMonitoredServer
-{
+class IMonitoredServer {
 public:
     virtual void notifyDisconnected() = 0; // lost connection to service
-    virtual ~IMonitoredServer() {}
+    virtual ~IMonitoredServer() = default;
 };
 
 //-----------------------------------------------------------------------------
 
 } // namespace slobrok
-

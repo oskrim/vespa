@@ -12,6 +12,7 @@ import com.yahoo.document.TestAndSetCondition;
 import com.yahoo.document.fieldpathupdate.RemoveFieldPathUpdate;
 import com.yahoo.document.idstring.IdString;
 import com.yahoo.messagebus.Routable;
+import com.yahoo.text.Text;
 import com.yahoo.text.Utf8;
 import com.yahoo.vdslib.SearchResult;
 
@@ -20,6 +21,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
 
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
@@ -89,6 +91,8 @@ public class Messages80TestCase extends MessagesTestBase {
                 var msg2 = (GetDocumentMessage)deserialize("GetDocumentMessage", DocumentProtocol.MESSAGE_GETDOCUMENT, lang);
                 assertEquals("id:ns:testdoc::", msg2.getDocumentId().toString());
                 assertEquals("foo bar", msg2.getFieldSet());
+                assertEquals(null, msg2.getDebugReplicaNodeId());
+                assertEquals(false, msg2.hasDebugReplicaNodeId());
             });
         }
     }
@@ -156,7 +160,7 @@ public class Messages80TestCase extends MessagesTestBase {
             for (var tas : tasConditions()) {
                 var msg = new PutDocumentMessage(new DocumentPut(new Document(protocol.getDocumentTypeManager().getDocumentType("testdoc"), "id:ns:testdoc::")));
                 msg.setCondition(tas.condition);
-                var msgAndCondName = "PutDocumentMessage-%s".formatted(tas.name);
+                var msgAndCondName = Text.format("PutDocumentMessage-%s", tas.name);
                 serialize(msgAndCondName, msg);
                 forEachLanguage((lang) -> {
                     var decoded = (PutDocumentMessage)deserialize(msgAndCondName, DocumentProtocol.MESSAGE_PUTDOCUMENT, lang);
@@ -458,6 +462,7 @@ public class Messages80TestCase extends MessagesTestBase {
         @Override
         public void run() throws Exception {
             test_result_with_match_features();
+            test_result_with_errors();
 
             Routable routable = deserialize("QueryResultMessage-1", DocumentProtocol.MESSAGE_QUERYRESULT, Language.CPP);
             assertTrue(routable instanceof QueryResultMessage);
@@ -551,6 +556,16 @@ public class Messages80TestCase extends MessagesTestBase {
             mf = h.getMatchFeatures().get();
             assertEquals(1.0, mf.field("foo").asDouble(), 1E-6);
             assertEqualsData(new byte[] { 'H', 'i' }, mf.field("bar").asData());
+        }
+
+        void test_result_with_errors() {
+            Routable routable = deserialize("QueryResultMessage-7", DocumentProtocol.MESSAGE_QUERYRESULT, Language.CPP);
+            assertTrue(routable instanceof QueryResultMessage);
+
+            var msg = (QueryResultMessage) routable;
+            assertEquals(0, msg.getResult().getHitCount());
+            var errors = msg.getResult().getErrors();
+            assertArrayEquals(new String[]{"hello", "world!"}, errors);
         }
     }
 

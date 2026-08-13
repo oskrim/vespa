@@ -11,6 +11,7 @@ import com.yahoo.vespa.objects.ObjectOperation;
 import com.yahoo.vespa.objects.ObjectPredicate;
 
 import java.math.BigDecimal;
+import java.util.Objects;
 
 /**
  * @author Simon Thoresen Hult
@@ -49,12 +50,21 @@ public final class IfThenExpression extends CompositeExpression {
     }
 
     public IfThenExpression(Expression lhs, Comparator cmp, Expression right, Expression ifTrue, Expression ifFalse) {
-        super(resolveInputType(lhs, right, ifTrue, ifFalse));
         this.left = lhs;
         this.comparator = cmp;
         this.right = right;
         this.ifTrue = ifTrue;
         this.ifFalse = ifFalse;
+    }
+
+    @Override
+    public boolean isMutating() {
+        return ifTrue.isMutating() || (ifFalse != null && ifFalse.isMutating());
+    }
+
+    @Override
+    public boolean requiresInput() {
+        return left.requiresInput() || right.requiresInput() || ifTrue.requiresInput() || (ifFalse != null && ifFalse.requiresInput());
     }
 
     @Override
@@ -64,6 +74,28 @@ public final class IfThenExpression extends CompositeExpression {
                                     converter.branch().convert(right),
                                     converter.branch().convert(ifTrue),
                                     converter.branch().convert(ifFalse));
+    }
+
+    @Override
+    public DataType setInputType(DataType inputType, TypeContext context) {
+        super.setInputType(inputType, context);
+        left.setInputType(inputType, context);
+        right.setInputType(inputType, context);
+        var outputType = ifTrue.setInputType(inputType, context);
+        if (ifFalse != null)
+            outputType = mostGeneralOf(outputType, ifFalse.setInputType(inputType, context));
+        return outputType != null ? outputType : getOutputType(context);
+    }
+
+    @Override
+    public DataType setOutputType(DataType outputType, TypeContext context) {
+        super.setOutputType(outputType, context);
+        var inputType = left.setOutputType(AnyDataType.instance, context);
+        inputType = leastGeneralOf(inputType, right.setOutputType(AnyDataType.instance, context));
+        inputType = leastGeneralOf(inputType, ifTrue.setOutputType(outputType, context));
+        if (ifFalse != null)
+            inputType = leastGeneralOf(inputType, ifFalse.setOutputType(outputType, context));
+        return inputType != null ? inputType : getInputType(context);
     }
 
     @Override
@@ -85,15 +117,11 @@ public final class IfThenExpression extends CompositeExpression {
     public Expression getIfFalseExpression() { return ifFalse; }
 
     @Override
-    protected void doVerify(VerificationContext context) {
-        DataType input = context.getCurrentType();
-        context.setCurrentType(input).verify(left);
-        context.setCurrentType(input).verify(right);
-        var trueValue = context.setCurrentType(input).verify(ifTrue);
-        var falseValue = context.setCurrentType(input).verify(ifFalse);
-        var valueType = trueValue.getCurrentType().isAssignableFrom(falseValue.getCurrentType()) ?
-                                trueValue.getCurrentType() : falseValue.getCurrentType();
-        context.setCurrentType(valueType);
+    protected void doResolve(TypeContext context) {
+        context.resolve(left);
+        context.resolve(right);
+        context.resolve(ifTrue);
+        context.resolve(ifFalse);
     }
 
     @Override
@@ -125,28 +153,6 @@ public final class IfThenExpression extends CompositeExpression {
         select(ifFalse, predicate, operation);
     }
 
-    private static DataType resolveInputType(Expression lhs, Expression rhs, Expression ifTrue, Expression ifFalse) {
-        DataType input = null;
-        input = resolveRequiredInputType(input, lhs.requiredInputType());
-        input = resolveRequiredInputType(input, rhs.requiredInputType());
-        input = resolveRequiredInputType(input, ifTrue.requiredInputType());
-        if (ifFalse != null) {
-            input = resolveRequiredInputType(input, ifFalse.requiredInputType());
-        }
-        return input;
-    }
-
-    @Override
-    public DataType createdOutputType() {
-        DataType ifTrueType = ifTrue.createdOutputType();
-        DataType ifFalseType = ifFalse == null ? null : ifFalse.createdOutputType();
-        if (ifTrueType == null || ifFalseType == null) return null;
-        if (ifTrueType.isAssignableFrom(ifFalseType))
-            return ifTrueType;
-        else
-            return ifFalseType;
-    }
-
     @Override
     public String toString() {
         StringBuilder ret = new StringBuilder();
@@ -160,24 +166,12 @@ public final class IfThenExpression extends CompositeExpression {
 
     @Override
     public boolean equals(Object obj) {
-        if (!(obj instanceof IfThenExpression exp)) {
-            return false;
-        }
-        if (!left.equals(exp.left)) {
-            return false;
-        }
-        if (!comparator.equals(exp.comparator)) {
-            return false;
-        }
-        if (!right.equals(exp.right)) {
-            return false;
-        }
-        if (!ifTrue.equals(exp.ifTrue)) {
-            return false;
-        }
-        if (!equals(ifFalse, exp.ifFalse)) {
-            return false;
-        }
+        if ( ! (obj instanceof IfThenExpression exp)) return false;
+        if ( ! left.equals(exp.left)) return false;
+        if ( ! comparator.equals(exp.comparator)) return false;
+        if ( ! right.equals(exp.right)) return false;
+        if ( ! ifTrue.equals(exp.ifTrue)) return false;
+        if ( ! Objects.equals(ifFalse, exp.ifFalse)) return false;
         return true;
     }
 
@@ -190,30 +184,16 @@ public final class IfThenExpression extends CompositeExpression {
         return ret;
     }
 
-    private static DataType resolveRequiredInputType(DataType prev, DataType next) {
-        if (next == null) {
-            return prev;
-        }
-        if (prev == null) {
-            return next;
-        }
-        if (!prev.equals(next)) {
-            throw new VerificationException(IfThenExpression.class, "Operands require conflicting input types, " +
-                                                                    prev.getName() + " vs " + next.getName());
-        }
-        return prev;
-    }
-
-    private static boolean isTrue(FieldValue lhs, Comparator cmp, FieldValue rhs) {
+    private static boolean isTrue(FieldValue left, Comparator comparator, FieldValue right) {
         int res;
-        if (lhs instanceof NumericFieldValue && rhs instanceof NumericFieldValue) {
-            BigDecimal lhsVal = ArithmeticExpression.asBigDecimal((NumericFieldValue)lhs);
-            BigDecimal rhsVal = ArithmeticExpression.asBigDecimal((NumericFieldValue)rhs);
+        if (left instanceof NumericFieldValue && right instanceof NumericFieldValue) {
+            BigDecimal lhsVal = ArithmeticExpression.asBigDecimal((NumericFieldValue)left);
+            BigDecimal rhsVal = ArithmeticExpression.asBigDecimal((NumericFieldValue)right);
             res = lhsVal.compareTo(rhsVal);
         } else {
-            res = lhs.compareTo(rhs);
+            res = left.compareTo(right);
         }
-        return switch (cmp) {
+        return switch (comparator) {
             case EQ -> res == 0;
             case NE -> res != 0;
             case GT -> res > 0;

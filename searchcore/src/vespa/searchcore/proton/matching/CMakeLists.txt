@@ -1,6 +1,7 @@
 # Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 vespa_add_library(searchcore_matching STATIC
     SOURCES
+    ann_deadline_configuration.cpp
     attribute_limiter.cpp
     blueprintbuilder.cpp
     docid_range_scheduler.cpp
@@ -19,6 +20,7 @@ vespa_add_library(searchcore_matching STATIC
     match_phase_limiter.cpp
     match_thread.cpp
     match_tools.cpp
+    matchdatareservevisitor.cpp
     matcher.cpp
     matching_stats.cpp
     partial_result.cpp
@@ -30,11 +32,11 @@ vespa_add_library(searchcore_matching STATIC
     requestcontext.cpp
     resolveviewvisitor.cpp
     result_processor.cpp
-    same_element_builder.cpp
     sameelementmodifier.cpp
     search_session.cpp
     session_manager_explorer.cpp
     sessionmanager.cpp
+    tag_needed_handles.cpp
     termdataextractor.cpp
     termdatafromnode.cpp
     unpacking_iterators_optimizer.cpp

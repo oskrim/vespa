@@ -7,17 +7,14 @@ class ResumeGuard {
 public:
     class Callback {
     public:
-        virtual ~Callback() {};
+        virtual ~Callback() = default;
 
         virtual void resume() = 0;
     };
 
-    ResumeGuard()
-        : _cb(nullptr)
-    {}
+    ResumeGuard() : _cb(nullptr) {}
 
-    ResumeGuard(Callback& cb)
-        : _cb(&cb) {};
+    ResumeGuard(Callback& cb) : _cb(&cb) {};
 
     ResumeGuard(const ResumeGuard& other) {
         _cb = other._cb;
@@ -34,5 +31,4 @@ private:
     Callback* _cb;
 };
 
-}
-
+} // namespace storage

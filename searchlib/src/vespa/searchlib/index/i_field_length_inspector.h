@@ -3,6 +3,7 @@
 #pragma once
 
 #include "field_length_info.h"
+
 #include <string>
 
 namespace search::index {
@@ -12,7 +13,7 @@ namespace search::index {
  */
 class IFieldLengthInspector {
 public:
-    virtual ~IFieldLengthInspector() {}
+    virtual ~IFieldLengthInspector() = default;
 
     /**
      * Returns the field length info for the given index field, or empty info if the field is not found.
@@ -20,4 +21,4 @@ public:
     virtual FieldLengthInfo get_field_length_info(const std::string& field_name) const = 0;
 };
 
-}
+} // namespace search::index

@@ -23,7 +23,10 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 
+import static com.yahoo.vespa.config.server.session.Session.Status.DELETE;
 import static com.yahoo.vespa.config.server.session.Session.Status.PREPARE;
 import static com.yahoo.vespa.config.server.session.Session.Status.UNKNOWN;
 import static com.yahoo.yolean.Exceptions.uncheck;
@@ -124,7 +127,7 @@ public class SessionsMaintainerTest {
         // Create a session, set status to UNKNOWN, we don't want to expire those
         // (creation time is then EPOCH, so will be candidate for expiry)
         var sessionId = 5;
-        var session = sessionRepository.createRemoteSession(sessionId);
+        var session = sessionRepository.createRemoteSessionAndActivate(sessionId);
         sessionRepository.createSessionZooKeeperClient(sessionId).createNewSession(clock.instant());
         try (var t = sessionRepository.createSetStatusTransaction(session, UNKNOWN)) {
             t.commit();
@@ -161,7 +164,7 @@ public class SessionsMaintainerTest {
         // Create a local session with invalid application package and check that expiring local sessions still works
         long sessionId = 4;
         var applicationPath = tenantFileSystemDirs.getUserApplicationDir(sessionId).toPath();
-        var session = sessionRepository.createRemoteSession(sessionId);
+        var session = sessionRepository.createRemoteSessionAndActivate(sessionId);
         sessionRepository.createSessionZooKeeperClient(sessionId).createNewSession(clock.instant());
         try (var t = sessionRepository.createSetStatusTransaction(session, PREPARE)) {
             t.commit();
@@ -179,19 +182,64 @@ public class SessionsMaintainerTest {
         assertFalse(applicationPath.toFile().exists()); // App has been deleted
     }
 
+    @Test
+    public void testDeletionOfOldestFirst() {
+        // Delete max 1 session
+        tester = createTester(new InMemoryFlagSource(), 1);
+
+        // Deploy some sessions when time goes backwards, to be able to have another
+        // order of sessions than increasing with time. 3 is the oldest session, 4 is active,
+        // so 2 should be deleted when maintainer runs
+        tester.deployApp(testApp, prepareParams()); // session 2 (numbering starts at 2)
+        clock.retreat(Duration.ofMinutes(10));
+        tester.deployApp(testApp, prepareParams()); // session 3
+        clock.retreat(Duration.ofMinutes(10));
+        tester.deployApp(testApp, prepareParams()); // session 4
+
+        clock.advance(Duration.ofMinutes(60));
+        maintainer.run();
+
+        var sessions = sessionRepository.getRemoteSessionsFromZooKeeper();
+        assertEquals(2, sessions.size());
+        assertEquals(List.of(3L, 4L), sessions);
+    }
+
+    @Test
+    public void testDeletingSessionWithStatusDelete() {
+        tester = createTester(flagSource);
+        tester.deployApp(testApp, prepareParams()); // session 2 (numbering starts at 2)
+
+        clock.advance(Duration.ofMinutes(10));
+        createDeployment().activate(); // session 3
+        assertNumberOfRemoteSessions(2);
+        assertNumberOfLocalSessions(2);
+
+        sessionRepository.createSetStatusTransaction(sessionRepository.getRemoteSession(2), DELETE);
+        sessionRepository.remoteSessionCache().remove(2L);
+
+        clock.advance(Duration.ofMinutes(60));
+        maintainer.run();
+        assertNumberOfRemoteSessions(1);
+        assertNumberOfLocalSessions(1);
+    }
+
     private MaintainerTester createTester() {
         return createTester(flagSource);
     }
 
     private MaintainerTester createTester(FlagSource flagSource) {
-        var tester = uncheck(() -> new MaintainerTester(clock, temporaryFolder, flagSource));
-        return setup(tester);
+        return createTester(flagSource, 50);
     }
 
-    private MaintainerTester setup(MaintainerTester tester) {
+    private MaintainerTester createTester(FlagSource flagSource, int maxSessionsToDelete) {
+        var tester = uncheck(() -> new MaintainerTester(clock, temporaryFolder, flagSource));
+        return setup(tester, maxSessionsToDelete);
+    }
+
+    private MaintainerTester setup(MaintainerTester tester, int maxSessionsToDelete) {
         applicationRepository = tester.applicationRepository();
         applicationRepository.tenantRepository().addTenant(applicationId.tenant());
-        maintainer = new SessionsMaintainer(applicationRepository, tester.curator(), Duration.ofMinutes(1));
+        maintainer = new SessionsMaintainer(applicationRepository, tester.curator(), Duration.ofMinutes(1), maxSessionsToDelete);
         sessionRepository = applicationRepository.getTenant(applicationId).getSessionRepository();
 
         var serverdb = new File(applicationRepository.configserverConfig().configServerDBDir());
@@ -205,7 +253,7 @@ public class SessionsMaintainerTest {
                                            sessionId, applicationRepository.configserverConfig());
         var localSession = new LocalSession(tenantName,
                                             sessionId,
-                                            FilesApplicationPackage.fromFile(testApp),
+                                            FilesApplicationPackage.fromDir(testApp, Map.of()),
                                             sessionZooKeeperClient);
         sessionRepository.addLocalSession(localSession);
     }

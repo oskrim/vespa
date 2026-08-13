@@ -2,7 +2,7 @@
 package ai.vespa.metrics;
 
 /**
- * @author yngveaasheim
+ * @author Yngve Aasheim
  */
 public enum ConfigServerMetrics implements VespaMetrics {
 
@@ -27,9 +27,11 @@ public enum ConfigServerMetrics implements VespaMetrics {
 
     MAINTENANCE_DEPLOYMENT_TRANSIENT_FAILURE("maintenanceDeployment.transientFailure", Unit.OPERATION, "Number of maintenance deployments that failed with a transient failure"),
     MAINTENANCE_DEPLOYMENT_FAILURE("maintenanceDeployment.failure", Unit.OPERATION, "Number of maintenance deployments that failed with a permanent failure"),
+    MAINTENANCE_DEPLOYMENT_REASON("maintenanceDeployment.reason", Unit.OPERATION, "Reason for maintenance deployment"),
 
     MAINTENANCE_SUCCESS_FACTOR_DEVIATION("maintenance.successFactorDeviation", Unit.FRACTION, "Configserver: Maintenance Success Factor Deviation"),
     MAINTENANCE_DURATION("maintenance.duration", Unit.MILLISECOND, "Configserver: Maintenance Duration"),
+    MAINTENANCE_CONGESTION("maintenance.congestion", Unit.FAILURE, "Configserver: Maintenance Congestion"),
 
     // ZooKeeper related metrics
     ZK_CONNECTION_LOST("configserver.zkConnectionLost", Unit.CONNECTION, "Number of ZooKeeper connections lost"),
@@ -69,6 +71,8 @@ public enum ConfigServerMetrics implements VespaMetrics {
     CLUSTER_LOAD_PEAK_CPU("cluster.load.peak.cpu", Unit.FRACTION, "The peak cpu load in the period considered of a certain cluster"),
     CLUSTER_LOAD_PEAK_MEMORY("cluster.load.peak.memory", Unit.FRACTION, "The peak memory load in the period considered of a certain cluster"),
     CLUSTER_LOAD_PEAK_DISK("cluster.load.peak.disk", Unit.FRACTION, "The peak disk load in the period considered of a certain cluster"),
+    CLUSTER_BACKUP_AGE_FRACTION("cluster.backup.age", Unit.FRACTION, "Age of the most recent cluster backup as a fraction of the backup interval"),
+    CLUSTER_SNAPSHOT_BUSY_SECONDS("cluster.snapshot.busySeconds", Unit.SECOND, "The maximum time a snapshot has been busy (creating or restoring) for a cluster"),
 
     ZONE_WORKING("zone.working", Unit.BINARY, "The value 1 if zone is considered healthy, 0 if not. This is decided by considering the number of non-active nodes vs the number of active nodes in a zone"),
     CACHE_NODE_OBJECT_HIT_RATE("cache.nodeObject.hitRate", Unit.FRACTION, "The fraction of cache hits vs cache lookups for the node object cache"),
@@ -84,8 +88,8 @@ public enum ConfigServerMetrics implements VespaMetrics {
     CURRENT_REBOOT_GENERATION("currentRebootGeneration", Unit.GENERATION, "Current reboot generation for tenant node"),
     WANT_TO_REBOOT("wantToReboot", Unit.BINARY, "One if node wants to reboot, zero if not"),
     RETIRED("retired", Unit.BINARY, "One if node is retired, zero if not"),
-    WANTED_VESPA_VERSION("wantedVespaVersion", Unit.VERSION, "Wanted vespa version for the node, in the form <MINOR.PATCH>. Major version is not included here"),
-    CURRENT_VESPA_VERSION("currentVespaVersion", Unit.VERSION, "Current vespa version for the node, in the form <MINOR.PATCH>. Major version is not included here"),
+    WANTED_VESPA_VERSION("wantedVespaVersion", Unit.VERSION, "Wanted vespa version for the node, in the form MINOR.PATCH. Major version is not included here"),
+    CURRENT_VESPA_VERSION("currentVespaVersion", Unit.VERSION, "Current vespa version for the node, in the form MINOR.PATCH. Major version is not included here"),
     WANT_TO_CHANGE_VESPA_VERSION("wantToChangeVespaVersion", Unit.BINARY, "One if node want to change Vespa version, zero if not"),
     HAS_WIRE_GUARD_KEY("hasWireguardKey", Unit.BINARY, "One if node has a WireGuard key, zero if not"),
     WANT_TO_RETIRE("wantToRetire", Unit.BINARY, "One if node wants to retire, zero if not"),
@@ -98,7 +102,7 @@ public enum ConfigServerMetrics implements VespaMetrics {
     NUMBER_OF_SERVICES_NOT_CHECKED("numberOfServicesNotChecked", Unit.INSTANCE, "The number of services supposed to run on a node, that has not checked"),
     NUMBER_OF_SERVICES_DOWN("numberOfServicesDown", Unit.INSTANCE, "The number of services confirmed to not be running on a node"),
     SOME_SERVICES_DOWN("someServicesDown", Unit.BINARY, "One if one or more services has been confirmed to not run on a node, zero if not"),
-    NUMBER_OF_SERVICES_UNKNOWN("numberOfServicesUnknown", Unit.INSTANCE, "The number of services the config server does not know if is running on a node"),
+    NUMBER_OF_SERVICES_UNKNOWN("numberOfServicesUnknown", Unit.INSTANCE, "The number of services the config server does not know is running on a node"),
     NODE_FAILER_BAD_NODE("nodeFailerBadNode", Unit.BINARY, "One if the node is failed due to being bad, zero if not"),
     DOWN_IN_NODE_REPO("downInNodeRepo", Unit.BINARY, "One if the node is registered as being down in the node repository, zero if not"),
     NUMBER_OF_SERVICES("numberOfServices", Unit.INSTANCE, "Number of services supposed to run on a node"),
@@ -108,8 +112,8 @@ public enum ConfigServerMetrics implements VespaMetrics {
     LOCK_ATTEMPT_LOCKED_LATENCY("lockAttempt.lockedLatency", Unit.SECOND, "Longest lock duration in the snapshot period"),
     LOCK_ATTEMPT_LOCKED_LOAD("lockAttempt.lockedLoad", Unit.OPERATION, "Average number of locks held concurrently during the snapshot period"),
     LOCK_ATTEMPT_ACQUIRE_TIMED_OUT("lockAttempt.acquireTimedOut", Unit.OPERATION, " Number of locking attempts that timed out during the snapshot period"),
-    LOCK_ATTEMPT_DEADLOCK("lockAttempt.deadlock", Unit.OPERATION, "Number of lock grab deadlocks detected during the snapshont period"),
-    LOCK_ATTEMPT_ERRORS("lockAttempt.errors", Unit.OPERATION, "Number of other lock related errors detected during the snapshont period"),
+    LOCK_ATTEMPT_DEADLOCK("lockAttempt.deadlock", Unit.OPERATION, "Number of lock grab deadlocks detected during the snapshot period"),
+    LOCK_ATTEMPT_ERRORS("lockAttempt.errors", Unit.OPERATION, "Number of other lock related errors detected during the snapshot period"),
 
     HOSTED_VESPA_DOCKER_TOTAL_CAPACITY_CPU("hostedVespa.docker.totalCapacityCpu", Unit.VCPU, "Total number of VCPUs on tenant hosts managed by hosted Vespa in a zone"),
     HOSTED_VESPA_DOCKER_TOTAL_CAPACITY_MEM("hostedVespa.docker.totalCapacityMem", Unit.GIGABYTE, "Total amount of memory on tenant hosts managed by hosted Vespa in a zone"),
@@ -151,6 +155,7 @@ public enum ConfigServerMetrics implements VespaMetrics {
     THROTTLED_NODE_FAILURES("throttledNodeFailures", Unit.HOST, "Number of node failures stopped due to throttling"),
     NODE_FAIL_THROTTLING("nodeFailThrottling", Unit.BINARY, "Metric indicating when node failure throttling is active. The value 1 means active, 0 means inactive"),
     CLUSTER_AUTOSCALED("clusterAutoscaled", Unit.OPERATION, "Number of times a cluster has been rescaled by the autoscaler"),
+    AUTOSCALE_SCALING_DURATION("clusterAutoscaleDuration", Unit.SECOND, "The currently predicted duration of a rescaling of this cluster"),
 
     DEPLOYMENT_PREPARE_MILLIS("deployment.prepareMillis", Unit.MILLISECOND, "Duration of deployment preparations"),
     DEPLOYMENT_ACTIVATE_MILLIS("deployment.activateMillis", Unit.MILLISECOND, "Duration of deployment activations"),

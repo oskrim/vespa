@@ -54,7 +54,7 @@ public class ImplicitSummaries extends Processor {
         String fieldName = field.getName();
         SummaryField fieldSummaryField = field.getSummaryField(fieldName);
         if (fieldSummaryField == null && field.doesSummarying()) {
-            fieldSummaryField = new SummaryField(fieldName, field.getDataType());
+            fieldSummaryField = new SummaryField(fieldName, field.getDataType(), field);
             fieldSummaryField.setImplicit(true);
             addSummaryFieldSources(fieldSummaryField, field);
             fieldSummaryField.addDestination("default");
@@ -139,7 +139,7 @@ public class ImplicitSummaries extends Processor {
         }
 
         DocumentSummary summary = getOrCreateAttributePrefetchSummary(schema);
-        SummaryField attributeSummaryField = new SummaryField(attribute.getName(), attribute.getDataType());
+        SummaryField attributeSummaryField = new SummaryField(attribute.getName(), attribute.getDataType(), summary);
         attributeSummaryField.addSource(attribute.getName());
         attributeSummaryField.addDestination(SORTABLE_ATTRIBUTES_SUMMARY_CLASS);
         attributeSummaryField.setTransform(SummaryTransform.ATTRIBUTE);
@@ -195,7 +195,7 @@ public class ImplicitSummaries extends Processor {
                                  "to this attribute, remove any bolding and dynamic snippeting from this field");
                 // Note: The dynamic setting has already overridden the attribute map setting,
                 // so we do not need to actually do attribute.setSummary(false) here
-                // Also, we can not do this, since it makes it impossible to fetch this attribute
+                // Also, we cannot do this, since it makes it impossible to fetch this attribute
                 // in another summary
             }
         }

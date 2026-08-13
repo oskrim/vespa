@@ -1,6 +1,7 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.prelude.query;
 
+import ai.vespa.searchlib.searchprotocol.protobuf.SearchProtocol;
 import com.yahoo.collections.CopyOnWriteHashMap;
 import com.yahoo.compress.IntegerCompressor;
 import com.yahoo.prelude.query.textualrepresentation.Discloser;
@@ -132,11 +133,11 @@ public class WeightedSetItem extends SimpleTaggableItem {
     }
 
     @Override
-    public int encode(ByteBuffer buffer) {
-        encodeThis(buffer);
+    public int encode(ByteBuffer buffer, SerializationContext context) {
+        encodeThis(buffer, context);
         int itemCount = 1;
         for (Map.Entry<Object, Integer> entry : set.entrySet()) {
-            asItem(entry).encode(buffer);
+            asItem(entry).encode(buffer, context);
             itemCount++;
         }
         return itemCount;
@@ -151,8 +152,8 @@ public class WeightedSetItem extends SimpleTaggableItem {
     }
 
     @Override
-    protected void encodeThis(ByteBuffer buffer) {
-        super.encodeThis(buffer);
+    protected void encodeThis(ByteBuffer buffer, SerializationContext context) {
+        super.encodeThis(buffer, context);
         IntegerCompressor.putCompressedPositiveNumber(set.size(), buffer);
         putString(indexName, buffer);
     }
@@ -182,6 +183,56 @@ public class WeightedSetItem extends SimpleTaggableItem {
     @Override
     public int hashCode() {
         return Objects.hash(super.hashCode(), indexName, set);
+    }
+
+    /**
+     * Detects if this weighted set contains only long values (no strings).
+     * Used to determine which protobuf message type to use for serialization.
+     *
+     * @return true if all tokens are Long values, false if any token is a String
+     */
+    protected boolean hasOnlyLongs() {
+        boolean hasLongs = false;
+        boolean hasStrings = false;
+        for (Object key : set.keySet()) {
+            if (key instanceof Long) {
+                hasLongs = true;
+            } else {
+                hasStrings = true;
+            }
+        }
+        return hasLongs && !hasStrings;
+    }
+
+    @Override
+    SearchProtocol.QueryTreeItem toProtobuf(SerializationContext context) {
+        if (hasOnlyLongs()) {
+            var builder = SearchProtocol.ItemWeightedSetOfLong.newBuilder();
+            builder.setProperties(ToProtobuf.buildTermProperties(this, getIndexName()));
+            for (Map.Entry<Object, Integer> entry : set.entrySet()) {
+                var weightedLong = SearchProtocol.PureWeightedLong.newBuilder()
+                        .setWeight(entry.getValue())
+                        .setValue((Long) entry.getKey())
+                        .build();
+                builder.addWeightedLongs(weightedLong);
+            }
+            return SearchProtocol.QueryTreeItem.newBuilder()
+                    .setItemWeightedSetOfLong(builder.build())
+                    .build();
+        } else {
+            var builder = SearchProtocol.ItemWeightedSetOfString.newBuilder();
+            builder.setProperties(ToProtobuf.buildTermProperties(this, getIndexName()));
+            for (Map.Entry<Object, Integer> entry : set.entrySet()) {
+                var weightedString = SearchProtocol.PureWeightedString.newBuilder()
+                        .setWeight(entry.getValue())
+                        .setValue(entry.getKey().toString())
+                        .build();
+                builder.addWeightedStrings(weightedString);
+            }
+            return SearchProtocol.QueryTreeItem.newBuilder()
+                    .setItemWeightedSetOfString(builder.build())
+                    .build();
+        }
     }
 
 }

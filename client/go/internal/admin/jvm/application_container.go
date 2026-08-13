@@ -100,24 +100,20 @@ func (a *ApplicationContainer) configureMemory(qc *QrStartConfig) {
 			jvm_minHeapsize, jvm_heapsize))
 		jvm_minHeapsize = jvm_heapsize
 	}
-	if jvm_stacksize <= 0 {
-		jvm_stacksize = 512
-	}
-	if jvm_baseMaxDirectMemorySize <= 0 {
-		jvm_baseMaxDirectMemorySize = 75
-	}
-	if jvm_compressedClassSpaceSize < 0 {
-		jvm_compressedClassSpaceSize = 32
-	}
-	if jvm_directMemorySizeCache < 0 {
-		jvm_directMemorySizeCache = 0
-	}
-	maxDirectMemorySize := jvm_baseMaxDirectMemorySize + (jvm_heapsize / 8) + jvm_directMemorySizeCache
 	opts := a.jvmOpts
 	opts.AddOption(fmt.Sprintf("-Xms%dm", jvm_minHeapsize))
 	opts.AddOption(fmt.Sprintf("-Xmx%dm", jvm_heapsize))
-	opts.AddOption(fmt.Sprintf("-XX:ThreadStackSize=%d", jvm_stacksize))
-	opts.AddOption(fmt.Sprintf("-XX:MaxDirectMemorySize=%dm", maxDirectMemorySize))
+	if jvm_stacksize > 0 {
+		opts.AddOption(fmt.Sprintf("-XX:ThreadStackSize=%d", jvm_stacksize))
+	}
+	if jvm_baseMaxDirectMemorySize > 0 {
+		maxDirectMemorySize := jvm_baseMaxDirectMemorySize
+		if jvm_directMemorySizeCache > 0 {
+			maxDirectMemorySize += jvm_directMemorySizeCache
+		}
+		maxDirectMemorySize += jvm_heapsize / 8
+		opts.AddOption(fmt.Sprintf("-XX:MaxDirectMemorySize=%dm", maxDirectMemorySize))
+	}
 	opts.MaybeAddHugepages(MegaBytesOfMemory(jvm_heapsize))
 	if jvm_compressedClassSpaceSize > 0 {
 		opts.AddOption(fmt.Sprintf("-XX:CompressedClassSpaceSize=%dm", jvm_compressedClassSpaceSize))
@@ -163,6 +159,7 @@ func (a *ApplicationContainer) configureOptions() {
 	a.configureMemory(qrStartCfg)
 	a.configureGC(qrStartCfg)
 	a.configureClasspath(qrStartCfg)
+	a.addJdkVersionSpecificArgs()
 	a.addJdiscProperties()
 	svcName := a.ServiceName()
 	if svcName == "container" || svcName == "container-clustercontroller" {
@@ -179,4 +176,9 @@ func (c *ApplicationContainer) exportExtraEnv(ps *prog.Spec) {
 	} else {
 		osutil.ExitMsg("application container requires a config id")
 	}
+}
+
+// addJdkVersionSpecificArgs appends JVM args depending on detected JDK major version.
+func (a *ApplicationContainer) addJdkVersionSpecificArgs() {
+	a.JvmOptions().VersionOptions(PreviewJvmFeatures)
 }

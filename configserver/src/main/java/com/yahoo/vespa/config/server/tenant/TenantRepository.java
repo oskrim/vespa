@@ -17,12 +17,12 @@ import com.yahoo.config.model.api.OnnxModelCost;
 import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.TenantName;
 import com.yahoo.config.provision.Zone;
-import com.yahoo.container.jdisc.secretstore.SecretStore;
 import com.yahoo.path.Path;
 import com.yahoo.text.Utf8;
 import com.yahoo.transaction.Transaction;
 import com.yahoo.vespa.config.server.ConfigActivationListener;
 import com.yahoo.vespa.config.server.ConfigServerDB;
+import com.yahoo.vespa.config.server.application.InheritableApplications;
 import com.yahoo.vespa.config.server.application.TenantApplications;
 import com.yahoo.vespa.config.server.deploy.TenantFileSystemDirs;
 import com.yahoo.vespa.config.server.filedistribution.FileDirectory;
@@ -109,7 +109,6 @@ public class TenantRepository {
     private final FileDistributionFactory fileDistributionFactory;
     private final ExecutorService deployHelperExecutor;
     private final FlagSource flagSource;
-    private final SecretStore secretStore;
     private final HostProvisionerProvider hostProvisionerProvider;
     private final ConfigserverConfig configserverConfig;
     private final ConfigServerDB configServerDB;
@@ -124,6 +123,7 @@ public class TenantRepository {
     private final ZookeeperServerConfig zookeeperServerConfig;
     private final List<EndpointCertificateSecretStore> endpointCertificateSecretStores;
     private final OnnxModelCost onnxModelCost;
+    private final InheritableApplications inheritableApplications;
 
     /**
      * Creates a new tenant repository
@@ -133,7 +133,6 @@ public class TenantRepository {
                             Curator curator,
                             Metrics metrics,
                             FlagSource flagSource,
-                            SecretStore secretStore,
                             HostProvisionerProvider hostProvisionerProvider,
                             ConfigserverConfig configserverConfig,
                             ConfigServerDB configServerDB,
@@ -151,10 +150,9 @@ public class TenantRepository {
              metrics,
              new StripedExecutor<>(),
              new StripedExecutor<>(),
-             new FileDistributionFactory(configserverConfig, fileDirectory),
+             new FileDistributionFactory(configserverConfig, fileDirectory, flagSource),
              flagSource,
              Executors.newFixedThreadPool(1, ThreadFactoryFactory.getThreadFactory(TenantRepository.class.getName())),
-             secretStore,
              hostProvisionerProvider,
              configserverConfig,
              configServerDB,
@@ -166,7 +164,8 @@ public class TenantRepository {
              tenantListener,
              zookeeperServerConfig,
              onnxModelCost,
-             endpointCertificateSecretStores.allComponents());
+             endpointCertificateSecretStores.allComponents(),
+             new InheritableApplications.DirectoryImporter().importFrom("conf/inheritable-apps"));
     }
 
     public TenantRepository(HostRegistry hostRegistry,
@@ -177,7 +176,6 @@ public class TenantRepository {
                             FileDistributionFactory fileDistributionFactory,
                             FlagSource flagSource,
                             ExecutorService zkCacheExecutor,
-                            SecretStore secretStore,
                             HostProvisionerProvider hostProvisionerProvider,
                             ConfigserverConfig configserverConfig,
                             ConfigServerDB configServerDB,
@@ -189,7 +187,8 @@ public class TenantRepository {
                             TenantListener tenantListener,
                             ZookeeperServerConfig zookeeperServerConfig,
                             OnnxModelCost onnxModelCost,
-                            List<EndpointCertificateSecretStore> endpointCertificateSecretStores) {
+                            List<EndpointCertificateSecretStore> endpointCertificateSecretStores,
+                            InheritableApplications inheritableApplications) {
         this.hostRegistry = hostRegistry;
         this.configserverConfig = configserverConfig;
         this.curator = curator;
@@ -200,7 +199,6 @@ public class TenantRepository {
         this.zkSessionWatcherExecutor = zkSessionWatcherExecutor;
         this.fileDistributionFactory = fileDistributionFactory;
         this.flagSource = flagSource;
-        this.secretStore = secretStore;
         this.hostProvisionerProvider = hostProvisionerProvider;
         this.configServerDB = configServerDB;
         this.zone = zone;
@@ -214,12 +212,13 @@ public class TenantRepository {
         // This we should control with a feature flag.
         this.deployHelperExecutor = createModelBuilderExecutor();
         this.onnxModelCost = onnxModelCost;
+        this.inheritableApplications = inheritableApplications;
+
+        // THE BELOW CODE MAY INVOKE METHODS THAT REFER TO THE ABOVE FIELDS
 
         curator.framework().getConnectionStateListenable().addListener(this::stateChanged);
-
         createPaths();
         createSystemTenants(configserverConfig);
-
         this.directoryCache = curator.createDirectoryCache(tenantsPath.getAbsolute(), false, false, zkCacheExecutor);
         this.directoryCache.addListener(this::childEvent);
         this.directoryCache.start();
@@ -261,8 +260,12 @@ public class TenantRepository {
     }
 
     private TenantMetaData createMetaData(Tenant tenant) {
-        Instant deployTime = tenant.getSessionRepository().clock().instant();
-        Instant createdTime = getTenantMetaData(tenant).createdTimestamp();
+        Instant now = tenant.getSessionRepository().clock().instant();
+        TenantMetaData metadata = getTenantMetaData(tenant);
+        Instant deployTime = metadata.lastDeployTimestamp();
+        if (deployTime.equals(Instant.EPOCH))
+            deployTime = now;
+        Instant createdTime = metadata.createdTimestamp();
         if (createdTime.equals(Instant.EPOCH))
             createdTime = deployTime;
         return new TenantMetaData(tenant.getName(), deployTime, createdTime);
@@ -366,7 +369,6 @@ public class TenantRepository {
                                                               curator,
                                                               zone,
                                                               flagSource,
-                                                              secretStore,
                                                               onnxModelCost,
                                                               endpointCertificateSecretStores);
         SessionRepository sessionRepository = new SessionRepository(tenantName,
@@ -378,7 +380,6 @@ public class TenantRepository {
                                                                     fileDistributionFactory,
                                                                     flagSource,
                                                                     zkCacheExecutor,
-                                                                    secretStore,
                                                                     hostProvisionerProvider,
                                                                     configserverConfig,
                                                                     configServerDB,
@@ -388,8 +389,9 @@ public class TenantRepository {
                                                                     configDefinitionRepo,
                                                                     zookeeperServerConfig.juteMaxBuffer(),
                                                                     onnxModelCost,
-                                                                    endpointCertificateSecretStores);
-        log.log(Level.FINE, "Adding tenant '" + tenantName + "'" + ", created " + created +
+                                                                    endpointCertificateSecretStores,
+                                                                    inheritableApplications);
+        log.log(Level.INFO, "Adding tenant '" + tenantName + "'" + ", created " + created +
                             ". Bootstrapping in " + Duration.between(start, clock.instant()));
         Tenant tenant = new Tenant(tenantName, sessionRepository, applicationRepo, created);
         createAndWriteTenantMetaData(tenant);
@@ -468,26 +470,30 @@ public class TenantRepository {
             throw new IllegalArgumentException("Deleting 'default' tenant is not allowed");
         if ( ! tenants.containsKey(name))
             throw new IllegalArgumentException("Deleting '" + name + "' failed, tenant does not exist");
+        if ( ! activeApplications(name).isEmpty())
+            throw new IllegalArgumentException("Cannot delete tenant '" + name + "', it has active applications: " + activeApplications(name));
 
-        log.log(Level.INFO, "Deleting tenant '" + name + "'");
         // Deletes the tenant tree from ZooKeeper (application and session status for the tenant)
         // and triggers Tenant.close().
-        try (Lock lock = tenantLocks.lock(name)) {
-            Path path = tenants.get(name).getPath();
-            closeTenant(name);
-            curator.delete(path);
-        }
-    }
-
-    private void closeTenant(TenantName name) {
         try (Lock lock = tenantLocks.lock(name)) {
             Tenant tenant = tenants.remove(name);
             if (tenant == null)
                 throw new IllegalArgumentException("Closing '" + name + "' failed, tenant does not exist");
 
-            log.log(Level.INFO, "Closing tenant '" + name + "'");
             notifyRemovedTenant(name);
             tenant.close();
+            // Because each config server has a PathDirectoryCache on the `sessions` and `applications` children:
+            //  1. Once the first config server (say cfg1) reaches this point, the caches on cfg2-3 will recreate
+            //    `sessions` and `applications` immediately after they are deleted by this tryDelete(), likely
+            //    failing this deletion.
+            //  2. Once the next config server (say cfg2) also reaches this point, the caches on cfg3 will recreate
+            //     `sessions` and `applications`, possibly failing this deletion.
+            //  3. Once the last config server (cfg3) reaches this point, the delete should succeed.
+            if (curator.tryDelete(tenant.getPath())) {
+                log.log(Level.INFO, "Deleted tenant " + name);
+            } else {
+                log.log(Level.INFO, "Deleted tenant " + name + " (" + tenant.getPath() + " to be removed by other cfgs)");
+            }
         }
     }
 
@@ -637,5 +643,19 @@ public class TenantRepository {
     public com.yahoo.vespa.curator.Curator getCurator() { return curator; }
 
     public HostProvisionerProvider hostProvisionerProvider() { return hostProvisionerProvider; }
+
+    public Set<TenantName> deleteUnusedTenants(Duration ttlForUnusedTenant, Instant now) {
+        return getAllTenantNames().stream()
+                .filter(tenantName -> activeApplications(tenantName).isEmpty())
+                .filter(tenantName -> !tenantName.equals(TenantName.defaultName())) // Not allowed to remove 'default' tenant
+                .filter(tenantName -> !tenantName.equals(HOSTED_VESPA_TENANT)) // Not allowed to remove 'hosted-vespa' tenant
+                .filter(tenantName -> getTenantMetaData(getTenant(tenantName)).lastDeployTimestamp().isBefore(now.minus(ttlForUnusedTenant)))
+                .peek(this::deleteTenant)
+                .collect(Collectors.toSet());
+    }
+
+    private List<ApplicationId> activeApplications(TenantName tenantName) {
+        return getTenant(tenantName).getApplicationRepo().activeApplications();
+    }
 
 }

@@ -2,7 +2,10 @@
 package com.yahoo.document.annotation;
 
 import com.yahoo.document.datatypes.StringFieldValue;
-import com.yahoo.document.serialization.*;
+import com.yahoo.document.serialization.DocumentDeserializer;
+import com.yahoo.document.serialization.DocumentDeserializerFactory;
+import com.yahoo.document.serialization.DocumentSerializer;
+import com.yahoo.document.serialization.DocumentSerializerFactory;
 import com.yahoo.io.GrowableByteBuffer;
 import org.junit.Test;
 
@@ -18,6 +21,7 @@ import static org.junit.Assert.fail;
 /**
  * @author <a href="mailto:einarmr@yahoo-inc.com">Einar M R Rosenvinge</a>
  */
+@SuppressWarnings({"deprecation", "removal"})
 public class SpanListTestCase extends AbstractTypesTest {
 
     @Test
@@ -46,7 +50,7 @@ public class SpanListTestCase extends AbstractTypesTest {
         GrowableByteBuffer buffer;
         {
             buffer = new GrowableByteBuffer(1024);
-            DocumentSerializer serializer = DocumentSerializerFactory.create6(buffer);
+            DocumentSerializer serializer = DocumentSerializerFactory.createHead(buffer);
             StringFieldValue value = new StringFieldValue("lkj lkj lkj lkj lkj lkj lkj lkj lkj lkj lkj lkj lkj lkj lk");
             SpanTree tree = new SpanTree("bababa", spanList);
             value.setSpanTree(tree);
@@ -55,7 +59,7 @@ public class SpanListTestCase extends AbstractTypesTest {
         }
         SpanList spanList2;
         {
-            DocumentDeserializer deserializer = DocumentDeserializerFactory.create6(man, buffer);
+            DocumentDeserializer deserializer = DocumentDeserializerFactory.createHead(man, buffer);
             StringFieldValue value = new StringFieldValue();
             deserializer.read(null, value);
             spanList2 = (SpanList)value.getSpanTree("bababa").getRoot();

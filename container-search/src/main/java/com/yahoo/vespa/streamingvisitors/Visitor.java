@@ -3,6 +3,7 @@ package com.yahoo.vespa.streamingvisitors;
 
 import com.yahoo.document.select.parser.ParseException;
 import com.yahoo.messagebus.Trace;
+import com.yahoo.prelude.fastsearch.PartialSummaryHandler;
 import com.yahoo.prelude.fastsearch.TimeoutException;
 import com.yahoo.searchlib.aggregation.Grouping;
 import com.yahoo.vdslib.DocumentSummary;
@@ -11,6 +12,7 @@ import com.yahoo.vdslib.VisitorStatistics;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Visitor for performing searches and accessing results.
@@ -18,6 +20,19 @@ import java.util.Map;
  * @author Ulf Carlin
  */
 interface Visitor {
+
+    record Context(String searchCluster,
+                   String schema,
+                   int traceLevelOverride,
+                   boolean sendOldQueryStack,
+                   PartialSummaryHandler partialSummaryHandler) {
+        Context(String searchCluster, String schema) {
+            this(searchCluster, schema, 0);
+        }
+        Context(String searchCluster, String schema, int traceLevelOverride) {
+            this(searchCluster, schema, traceLevelOverride, false, null);
+        }
+    }
 
     void doSearch() throws InterruptedException, ParseException, TimeoutException;
 
@@ -30,6 +45,8 @@ interface Visitor {
     int getTotalHitCount();
 
     List<Grouping> getGroupings();
+
+    Set<String> getErrors();
 
     Trace getTrace();
 

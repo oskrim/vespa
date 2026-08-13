@@ -4,6 +4,7 @@ package com.yahoo.tensor.serialization;
 import com.yahoo.tensor.Tensor;
 import com.yahoo.tensor.TensorType;
 import com.yahoo.text.JSON;
+import com.yahoo.yolean.Exceptions;
 import org.junit.Test;
 import org.junit.jupiter.api.Assertions;
 
@@ -55,7 +56,7 @@ public class JsonFormatTestCase {
         Tensor decoded = JsonFormat.decode(tensor.type(), json);
         assertEquals(tensor, decoded);
 
-        json = "{}".getBytes(); // short form variant of the above
+        json = "{}".getBytes(java.nio.charset.StandardCharsets.UTF_8); // short form variant of the above
         decoded = JsonFormat.decode(tensor.type(), json);
         assertEquals(tensor, decoded);
     }
@@ -186,6 +187,8 @@ public class JsonFormatTestCase {
         byte[] shortEncoded = JsonFormat.encode(tensor, true, false);
         assertEqualJson(shortJson, new String(shortEncoded, StandardCharsets.UTF_8));
         assertEquals(tensor, JsonFormat.decode(tensor.type(), shortEncoded));
+
+        assertEquals("\"02030507\"", new String(JsonFormat.encode(tensor, new JsonFormat.EncodeOptions(true, true, true)), StandardCharsets.UTF_8));
 
         String longJson = """
                 {
@@ -481,6 +484,8 @@ public class JsonFormatTestCase {
         String shortJson = "{\"a\": \"020304\", \"b\": \"050607\"}";
         decoded = JsonFormat.decode(expected.type(), shortJson.getBytes(StandardCharsets.UTF_8));
         assertEquals(expected, decoded);
+        var encoded = JsonFormat.encode(decoded, new JsonFormat.EncodeOptions(true, true, true));
+        assertEquals("{\"a\":\"020304\",\"b\":\"050607\"}", new String(encoded, StandardCharsets.UTF_8));
     }
 
     @Test
@@ -505,6 +510,70 @@ public class JsonFormatTestCase {
         String denseJson = "{\"values\":\"422849803580c37f0000800000807f7f7f80ff807fc0ffc0\"}";
         Tensor decoded = JsonFormat.decode(expected.type(), denseJson.getBytes(StandardCharsets.UTF_8));
         assertEquals(expected, decoded);
+        var encoded = JsonFormat.encode(decoded, new JsonFormat.EncodeOptions(true, true, true));
+        assertEquals("\"422849803580C37F0000800000807F7F7F80FF807FC0FFC0\"",
+                     new String(encoded, StandardCharsets.UTF_8));
+    }
+
+    @Test
+    public void testFloatHexCanBeDecodedAsBFloat16DenseValues() {
+        var type = TensorType.fromSpec("tensor<bfloat16>(x[1])");
+        var expected = Tensor.from("tensor<bfloat16>(x[1]):[1.0]");
+        assertEquals(expected, JsonFormat.decode(type, "{\"values\":\"3F800000\"}".getBytes(StandardCharsets.UTF_8)));
+        assertEquals(expected, JsonFormat.decode(type, "\"3F800000\"".getBytes(StandardCharsets.UTF_8)));
+    }
+
+    @Test
+    public void testFloatHexCanBeDecodedAsBFloat16BlockValues() {
+        var type = TensorType.fromSpec("tensor<bfloat16>(x{},y[1])");
+        var expected = Tensor.from("tensor<bfloat16>(x{},y[1]):{{x:foo,y:0}:1.0}");
+
+        String mixedJson = "{\"blocks\":[{\"address\":{\"x\":\"foo\"},\"values\":\"3F800000\"}]}";
+        assertEquals(expected, JsonFormat.decode(type, mixedJson.getBytes(StandardCharsets.UTF_8)));
+
+        String shortJson = "{\"blocks\":{\"foo\":\"3F800000\"}}";
+        assertEquals(expected, JsonFormat.decode(type, shortJson.getBytes(StandardCharsets.UTF_8)));
+    }
+
+    @Test
+    public void testBFloat16HexCanBeDecodedAsFloatDenseValues() {
+        var type = TensorType.fromSpec("tensor<float>(x[1])");
+        var expected = Tensor.from("tensor<float>(x[1]):[1.0]");
+        assertEquals(expected, JsonFormat.decode(type, "{\"values\":\"3F80\"}".getBytes(StandardCharsets.UTF_8)));
+        assertEquals(expected, JsonFormat.decode(type, "\"3F80\"".getBytes(StandardCharsets.UTF_8)));
+    }
+
+    @Test
+    public void testBFloat16HexCanBeDecodedAsFloatBlockValues() {
+        var type = TensorType.fromSpec("tensor<float>(x{},y[1])");
+        var expected = Tensor.from("tensor<float>(x{},y[1]):{{x:foo,y:0}:1.0}");
+
+        String mixedJson = "{\"blocks\":[{\"address\":{\"x\":\"foo\"},\"values\":\"3F80\"}]}";
+        assertEquals(expected, JsonFormat.decode(type, mixedJson.getBytes(StandardCharsets.UTF_8)));
+
+        String shortJson = "{\"blocks\":{\"foo\":\"3F80\"}}";
+        assertEquals(expected, JsonFormat.decode(type, shortJson.getBytes(StandardCharsets.UTF_8)));
+    }
+
+    @Test
+    public void testInt8HexCanBeDecodedAsBFloat16DenseValues() {
+        var type = TensorType.fromSpec("tensor<bfloat16>(x[1])");
+        var expected = Tensor.from("tensor<bfloat16>(x[1]):[1.0]");
+        assertEquals(expected, JsonFormat.decode(type, "{\"values\":\"01\"}".getBytes(StandardCharsets.UTF_8)));
+        assertEquals(expected, JsonFormat.decode(type, "\"01\"".getBytes(StandardCharsets.UTF_8)));
+    }
+
+    @Test
+    public void testBFloat16HexCannotBeDecodedAsInt8DenseValues() {
+        try {
+            var type = TensorType.fromSpec("tensor<int8>(x[1])");
+            JsonFormat.decode(type, "{\"values\":\"3F80\"}".getBytes(StandardCharsets.UTF_8));
+            fail("Expected exception");
+        }
+        catch (IllegalArgumentException e) {
+            assertEquals("Unexpected hex length: Expected 2 hex digits for tensor<int8>(x[1]) but got 4",
+                         Exceptions.toMessageString(e));
+        }
     }
 
     @Test
@@ -533,6 +602,13 @@ public class JsonFormatTestCase {
             +"\"}";
         Tensor decoded = JsonFormat.decode(expected.type(), denseJson.getBytes(StandardCharsets.UTF_8));
         assertEquals(expected, decoded);
+        var encoded = JsonFormat.encode(decoded, new JsonFormat.EncodeOptions(true, true, true));
+        assertEquals("\""
+                     +"42280000"+"49800008"+"35800000"+"C37F0000"
+                     +"00000000"+"80000000"+"00000001"+"7F7FFFFF"
+                     +"7F800000"+"FF800000"+"7FC00000"+"FFC00000"
+                     +"\"",
+                     new String(encoded, StandardCharsets.UTF_8));
     }
 
     @Test

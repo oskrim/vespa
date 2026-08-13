@@ -28,12 +28,91 @@ import java.util.Map;
 import java.util.LinkedHashMap;
 
 import com.yahoo.collections.Pair;
-import com.yahoo.document.datatypes.*;
+import com.yahoo.document.datatypes.DoubleFieldValue;
+import com.yahoo.document.datatypes.FieldValue;
+import com.yahoo.document.datatypes.FloatFieldValue;
+import com.yahoo.document.datatypes.IntegerFieldValue;
+import com.yahoo.document.datatypes.LongFieldValue;
+import com.yahoo.document.datatypes.NumericFieldValue;
+import com.yahoo.document.datatypes.StringFieldValue;
 import com.yahoo.text.StringUtilities;
-import com.yahoo.vespa.indexinglanguage.expressions.*;
+import com.yahoo.vespa.indexinglanguage.expressions.ArithmeticExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.AttributeExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.Base64DecodeExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.Base64EncodeExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.BinarizeExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.BusyWaitExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.CatExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.ChoiceExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.ChunkExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.ClearStateExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.Components;
+import com.yahoo.vespa.indexinglanguage.expressions.ConstantExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.EchoExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.EmbedExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.ExactExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.ExecutionValueExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.Expression;
+import com.yahoo.vespa.indexinglanguage.expressions.ExpressionList;
+import com.yahoo.vespa.indexinglanguage.expressions.FlattenExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.ForEachExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.GenerateExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.GetFieldExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.GetLanguageExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.GetValueExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.GetVarExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.GuardExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.HashExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.HexDecodeExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.HexEncodeExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.HostNameExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.IfThenExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.IndexExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.InputExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.JoinExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.LiteralBoolExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.LowerCaseExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.MathResolver;
+import com.yahoo.vespa.indexinglanguage.expressions.NGramExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.NormalizeExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.NowExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.OptimizePredicateExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.PackBitsExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.ParenthesisExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.PassthroughExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.RandomExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.ScriptExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.SelectInputExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.SetLanguageExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.SetVarExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.SleepExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.SplitExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.StatementExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.SubstringExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.SummaryExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.SwitchExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.ThisExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.ToArrayExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.ToBoolExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.ToByteExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.ToDoubleExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.ToEpochSecondExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.ToFloatExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.ToIntegerExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.ToLongExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.ToPositionExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.ToStringExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.ToUriExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.ToWsetExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.TokenizeExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.TrimExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.ZCurveExpression;
 import com.yahoo.vespa.indexinglanguage.linguistics.AnnotatorConfig;
+import com.yahoo.language.process.Chunker;
 import com.yahoo.language.process.Embedder;
+import com.yahoo.language.process.FieldGenerator;
 import com.yahoo.language.Linguistics;
+import com.yahoo.metrics.simple.MetricReceiver;
 
 /**
  * @author Simon Thoresen Hult
@@ -42,8 +121,11 @@ public class IndexingParser {
 
     private String defaultFieldName;
     private Linguistics linguistics;
-    private Map<String, Embedder> embedders;
-    private AnnotatorConfig annotatorCfg;
+    private Components<Chunker> chunkers;
+    private Components<Embedder> embedders;
+    private Components<FieldGenerator> generators;
+    private MetricReceiver metricReceiver = MetricReceiver.nullImplementation;
+    private AnnotatorConfig globalAnnotatorConfig = new AnnotatorConfig();
 
     public IndexingParser(String str) {
         this(new IndexingInput(str));
@@ -59,13 +141,28 @@ public class IndexingParser {
         return this;
     }
 
-    public IndexingParser setEmbedders(Map<String, Embedder> embedders) {
-        this.embedders = embedders;
+    public IndexingParser setChunkers(Map<String, Chunker> chunkers) {
+        this.chunkers = new Components.Map<Chunker>(chunkers, Chunker.FailingChunker.factory());
         return this;
     }
 
-    public IndexingParser setAnnotatorConfig(AnnotatorConfig cfg) {
-        annotatorCfg = cfg;
+    public IndexingParser setEmbedders(Map<String, Embedder> embedders) {
+        this.embedders = new Components.Map<Embedder>(embedders, Embedder.FailingEmbedder.factory());
+        return this;
+    }
+
+    public IndexingParser setGenerators(Map<String, FieldGenerator> generators) {
+        this.generators = new Components.Map<FieldGenerator>(generators, FieldGenerator.FailingFieldGenerator.factory());
+        return this;
+    }
+
+    public IndexingParser setMetricReceiver(MetricReceiver metricReceiver) {
+        this.metricReceiver = metricReceiver;
+        return this;
+    }
+
+    public IndexingParser setGlobalAnnotatorConfig(AnnotatorConfig config) {
+        globalAnnotatorConfig = config;
         return this;
     }
 
@@ -153,15 +250,19 @@ TOKEN :
     <BUSY_WAIT: "busy_wait"> |
     <CASE: "case"> |
     <CASE_DEFAULT: "default"> |
+    <CHUNK: "chunk"> |
     <CLEAR_STATE: "clear_state"> |
     <CREATE_IF_NON_EXISTENT: "create_if_non_existent"> |
     <ECHO: "echo"> |
     <ELSE: "else"> |
     <EMBED: "embed"> |
+    <GENERATE: "generate"> |
     <EXACT: "exact"> |
     <FLATTEN: "flatten"> |
     <FOR_EACH: "for_each"> |
     <GET_FIELD: "get_field"> |
+    <GET_LANGUAGE: "get_language"> |
+    <GET_VALUE: "get_value"> |
     <GET_VAR: "get_var"> |
     <GUARD: "guard"> |
     <HASH: "hash"> |
@@ -172,6 +273,7 @@ TOKEN :
     <INDEX: "index"> |
     <INPUT: "input"> |
     <JOIN: "join"> |
+    <KEEP_CASE: "keep-case"> |
     <LOWER_CASE: "lowercase"> |
     <MAX_LENGTH: "max-length"> |
     <MAX_OCCURRENCES: "max-occurrences"> |
@@ -182,6 +284,7 @@ TOKEN :
     <OPTIMIZE_PREDICATE: "optimize_predicate"> |
     <PACK_BITS: "pack_bits" > |
     <PASSTHROUGH: "passthrough"> |
+    <PROFILE: "profile"> |
     <RANDOM: "random"> |
     <REMOVE_IF_ZERO: "remove_if_zero"> |
     <SELECT_INPUT: "select_input"> |
@@ -196,6 +299,7 @@ TOKEN :
     <THIS: "this"> |
     <TOKENIZE: "tokenize"> |
     <TO_ARRAY: "to_array"> |
+    <TO_BOOL: "to_bool"> |
     <TO_BYTE: "to_byte"> |
     <TO_DOUBLE: "to_double"> |
     <TO_FLOAT: "to_float"> |
@@ -204,8 +308,8 @@ TOKEN :
     <TO_POS: "to_pos"> |
     <TO_EPOCH_SECOND: "to_epoch_second"> |
     <TO_STRING: "to_string"> |
+    <TO_URI: "to_uri"> |
     <TO_WSET: "to_wset"> |
-    <TO_BOOL: "to_bool"> |
     <TRIM: "trim"> |
     <ZCURVE: "zcurve"> |
     <TRUE: "true" > |
@@ -303,14 +407,18 @@ Expression value() :
       val = base64EncodeExp()       |
       val = binarizeExp()           |
       val = busy_waitExp()          |
+      val = chunkExp()              |
       val = clearStateExp()         |
       val = echoExp()               |
       val = embedExp()              |
+      val = generateExp()           |
       val = exactExp()              |
       val = executionValueExp()     |
       val = flattenExp()            |
       val = forEachExp()            |
       val = getFieldExp()           |
+      val = getLanguageExp()        |
+      val = getValueExp()           |
       val = getVarExp()             |
       val = guardExp()              |
       val = hashExp()               |
@@ -343,16 +451,17 @@ Expression value() :
       val = thisExp()               |
       val = tokenizeExp()           |
       val = toArrayExp()            |
+      val = toBoolExp()             |
       val = toByteExp()             |
       val = toDoubleExp()           |
+      val = toEpochSecondExp()      |
       val = toFloatExp()            |
       val = toIntExp()              |
       val = toLongExp()             |
       val = toPosExp()              |
-      val = toEpochSecondExp()      |
       val = toStringExp()           |
+      val = toUriExp()              |
       val = toWsetExp()             |
-      val = toBoolExp()             |
       val = trimExp()               |
       val = zcurveExp()             |
       ( <LPAREN> val = statement() <RPAREN> { val = new ParenthesisExpression(val); } ) )
@@ -386,6 +495,16 @@ Expression busy_waitExp() : { }
     { return new BusyWaitExpression(); }
 }
 
+Expression chunkExp() :
+{
+    String chunkerId = "";
+    List<String> arguments = new ArrayList<String>();
+}
+{
+    <CHUNK> [ LOOKAHEAD(2) chunkerId = identifier() ] arguments = arguments()
+    { return new ChunkExpression(chunkers, chunkerId, arguments); }
+}
+
 Expression clearStateExp() : { }
 {
     ( <CLEAR_STATE> )
@@ -401,24 +520,30 @@ Expression echoExp() : { }
 Expression embedExp() :
 {
     String embedderId = "";
-    String embedderArgument;
-    List<String> embedderArguments = new ArrayList<String>();
+    List<String> arguments = new ArrayList<String>();
 }
 {
-    (
-      <EMBED> [ LOOKAHEAD(2) embedderId = identifier() ]
-      ( LOOKAHEAD(2) embedderArgument = identifier() { embedderArguments.add(embedderArgument); } )*
-    )
-    { return new EmbedExpression(linguistics, embedders, embedderId, embedderArguments); }
+    <EMBED> [ LOOKAHEAD(2) embedderId = identifier() ] arguments = arguments()
+    { return new EmbedExpression(linguistics, embedders, embedderId, arguments, metricReceiver); }
+}
+
+Expression generateExp() :
+{
+    String generatorId = "";
+    List<String> arguments = new ArrayList<String>();
+}
+{
+    <GENERATE> [ LOOKAHEAD(2) generatorId = identifier() ] arguments = arguments()
+    { return new GenerateExpression(linguistics, generators, generatorId, arguments); }
 }
 
 Expression exactExp() :
 {
-    int maxTokenLength = annotatorCfg.getMaxTokenLength();
+    AnnotatorConfig config = globalAnnotatorConfig;
 }
 {
-    ( <EXACT>  [ <MAX_TOKEN_LENGTH> <COLON> maxTokenLength = integer() ] )
-    { return new ExactExpression(maxTokenLength); }
+    ( <EXACT> [ config = annotatorConfig() ] )
+    { return new ExactExpression(config); }
 }
 
 Expression flattenExp() : { }
@@ -444,6 +569,21 @@ Expression getFieldExp() :
 {
     ( <GET_FIELD> ( "$" { hasPrefix = true; } )? val = identifier() )
     { return new GetFieldExpression( (hasPrefix ? "$" : "") + val); }
+}
+
+Expression getLanguageExp() : { }
+{
+    ( <GET_LANGUAGE> )
+    { return new GetLanguageExpression(); }
+}
+
+Expression getValueExp() :
+{
+    String key;
+}
+{
+    ( <GET_VALUE> ( key = valueString() ) )
+    { return new GetValueExpression(key); }
 }
 
 Expression getVarExp() :
@@ -688,34 +828,43 @@ Expression thisExp() : { }
 
 Expression tokenizeExp() :
 {
-    AnnotatorConfig cfg = annotatorCfg;
+    AnnotatorConfig config = globalAnnotatorConfig;
 }
 {
-    ( <TOKENIZE> [ cfg = tokenizeCfg() ] )
-    { return new TokenizeExpression(linguistics, cfg); }
+    ( <TOKENIZE> [ config = annotatorConfig() ] )
+    { return new TokenizeExpression(linguistics, config); }
 }
 
-AnnotatorConfig tokenizeCfg() :
+AnnotatorConfig annotatorConfig() :
 {
-    AnnotatorConfig val = new AnnotatorConfig(annotatorCfg);
-    String str = "SHORTEST";
+    AnnotatorConfig config = new AnnotatorConfig(globalAnnotatorConfig);
+    String stemMode = "SHORTEST";
+    String profile;
     Integer maxLength;
     Integer maxTermOccurrences;
     Integer maxTokenLength;
 }
 {
-    ( <STEM> ( <COLON> str = string() ) ? { val.setStemMode(str); } |
-      <MAX_LENGTH> <COLON>  maxLength = integer() { val.setMaxTokenizeLength(maxLength); } |
-      <MAX_OCCURRENCES> <COLON>  maxTermOccurrences = integer() { val.setMaxTermOccurrences(maxTermOccurrences); } |
-      <MAX_TOKEN_LENGTH> <COLON> maxTokenLength = integer() { val.setMaxTokenLength(maxTokenLength); } |
-      <NORMALIZE> { val.setRemoveAccents(true); } )+
-    { return val; }
+    ( <STEM> ( <COLON> stemMode = string() ) ? { config.setStemMode(stemMode); } |
+      <PROFILE> <COLON> profile = string() { config.setProfile(profile); } |
+      <MAX_LENGTH> <COLON>  maxLength = integer() { config.setMaxTokenizeLength(maxLength); } |
+      <MAX_OCCURRENCES> <COLON>  maxTermOccurrences = integer() { config.setMaxTermOccurrences(maxTermOccurrences); } |
+      <MAX_TOKEN_LENGTH> <COLON> maxTokenLength = integer() { config.setMaxTokenLength(maxTokenLength); } |
+      <NORMALIZE> { config.setRemoveAccents(true); } |
+      <KEEP_CASE> { config.setLowercase(false); } )+
+    { return config; }
 }
 
 Expression toArrayExp() : { }
 {
     ( <TO_ARRAY> )
     { return new ToArrayExpression(); }
+}
+
+Expression toBoolExp() : { }
+{
+    ( <TO_BOOL> )
+    { return new ToBoolExpression(); }
 }
 
 Expression toByteExp() : { }
@@ -728,6 +877,12 @@ Expression toDoubleExp() : { }
 {
     ( <TO_DOUBLE> )
     { return new ToDoubleExpression(); }
+}
+
+Expression toEpochSecondExp() : { }
+{
+    ( <TO_EPOCH_SECOND> )
+    { return new ToEpochSecondExpression(); }
 }
 
 Expression toFloatExp() : { }
@@ -754,16 +909,16 @@ Expression toPosExp() : { }
     { return new ToPositionExpression(); }
 }
 
-Expression toEpochSecondExp() : { }
-{
-    ( <TO_EPOCH_SECOND> )
-    { return new ToEpochSecondExpression(); }
-}
-
 Expression toStringExp() : { }
 {
     ( <TO_STRING> )
     { return new ToStringExpression(); }
+}
+
+Expression toUriExp() : { }
+{
+    ( <TO_URI> )
+    { return new ToUriExpression(); }
 }
 
 Expression toWsetExp() :
@@ -775,12 +930,6 @@ Expression toWsetExp() :
     ( <TO_WSET> ( <CREATE_IF_NON_EXISTENT> { createIfNonExistent = true; } |
                   <REMOVE_IF_ZERO>         { removeIfZero = true;        } )* )
     { return new ToWsetExpression(createIfNonExistent, removeIfZero); }
-}
-
-Expression toBoolExp() : { }
-{
-    ( <TO_BOOL> )
-    { return new ToBoolExpression(); }
 }
 
 Expression trimExp() : { }
@@ -816,6 +965,29 @@ Expression executionValueExp() : { }
     { return new ExecutionValueExpression(); }
 }
 
+/** A possibly empty list of arguments that can be strings or numbers. */
+List<String> arguments() :
+{
+    String argument;
+    List<String> arguments = new ArrayList<String>();
+}
+{
+      ( argument = valueString() { arguments.add(argument); } )*
+      { return arguments; }
+}
+
+/** A number, identifier, or quoted string */
+String valueString() :
+{
+    String value;
+    NumericFieldValue numericValue;
+}
+{
+    numericValue = numericValue() { return numericValue.getNumber().toString(); } |
+    value = string() { return value; } |
+    value = identifier() { return value; }
+}
+
 String identifier() :
 {
     String val;
@@ -829,6 +1001,7 @@ String identifier() :
         <BUSY_WAIT>              |
         <CASE>                   |
         <CASE_DEFAULT>           |
+        <CHUNK>                  |
         <CLEAR_STATE>            |
         <CREATE_IF_NON_EXISTENT> |
         <ECHO>                   |
@@ -837,19 +1010,22 @@ String identifier() :
         <EMBED>                  |
         <FLATTEN>                |
         <FOR_EACH>               |
+        <GENERATE>               |
         <GET_FIELD>              |
+        <GET_LANGUAGE>           |
+        <GET_VALUE>              |
         <GET_VAR>                |
         <GUARD>                  |
         <HASH>                   |
-        <HEX_DECODE>              |
-        <HEX_ENCODE>              |
-        <HOST_NAME>               |
+        <HEX_DECODE>             |
+        <HEX_ENCODE>             |
+        <HOST_NAME>              |
         <IDENTIFIER>             |
         <IF>                     |
         <INDEX>                  |
         <INPUT>                  |
         <JOIN>                   |
-        <LOWER_CASE>              |
+        <LOWER_CASE>             |
         <MAX_LENGTH>             |
         <NGRAM>                  |
         <NORMALIZE>              |
@@ -857,6 +1033,7 @@ String identifier() :
         <OPTIMIZE_PREDICATE>     |
         <PACK_BITS>              |
         <PASSTHROUGH>            |
+        <PROFILE>                |
         <RANDOM>                 |
         <REMOVE_IF_ZERO>         |
         <SELECT_INPUT>           |
@@ -870,14 +1047,17 @@ String identifier() :
         <SWITCH>                 |
         <THIS>                   |
         <TO_ARRAY>               |
+        <TO_BOOL>                |
+        <TO_BYTE>                |
         <TO_DOUBLE>              |
+        <TO_EPOCH_SECOND>        |
         <TO_FLOAT>               |
         <TO_INT>                 |
         <TO_LONG>                |
         <TO_POS>                 |
         <TO_STRING>              |
+        <TO_URI>                 |
         <TO_WSET>                |
-        <TO_BOOL>                |
         <TOKENIZE>               |
         <TRIM>                   |
         <TRUE>                   |
@@ -952,4 +1132,3 @@ void nl() : { }
 {
     ( <NL> )*
 }
-

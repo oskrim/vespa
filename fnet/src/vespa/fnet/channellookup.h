@@ -2,11 +2,12 @@
 
 #pragma once
 
+#include <cstdint>
 #include <memory>
 #include <vector>
 
 namespace fnet {
-    struct ChannelMap;
+struct ChannelMap;
 }
 
 class FNET_Channel;
@@ -19,13 +20,12 @@ class FNET_ControlPacket;
  * the @ref FNET_Connection class to keep track of channels. NOTE:
  * this class is not intended for direct use; use at own risk.
  **/
-class FNET_ChannelLookup
-{
+class FNET_ChannelLookup {
 private:
     std::unique_ptr<fnet::ChannelMap> _map;
 
-    FNET_ChannelLookup(const FNET_ChannelLookup &);
-    FNET_ChannelLookup &operator=(const FNET_ChannelLookup &);
+    FNET_ChannelLookup(const FNET_ChannelLookup&);
+    FNET_ChannelLookup& operator=(const FNET_ChannelLookup&);
 
 public:
     /**
@@ -50,7 +50,7 @@ public:
      *
      * @param channel the channel you want to register.
      **/
-    void Register(FNET_Channel *channel);
+    void Register(FNET_Channel* channel);
 
     /**
      * Find a channel given the channel ID.
@@ -58,7 +58,7 @@ public:
      * @return channel with correct id or nullptr if not found.
      * @param id channel ID of the channel you are looking for.
      **/
-    FNET_Channel *Lookup(uint32_t id);
+    FNET_Channel* Lookup(uint32_t id);
 
     /**
      * Broadcast a control packet to all channels registered with this
@@ -77,7 +77,7 @@ public:
      * @return vector of all channels to be freed.
      * @param cpacket the control packet you want to broadcast.
      **/
-    std::vector<std::unique_ptr<FNET_Channel>> Broadcast(FNET_ControlPacket *cpacket);
+    std::vector<std::unique_ptr<FNET_Channel>> Broadcast(FNET_ControlPacket* cpacket);
 
     /**
      * Unregister a channel. This method uses both the channel ID and
@@ -88,6 +88,5 @@ public:
      * @return true(ok)/false(not found)
      * @param channel the channel you want to unregister.
      **/
-    bool Unregister(FNET_Channel *channel);
+    bool Unregister(FNET_Channel* channel);
 };
-

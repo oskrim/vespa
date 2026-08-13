@@ -4,27 +4,26 @@
 
 #include <vespa/vespalib/net/http/state_explorer.h>
 
-namespace search { class AttributeVector; }
+namespace search {
+class AttributeVector;
+}
 
 namespace proton {
-
-class AttributeExecutor;
 
 /**
  * Class used to explore the state of an attribute vector.
  */
-class AttributeVectorExplorer : public vespalib::StateExplorer
-{
-private:
-    std::unique_ptr<const AttributeExecutor> _executor;
+class AttributeVectorExplorer : public vespalib::StateExplorer {
+    std::shared_ptr<search::AttributeVector> _attr;
 
-    void get_state_helper(const search::AttributeVector& attr, const vespalib::slime::Inserter &inserter, bool full) const;
 public:
-    AttributeVectorExplorer(std::unique_ptr<AttributeExecutor> executor);
+    AttributeVectorExplorer(std::shared_ptr<search::AttributeVector> attr);
+    ~AttributeVectorExplorer() override;
 
     // Implements vespalib::StateExplorer
-    void get_state(const vespalib::slime::Inserter &inserter, bool full) const override;
+    void get_state(const vespalib::slime::Inserter& inserter, bool full) const override;
+    std::vector<std::string> get_children_names() const override;
+    std::unique_ptr<StateExplorer> get_child(std::string_view name) const override;
 };
 
 } // namespace proton
-

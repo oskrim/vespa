@@ -31,7 +31,7 @@ func newDeployCmd(cli *CLI) *cobra.Command {
 		Long: `Deploy (prepare and activate) an application package.
 
 An application package defines a deployable Vespa application. See
-https://docs.vespa.ai/en/reference/application-packages-reference.html for
+https://docs.vespa.ai/en/reference/applications/application-packages.html for
 details about the files contained in this package.
 
 To get started, 'vespa clone' can be used to download a sample application.
@@ -45,12 +45,12 @@ If application directory is not specified, it defaults to working directory.
 
 In Vespa Cloud you may override the Vespa runtime version (--version) for your
 deployment. This option should only be used if you have a reason for using a
-specific version. By default Vespa Cloud chooses a suitable version for you.
+specific version. By default, Vespa Cloud chooses a suitable version for you.
 `,
 		Example: `$ vespa deploy .
 $ vespa deploy -t cloud
 $ vespa deploy -t cloud -z dev.aws-us-east-1c  # -z can be omitted here as this zone is the default
-$ vespa deploy -t cloud -z perf.aws-us-east-1c`,
+$ vespa deploy -t cloud -z dev.gcp-us-central1-f`,
 		Args:              cobra.MaximumNArgs(1),
 		DisableAutoGenTag: true,
 		SilenceUsage:      true,
@@ -72,8 +72,20 @@ $ vespa deploy -t cloud -z perf.aws-us-east-1c`,
 				opts.Version = version
 			}
 			if target.Type() == vespa.TargetCloud {
-				if err := requireCertificate(copyCert, true, cli, target, pkg); err != nil {
-					return err
+				services, err := readServicesXML(pkg)
+				skipCertCheck := err == nil && services.ContainsAnyTokenClient()
+				if !skipCertCheck {
+					if err := requireCertificate(copyCert, true, cli, target, pkg); err != nil {
+						return err
+					}
+				}
+				if err == nil {
+					if vaultNames := services.VaultNames(); len(vaultNames) > 0 {
+						if vaultErr := vespa.EnsureVaultAccessForDev(target, vaultNames); vaultErr != nil {
+							cli.printWarning("Could not set up vault access: "+vaultErr.Error(),
+								"You may need to configure vault access manually in the Vespa Cloud console")
+						}
+					}
 				}
 			}
 			waiter := cli.waiter(time.Duration(waitSecs)*time.Second, cmd)
@@ -94,7 +106,6 @@ $ vespa deploy -t cloud -z perf.aws-us-east-1c`,
 				}
 				return err
 			}
-			log.Println()
 			if opts.Target.IsCloud() {
 				cli.printSuccess("Triggered deployment of ", color.CyanString("'"+pkg.Path+"'"), " with run ID ", color.CyanString(strconv.FormatInt(result.ID, 10)))
 			} else {
@@ -116,7 +127,8 @@ $ vespa deploy -t cloud -z perf.aws-us-east-1c`,
 }
 
 func newPrepareCmd(cli *CLI) *cobra.Command {
-	return &cobra.Command{
+	var waitSecs int
+	cmd := &cobra.Command{
 		Use:               "prepare [application-directory-or-file]",
 		Short:             "Prepare an application package for activation",
 		Args:              cobra.MaximumNArgs(1),
@@ -131,10 +143,14 @@ func newPrepareCmd(cli *CLI) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			waiter := cli.waiter(time.Duration(waitSecs)*time.Second, cmd)
+			if _, err := waiter.DeployService(target); err != nil {
+				return err
+			}
 			opts := vespa.DeploymentOptions{ApplicationPackage: pkg, Target: target}
 			var result vespa.PrepareResult
 			err = cli.spinner(cli.Stderr, "Uploading application package...", func() error {
-				result, err = vespa.Prepare(opts)
+				result, err = vespa.Prepare(opts, time.Duration(waitSecs)*time.Second)
 				return err
 			})
 			if err != nil {
@@ -148,6 +164,8 @@ func newPrepareCmd(cli *CLI) *cobra.Command {
 			return nil
 		},
 	}
+	cli.bindWaitFlag(cmd, 0, &waitSecs)
+	return cmd
 }
 
 func newActivateCmd(cli *CLI) *cobra.Command {
@@ -172,7 +190,7 @@ func newActivateCmd(cli *CLI) *cobra.Command {
 				return err
 			}
 			opts := vespa.DeploymentOptions{Target: target}
-			err = vespa.Activate(sessionID, opts)
+			err = vespa.Activate(sessionID, opts, time.Duration(waitSecs)*time.Second)
 			if err != nil {
 				return err
 			}

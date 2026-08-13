@@ -11,6 +11,7 @@
     <version>8-SNAPSHOT</version>
     <relativePath>../parent/pom.xml</relativePath>
   </parent>
+  <name>${project.artifactId}</name>
   <artifactId>container-search</artifactId>
   <packaging>jar</packaging>
   <version>8-SNAPSHOT</version>
@@ -53,12 +54,6 @@
     <dependency>
       <groupId>com.yahoo.vespa</groupId>
       <artifactId>defaults</artifactId>
-      <version>${project.version}</version>
-      <scope>provided</scope>
-    </dependency>
-    <dependency>
-      <groupId>com.yahoo.vespa</groupId>
-      <artifactId>container-core</artifactId>
       <version>${project.version}</version>
       <scope>provided</scope>
     </dependency>
@@ -134,9 +129,26 @@
       </exclusions>
     </dependency>
     <dependency>
+      <groupId>com.fasterxml.jackson.dataformat</groupId>
+      <artifactId>jackson-dataformat-cbor</artifactId>
+    </dependency>
+
+    <dependency>
       <groupId>com.google.protobuf</groupId>
       <artifactId>protobuf-java</artifactId>
       <scope>compile</scope>
+    </dependency>
+    <dependency>
+      <!-- dependency of protobuf-java-util -->
+      <groupId>com.google.j2objc</groupId>
+      <artifactId>j2objc-annotations</artifactId>
+      <version>${j2objc-annotations.vespa.version}</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>com.google.protobuf</groupId>
+      <artifactId>protobuf-java-util</artifactId>
+      <scope>test</scope>
     </dependency>
     <dependency>
       <groupId>org.apache.commons</groupId>
@@ -151,6 +163,10 @@
     <dependency>
       <groupId>org.antlr</groupId>
       <artifactId>antlr4-runtime</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.google.re2j</groupId>
+      <artifactId>re2j</artifactId>
     </dependency>
     <dependency>
       <groupId>org.mockito</groupId>
@@ -252,12 +268,6 @@
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-surefire-plugin</artifactId>
-        <configuration>
-          <!-- Illegal reflective access in ProbabilisticSampleRateTest by mockito/bytebuddy -->
-          <argLine>
-            --add-opens=java.base/jdk.internal.util.random=ALL-UNNAMED
-          </argLine>
-        </configuration>
       </plugin>
       <plugin>
         <groupId>com.yahoo.vespa</groupId>

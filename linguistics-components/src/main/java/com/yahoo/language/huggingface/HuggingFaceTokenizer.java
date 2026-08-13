@@ -13,6 +13,7 @@ import com.yahoo.language.huggingface.ModelInfo.PaddingStrategy;
 import com.yahoo.language.huggingface.ModelInfo.TruncationStrategy;
 import com.yahoo.language.huggingface.config.HuggingFaceTokenizerConfig;
 import com.yahoo.language.process.Embedder;
+import com.yahoo.language.process.LinguisticsParameters;
 import com.yahoo.language.process.Segmenter;
 import com.yahoo.language.tools.Embed;
 import com.yahoo.tensor.Tensor;
@@ -40,12 +41,15 @@ public class HuggingFaceTokenizer extends AbstractComponent implements Embedder,
     private final Path tmpDirectory = uncheck(() -> Files.createTempDirectory("hf-tokenizer-"));
     private final Map<Language, ai.djl.huggingface.tokenizers.HuggingFaceTokenizer> models;
 
-    @Inject public HuggingFaceTokenizer(HuggingFaceTokenizerConfig cfg) { this(new Builder(cfg)); }
+    @Inject
+    public HuggingFaceTokenizer(HuggingFaceTokenizerConfig cfg) { this(new Builder(cfg)); }
 
     static {
         // Stop HuggingFace Tokenizer from reporting usage statistics back to mothership
         // See ai.djl.util.Ec2Utils.callHome()
         System.setProperty("OPT_OUT_TRACKING", "true");
+        // Stop DJL from downloading native libraries on the fly - also disables GPU usage
+        System.setProperty("ai.djl.offline", "true");
     }
 
     private HuggingFaceTokenizer(Builder b) {
@@ -95,8 +99,8 @@ public class HuggingFaceTokenizer extends AbstractComponent implements Embedder,
     }
 
     @Override
-    public List<String> segment(String input, Language language) {
-        return List.of(resolve(language).encode(input).getTokens());
+    public List<String> segment(String input, LinguisticsParameters parameters) {
+        return List.of(resolve(parameters.language()).encode(input).getTokens());
     }
 
     @Override

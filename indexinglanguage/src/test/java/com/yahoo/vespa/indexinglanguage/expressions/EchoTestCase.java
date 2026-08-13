@@ -8,10 +8,12 @@ import org.junit.Test;
 
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
 
 import static com.yahoo.vespa.indexinglanguage.expressions.ExpressionAssert.assertVerify;
-import static com.yahoo.vespa.indexinglanguage.expressions.ExpressionAssert.assertVerifyThrows;
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertSame;
 
 /**
  * @author Simon Thoresen Hult
@@ -22,17 +24,17 @@ public class EchoTestCase {
     public void requireThatAccessorsWork() {
         assertSame(System.out, new EchoExpression().getOutputStream());
 
-        PrintStream out = new PrintStream(System.out);
+        PrintStream out = new PrintStream(System.out, true, StandardCharsets.UTF_8);
         assertSame(out, new EchoExpression(out).getOutputStream());
     }
 
     @Test
     public void requireThatHashCodeAndEqualsAreImplemented() {
-        PrintStream out = new PrintStream(System.out);
+        PrintStream out = new PrintStream(System.out, true, StandardCharsets.UTF_8);
         Expression exp = new EchoExpression(out);
         assertFalse(exp.equals(new Object()));
         assertFalse(exp.equals(new EchoExpression()));
-        assertFalse(exp.equals(new EchoExpression(new PrintStream(System.err))));
+        assertFalse(exp.equals(new EchoExpression(new PrintStream(System.err, true, StandardCharsets.UTF_8))));
         assertEquals(exp, new EchoExpression(out));
         assertEquals(exp.hashCode(), new EchoExpression(out).hashCode());
     }
@@ -43,16 +45,15 @@ public class EchoTestCase {
 
         ExecutionContext ctx = new ExecutionContext(new SimpleTestAdapter());
         ctx.setCurrentValue(new StringFieldValue("69"));
-        new EchoExpression(new PrintStream(out)).execute(ctx);
+        new EchoExpression(new PrintStream(out, true, StandardCharsets.UTF_8)).execute(ctx);
 
-        assertEquals("69" + System.getProperty("line.separator"), out.toString());
+        assertEquals("69" + System.getProperty("line.separator"), out.toString(StandardCharsets.UTF_8));
     }
 
     @Test
     public void requireThatExpressionCanBeVerified() {
-        Expression exp = new EchoExpression();
-        assertVerify(DataType.INT, exp, DataType.INT);
-        assertVerify(DataType.STRING, exp, DataType.STRING);
-        assertVerifyThrows(null, exp, "Expected any input, but no input is specified");
+        assertVerify(DataType.INT, new EchoExpression(), DataType.INT);
+        assertVerify(DataType.STRING, new EchoExpression(), DataType.STRING);
     }
+
 }

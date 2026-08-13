@@ -2,12 +2,14 @@
 package com.yahoo.config.model.provision;
 
 import com.yahoo.config.model.api.HostProvisioner;
+import com.yahoo.config.provision.AzName;
 import com.yahoo.config.provision.Capacity;
 import com.yahoo.config.provision.ClusterMembership;
 import com.yahoo.config.provision.ClusterSpec;
 import com.yahoo.config.provision.Flavor;
 import com.yahoo.config.provision.HostSpec;
 import com.yahoo.config.provision.NodeResources;
+import com.yahoo.config.provision.ProvisionContext;
 import com.yahoo.config.provision.ProvisionLogger;
 import com.yahoo.net.HostName;
 
@@ -38,7 +40,8 @@ public class SingleNodeProvisioner implements HostProvisioner {
         this.hostSpec = new HostSpec(host.hostname(),
                                      flavor.resources(), flavor.resources(), flavor.resources(),
                                      ClusterMembership.from(ClusterSpec.specification(ClusterSpec.Type.content, ClusterSpec.Id.from("test")).group(ClusterSpec.Group.from(0)).vespaVersion("1").build(), 0),
-                                     Optional.empty(), Optional.empty(), Optional.empty());
+                                     Optional.empty(), Optional.empty(), Optional.empty(),
+                                     AzName.defaultName());
     }
 
     @Override
@@ -47,12 +50,13 @@ public class SingleNodeProvisioner implements HostProvisioner {
     }
 
     @Override
-    public List<HostSpec> prepare(ClusterSpec cluster, Capacity capacity, ProvisionLogger logger) {
+    public List<HostSpec> prepare(ClusterSpec cluster, Capacity capacity, ProvisionContext context) {
         List<HostSpec> hosts = new ArrayList<>();
         hosts.add(new HostSpec(host.hostname(),
                                NodeResources.unspecified(), NodeResources.unspecified(), NodeResources.unspecified(),
                                ClusterMembership.from(cluster.with(Optional.of(ClusterSpec.Group.from(0))), counter++),
-                               Optional.empty(), Optional.empty(), Optional.empty()));
+                               Optional.empty(), Optional.empty(), Optional.empty(),
+                               AzName.defaultName()));
         return hosts;
     }
 

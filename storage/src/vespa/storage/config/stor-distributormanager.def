@@ -6,9 +6,9 @@ namespace=vespa.config.content.core
 splitsize int default=16772216
 
 ## The maximum amount of entries in a file before we should attempt to split it.
-## A meta data entry in a slotfile currently uses 40 bytes. It is probably
-## good to have the split size, such that all meta data entries are normally
-## read when you do the initial read. With the default of 1024, meta data will
+## A metadata entry in a slotfile currently uses 40 bytes. It is probably
+## good to have the split size, such that all metadata entries are normally
+## read when you do the initial read. With the default of 1024, metadata will
 ## take up around 40 kB, and the default initial read is 64 kB, allowing the
 ## file to grow a bit above max and still all be read in initial read.
 splitcount int default=1024
@@ -36,7 +36,7 @@ garbagecollection.interval int default=0
 ## If false, dont do splits inline with feeding.
 inlinebucketsplitting bool default=true
 
-## Maximum nodes involved in a merge operation. Currently, this can not be more
+## Maximum nodes involved in a merge operation. Currently, this cannot be more
 ## than 16 nodes due to protocol limitations. However, decreasing the max may
 ## be useful if 16 node merges ends up too expensive.
 maximum_nodes_per_merge int default=16
@@ -166,9 +166,39 @@ enable_operation_cancellation bool default=false
 ## likely to reflect these changes as part of visible search results.
 symmetric_put_and_activate_replica_selection bool default=false
 
+## Iff set to a value > 0, will enforce a size check on Put and Update operations arriving
+## at the distributor, where over-sized messages will be explicitly rejected with a
+## non-retryable error code. Intended as a safety measure to prevent overly large documents
+## from being accepted into the cluster.
+##
+## The message size is estimated based on the uncompressed on-wire serialized payload size,
+## so it's only a (possibly inaccurate) proxy for the actual impact the underlying document
+## operation will have on the backend. But it's a "free" heuristic since we already have
+## that information available from the RPC subsystem.
+##
+## Any number <= 0 implicitly defaults to 2GiB (INT32_MAX), i.e. effectively unbounded.
+max_document_operation_message_size_bytes int default=134217728
+
 ## TODO GC very soon, it has no effect.
 priority_merge_out_of_sync_copies int default=120
 
 ## TODO GC as it has no effect
 use_btree_database bool default=true
 
+##
+## Node hardware info; this is a subset of what's present in `proton.def`, allowing
+## distributor processes to make an informed decision about how to scale internal
+## resource pools and limits. Content nodes already get their HW info directly from
+## Proton, as it owns the content node components.
+## If there is no host flavor associated with the node, these fields will be zero
+## and the node will fall back to default (and/or locally inferred) values.
+##
+
+## The size of the disk partition (in bytes) on which the node's basedir is located.
+hwinfo.disk.size long default = 0 restart
+
+## The size of physical memory (in bytes) available to the distributor.
+hwinfo.memory.size long default = 0 restart
+
+## The number of cores on the cpu.
+hwinfo.cpu.cores int default = 0 restart

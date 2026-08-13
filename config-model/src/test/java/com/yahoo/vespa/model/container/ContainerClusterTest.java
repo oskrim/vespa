@@ -1,6 +1,7 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.model.container;
 
+import ai.vespa.telemetry.TelemetryConfig;
 import com.yahoo.cloud.config.ClusterInfoConfig;
 import com.yahoo.cloud.config.ConfigserverConfig;
 import com.yahoo.cloud.config.CuratorConfig;
@@ -8,7 +9,9 @@ import com.yahoo.cloud.config.ZookeeperServerConfig;
 import com.yahoo.component.ComponentId;
 import com.yahoo.config.model.api.ApplicationClusterEndpoint;
 import com.yahoo.config.model.api.ContainerEndpoint;
+import com.yahoo.config.model.builder.xml.test.DomBuilderTest;
 import com.yahoo.config.model.deploy.DeployState;
+import com.yahoo.config.model.deploy.TestDeployState;
 import com.yahoo.config.model.deploy.TestProperties;
 import com.yahoo.config.model.test.MockApplicationPackage;
 import com.yahoo.config.model.test.MockRoot;
@@ -30,7 +33,9 @@ import com.yahoo.vespa.model.container.component.Component;
 import com.yahoo.vespa.model.container.docproc.ContainerDocproc;
 import com.yahoo.vespa.model.container.search.ContainerSearch;
 import com.yahoo.vespa.model.container.search.searchchain.SearchChains;
+import com.yahoo.vespa.model.container.xml.ContainerModelBuilderTestBase;
 import org.junit.jupiter.api.Test;
+import org.w3c.dom.Element;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -47,15 +52,17 @@ import static com.yahoo.config.model.api.ApplicationClusterEndpoint.Scope.applic
 import static com.yahoo.config.model.api.ApplicationClusterEndpoint.Scope.global;
 import static com.yahoo.config.model.api.ApplicationClusterEndpoint.Scope.zone;
 import static com.yahoo.config.provision.SystemName.main;
+import static com.yahoo.vespa.model.container.ApplicationContainerCluster.defaultHeapSizePercentageOfAvailableMemory;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * @author Simon Thoresen Hult
  */
 public class ContainerClusterTest {
+
+    protected MockRoot root;
 
     @Test
     void requireThatClusterInfoIsPopulated() {
@@ -90,7 +97,7 @@ public class ContainerClusterTest {
 
     @Test
     void search_and_docproc_bundles_are_installed_for_application_clusters_with_search() {
-        ApplicationContainerCluster cluster = newClusterWithSearch(createRoot(false), false, null);
+        ApplicationContainerCluster cluster = newClusterWithSearch(createRoot(false), null);
 
         var bundleBuilder = new PlatformBundlesConfig.Builder();
         cluster.getConfig(bundleBuilder);
@@ -114,13 +121,12 @@ public class ContainerClusterTest {
     }
 
     private void verifyHeapSizeAsPercentageOfPhysicalMemory(MockRoot root,
-                                                            boolean isCombinedCluster,
                                                             Integer explicitMemoryPercentage,
                                                             int expectedMemoryPercentage) {
-        ApplicationContainerCluster cluster = newClusterWithSearch(root, isCombinedCluster, explicitMemoryPercentage);
+        ApplicationContainerCluster cluster = newClusterWithSearch(root, explicitMemoryPercentage);
         QrStartConfig.Builder qsB = new QrStartConfig.Builder();
         cluster.getConfig(qsB);
-        QrStartConfig qsC= new QrStartConfig(qsB);
+        QrStartConfig qsC = new QrStartConfig(qsB);
         assertEquals(expectedMemoryPercentage, qsC.jvm().heapSizeAsPercentageOfPhysicalMemory());
         assertEquals(0, qsC.jvm().compressedClassSpaceSize());
     }
@@ -129,18 +135,20 @@ public class ContainerClusterTest {
     void requireThatHeapSizeAsPercentageOfPhysicalMemoryForHostedAndNot() {
         int heapSizeInFlag = 89;
         boolean hosted = true;
-        boolean combined = true; // a cluster running on content nodes (only relevant with hosted)
-        verifyHeapSizeAsPercentageOfPhysicalMemory(createRoot(hosted), !combined, null, ApplicationContainerCluster.defaultHeapSizePercentageOfAvailableMemory);
-        verifyHeapSizeAsPercentageOfPhysicalMemory(createRoot(hosted, heapSizeInFlag), !combined, null, heapSizeInFlag);
-        verifyHeapSizeAsPercentageOfPhysicalMemory(createRoot(hosted),   combined, null, 24);
-        verifyHeapSizeAsPercentageOfPhysicalMemory(createRoot(hosted, heapSizeInFlag),   combined, null, 24);
-        verifyHeapSizeAsPercentageOfPhysicalMemory(createRoot(!hosted), !combined, null, 0);
-        verifyHeapSizeAsPercentageOfPhysicalMemory(createRoot(!hosted, heapSizeInFlag), !combined, null, 0);
+        var containerId = "container1";
+        // Various combinations of setting explicit memory (will take precedence over feature flag), setting
+        // feature flag, setting none of those, and setting feature flag for another cluster.
+        verifyHeapSizeAsPercentageOfPhysicalMemory(createRoot(hosted), null, defaultHeapSizePercentageOfAvailableMemory);
+        verifyHeapSizeAsPercentageOfPhysicalMemory(createRoot(hosted, heapSizeInFlag, containerId), null, heapSizeInFlag);
+        verifyHeapSizeAsPercentageOfPhysicalMemory(createRoot(hosted, heapSizeInFlag, "unknownContainerId"), null, defaultHeapSizePercentageOfAvailableMemory);
+        verifyHeapSizeAsPercentageOfPhysicalMemory(createRoot(hosted), null, 85);
+        verifyHeapSizeAsPercentageOfPhysicalMemory(createRoot(hosted, heapSizeInFlag, containerId), null, 89);
+        verifyHeapSizeAsPercentageOfPhysicalMemory(createRoot(!hosted),  null, 0);
+        verifyHeapSizeAsPercentageOfPhysicalMemory(createRoot(!hosted, heapSizeInFlag, containerId), null, 0);
 
         // Explicit value overrides all defaults
-        verifyHeapSizeAsPercentageOfPhysicalMemory(createRoot(hosted, heapSizeInFlag), !combined, 67, 67);
-        verifyHeapSizeAsPercentageOfPhysicalMemory(createRoot(hosted, heapSizeInFlag),   combined, 68, 68);
-        verifyHeapSizeAsPercentageOfPhysicalMemory(createRoot(!hosted, heapSizeInFlag), !combined, 69, 69);
+        verifyHeapSizeAsPercentageOfPhysicalMemory(createRoot(hosted, heapSizeInFlag, containerId),  67, 67);
+        verifyHeapSizeAsPercentageOfPhysicalMemory(createRoot(!hosted, heapSizeInFlag, containerId), 69, 69);
     }
 
     private void verifyJvmArgs(boolean isHosted, String expectedArgs, String jvmArgs) {
@@ -183,7 +191,7 @@ public class ContainerClusterTest {
         root.freezeModelTopology();
 
         ThreadpoolConfig threadpoolConfig = root.getConfig(ThreadpoolConfig.class, "container0/component/default-threadpool");
-        assertEquals(1, threadpoolConfig.maxthreads());
+        assertEquals(4, threadpoolConfig.maxthreads());
         assertEquals(50, threadpoolConfig.queueSize());
     }
 
@@ -310,7 +318,7 @@ public class ContainerClusterTest {
 
     @Test
     void requireCuratorConfig() {
-        DeployState state = new DeployState.Builder().build();
+        DeployState state = TestDeployState.create();
         MockRoot root = new MockRoot("foo", state);
         var cluster = new ApplicationContainerCluster(root, "container", "search-cluster", state);
         addContainer(root, cluster, "c1", "host-c1");
@@ -326,7 +334,7 @@ public class ContainerClusterTest {
 
     @Test
     void requireZooKeeperServerConfig() {
-        DeployState state = new DeployState.Builder().build();
+        DeployState state = TestDeployState.create();
         MockRoot root = new MockRoot("foo", state);
         var cluster = new ApplicationContainerCluster(root, "container", "search-cluster", state);
         addContainer(root, cluster, "c1", "host-c1");
@@ -367,6 +375,22 @@ public class ContainerClusterTest {
                 List.of("search-cluster.a1.t1.endpoint.suffix", "rotation-1.x.y.z", "rotation-2.x.y.z", "app-rotation.x.y.z"));
     }
 
+    @Test
+    void telemetryResourceAttributesIncludeServiceIdentity() {
+        DeployState state = new DeployState.Builder()
+                .properties(new TestProperties().setApplicationId(ApplicationId.from("t1", "a1", "i1")))
+                .build();
+        MockRoot root = new MockRoot("foo", state);
+        ApplicationContainerCluster cluster = new ApplicationContainerCluster(root, "container", "search-cluster", state);
+
+        TelemetryConfig.Builder builder = new TelemetryConfig.Builder();
+        cluster.getConfig(builder);
+        TelemetryConfig config = builder.build();
+
+        assertEquals("a1.i1.search-cluster", config.resourceAttribute("service.name"));
+        assertEquals(state.getWantedNodeVespaVersion().toFullString(), config.resourceAttribute("service.version"));
+    }
+
     private void assertNames(SystemName systemName, ApplicationId appId, Set<ContainerEndpoint> globalEndpoints, List<String> expectedSharedL4Names) {
         Zone zone = new Zone(systemName, Environment.defaultEnvironment(), RegionName.defaultName());
         DeployState state = new DeployState.Builder()
@@ -374,8 +398,7 @@ public class ContainerClusterTest {
                 .endpoints(globalEndpoints)
                 .properties(new TestProperties()
                                     .setHostedVespa(true)
-                                    .setApplicationId(appId)
-                                    .setZoneDnsSuffixes(List.of(".endpoint.suffix")))
+                                    .setApplicationId(appId))
                 .build();
         MockRoot root = new MockRoot("foo", state);
         ApplicationContainerCluster cluster = new ApplicationContainerCluster(root, "container", "search-cluster", state);
@@ -420,31 +443,33 @@ public class ContainerClusterTest {
     }
 
     private static ApplicationContainerCluster newClusterWithSearch(MockRoot root) {
-        return newClusterWithSearch(root, false, null);
+        return newClusterWithSearch(root, null);
     }
 
-    private static ApplicationContainerCluster newClusterWithSearch(MockRoot root, boolean isCombinedCluster, Integer memoryPercentage) {
+    private static ApplicationContainerCluster newClusterWithSearch(MockRoot root, Integer memoryPercentage) {
         ApplicationContainerCluster cluster = new ApplicationContainerCluster(root, "container0", "container1", root.getDeployState());
-        if (isCombinedCluster)
-            cluster.setHostClusterId("test-content-cluster");
         cluster.setMemoryPercentage(memoryPercentage);
         cluster.setSearch(new ContainerSearch(root.getDeployState(), cluster, new SearchChains(cluster, "search-chain")));
+        cluster.setDefaultThreadpoolProvider(new DefaultThreadpoolProvider(cluster));
         return cluster;
     }
 
     private static ClusterControllerContainerCluster createClusterControllerCluster(MockRoot root) {
-        return new ClusterControllerContainerCluster(root, "container0", "container1", root.getDeployState());
+        var cluster = new ClusterControllerContainerCluster(root, "container0", "container1", root.getDeployState());
+        cluster.setDefaultThreadpoolProvider(new DefaultThreadpoolProvider(cluster));
+        return cluster;
     }
 
     private static MockRoot createRoot(boolean isHosted) {
         DeployState state = new DeployState.Builder().properties(new TestProperties().setHostedVespa(isHosted)).build();
         return createRoot(state);
     }
-    private static MockRoot createRoot(boolean isHosted, int heapSizePercentage) {
+
+    private static MockRoot createRoot(boolean isHosted, int heapSizePercentage, String containerId) {
         DeployState state = new DeployState.Builder().properties(
                 new TestProperties()
                         .setHostedVespa(isHosted)
-                        .setHeapSizePercentage(heapSizePercentage)).build();
+                        .setHeapSizePercentage(containerId, heapSizePercentage)).build();
         return createRoot(state);
     }
 
@@ -476,7 +501,7 @@ public class ContainerClusterTest {
     }
 
     private static ApplicationContainerCluster newContainerCluster() {
-        DeployState deployState = DeployState.createTestState();
+        DeployState deployState = TestDeployState.create();
         MockRoot root = new MockRoot("foo", deployState);
         ApplicationContainerCluster cluster = new ApplicationContainerCluster(root, "subId", "name", deployState);
         addContainer(root, cluster, "c1", "host-c1");
@@ -523,4 +548,72 @@ public class ContainerClusterTest {
         assertEquals(0b11111111111111111111111111100010, ApplicationContainerCluster.truncateTo4SignificantBits(0b11111111111111111111111111100001));
     }
 
+    @Test
+    void defaultThreadpoolDefaultsApplicationContainerCluster() {
+        MockRoot root = new MockRoot("foo");
+        Element clusterElem = DomBuilderTest.parse(
+                "<container id='default' version='1.0'>",
+                ContainerModelBuilderTestBase.nodesXml,
+                "</container>");
+
+        ContainerModelBuilderTestBase.createModel(root, clusterElem); // freezes topology
+
+        ThreadpoolConfig cfg = root.getConfig(ThreadpoolConfig.class, "default/component/default-threadpool");
+        assertEquals(-100, cfg.maxthreads());
+        assertEquals(-2,  cfg.corePoolSize());
+        assertEquals(0, cfg.queueSize());
+    }
+
+    @Test
+    void defaultThreadpoolConfigurationSetThreadsAndExpectRelative() {
+        MockRoot root = new MockRoot("foo");
+        Element clusterElem = DomBuilderTest.parse(
+                "<container id='default' version='1.0'>",
+                "  <threadpool>",
+                "    <threads>5</threads>",
+                "  </threadpool>",
+                ContainerModelBuilderTestBase.nodesXml,
+                "</container>");
+
+        ContainerModelBuilderTestBase.createModel(root, clusterElem); // freezes topology
+
+        ThreadpoolConfig cfg = root.getConfig(ThreadpoolConfig.class, "default/component/default-threadpool");
+        assertEquals(-5,  cfg.corePoolSize());
+        assertEquals(-5, cfg.maxthreads());
+    }
+
+    @Test
+    void defaultThreadpoolConfigurationSetThreadsWithMaxAndExpectRelative() {
+        MockRoot root = new MockRoot("foo");
+        Element clusterElem = DomBuilderTest.parse(
+                "<container id='default' version='1.0'>",
+                "  <threadpool>",
+                "    <threads max=\"50\">5</threads>",
+                "  </threadpool>",
+                ContainerModelBuilderTestBase.nodesXml,
+                "</container>");
+
+        ContainerModelBuilderTestBase.createModel(root, clusterElem); // freezes topology
+
+        ThreadpoolConfig cfg = root.getConfig(ThreadpoolConfig.class, "default/component/default-threadpool");
+        assertEquals(-5,  cfg.corePoolSize());
+        assertEquals(-50, cfg.maxthreads());
+    }
+
+    @Test
+    void defaultThreadpoolConfigurationSetQueueAndExpectRelative() {
+        MockRoot root = new MockRoot("foo");
+        Element clusterElem = DomBuilderTest.parse(
+                "<container id='default' version='1.0'>",
+                "  <threadpool>",
+                "    <queue>50</queue>",
+                "  </threadpool>",
+                ContainerModelBuilderTestBase.nodesXml,
+                "</container>");
+
+        ContainerModelBuilderTestBase.createModel(root, clusterElem); // freezes topology
+
+        ThreadpoolConfig cfg = root.getConfig(ThreadpoolConfig.class, "default/component/default-threadpool");
+        assertEquals(-50, cfg.queueSize());
+    }
 }

@@ -5,7 +5,6 @@ import ai.vespa.models.evaluation.ModelsEvaluator;
 import ai.vespa.rankingexpression.importer.configmodelview.MlModelImporter;
 import ai.vespa.rankingexpression.importer.lightgbm.LightGBMImporter;
 import ai.vespa.rankingexpression.importer.onnx.OnnxImporter;
-import ai.vespa.rankingexpression.importer.tensorflow.TensorFlowImporter;
 import ai.vespa.rankingexpression.importer.vespa.VespaImporter;
 import ai.vespa.rankingexpression.importer.xgboost.XGBoostImporter;
 import com.yahoo.config.FileReference;
@@ -13,6 +12,7 @@ import com.yahoo.config.application.api.ApplicationPackage;
 import com.yahoo.config.application.api.FileRegistry;
 import com.yahoo.config.model.application.provider.MockFileRegistry;
 import com.yahoo.config.model.deploy.DeployState;
+import com.yahoo.config.model.deploy.TestProperties;
 import com.yahoo.config.model.test.MockApplicationPackage;
 import com.yahoo.filedistribution.fileacquirer.FileAcquirer;
 import com.yahoo.filedistribution.fileacquirer.MockFileAcquirer;
@@ -45,11 +45,11 @@ import java.util.Map;
  *
  * For use in testing only.
  *
- * @author lesters
+ * @author Lester Solbakken
  */
 public class ModelsEvaluatorTester {
 
-    private static final List<MlModelImporter> importers = List.of(new TensorFlowImporter(),
+    private static final List<MlModelImporter> importers = List.of(
             new OnnxImporter(),
             new LightGBMImporter(),
             new XGBoostImporter(),
@@ -108,7 +108,9 @@ public class ModelsEvaluatorTester {
         DeployState deployState = new DeployState.Builder()
                 .applicationPackage(app)
                 .fileRegistry(registry)
-                .modelImporters(importers).build();
+                .modelImporters(importers)
+                .properties(new TestProperties())
+                .build();
 
         VespaModel vespaModel = new VespaModel(deployState);
         return vespaModel.rankProfileList();

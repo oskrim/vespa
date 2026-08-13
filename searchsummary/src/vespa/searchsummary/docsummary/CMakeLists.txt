@@ -25,7 +25,6 @@ vespa_add_library(searchsummary_docsummary OBJECT
     juniper_dfw_term_visitor.cpp
     juniper_query_adapter.cpp
     juniperproperties.cpp
-    matched_elements_filter_dfw.cpp
     positionsdfw.cpp
     query_term_filter.cpp
     query_term_filter_factory.cpp
@@ -36,8 +35,10 @@ vespa_add_library(searchsummary_docsummary OBJECT
     simple_dfw.cpp
     slime_filler.cpp
     slime_filler_filter.cpp
+    struct_fields_mapper.cpp
     struct_fields_resolver.cpp
     struct_map_attribute_combiner_dfw.cpp
+    summary_elements_selector.cpp
     summaryfeaturesdfw.cpp
     tokens_converter.cpp
     tokens_dfw.cpp

@@ -11,12 +11,14 @@ namespace search::streaming {
  */
 class WandTerm : public DotProductTerm {
     double _score_threshold;
+
 public:
     WandTerm(std::unique_ptr<QueryNodeResultBase> result_base, string index, uint32_t num_terms);
     ~WandTerm() override;
     void set_score_threshold(double value) { _score_threshold = value; }
-    bool evaluate() const override;
-    void unpack_match_data(uint32_t docid, const fef::ITermData& td, fef::MatchData& match_data, const fef::IIndexEnvironment& index_env) override;
+    bool evaluate() override;
+    void unpack_match_data(uint32_t docid, const fef::ITermData& td, fef::MatchData& match_data,
+                           const fef::IIndexEnvironment& index_env, search::common::ElementIds element_ids) override;
 };
 
-}
+} // namespace search::streaming

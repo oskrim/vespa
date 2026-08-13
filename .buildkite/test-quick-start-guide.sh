@@ -5,18 +5,29 @@
 # generated image, make sure that the image is tagged as vespaengine/vespa:latest.
 set -xeuo pipefail
 
+echo "--- 📖 Testing Vespa quick start guide"
 TESTDIR=$(mktemp -d)
 # shellcheck disable=SC2064
 trap "rm -rf $TESTDIR" EXIT
 
 cd "$TESTDIR"
 
+echo "Setting up documentation test environment..."
 # Clone and setup doc tests
 git clone -q --depth 1 https://github.com/vespa-engine/documentation
 cd documentation
-python3 -m pip install -qqq -r test/requirements.txt --user
-echo -e "urls:\n    - en/vespa-quick-start.html" > test/_quick-start.yaml
 
+testfile="en/basics/deploy-an-application-local.html"
+if [[ ! -f "$testfile" ]]; then
+  echo "ERROR: The quick start test file is missing: ${testfile}" 1>&2
+  echo "ERROR: Expected to be found on https://github.com/vespa-engine/documentation/tree/master/${testfile}" 1>&2
+  exit 1
+fi
+
+python3 -m pip install -qqq -r test/requirements.txt --user
+echo -e "urls:\n    - ${testfile}" > test/_deploy-an-application-local.yaml
+
+echo "Downloading Vespa CLI..."
 # Get the required vespa CLI
 VESPA_CLI_VERSION=$(curl -fsSL https://api.github.com/repos/vespa-engine/vespa/releases/latest | grep -Po '"tag_name": "v\K.*?(?=")')
 if [[ $(arch) == x86_64 ]]; then
@@ -27,6 +38,6 @@ fi
 curl -fsSL "https://github.com/vespa-engine/vespa/releases/download/v${VESPA_CLI_VERSION}/vespa-cli_${VESPA_CLI_VERSION}_linux_${GO_ARCH}.tar.gz" | tar -zxf - -C /opt
 ln -sf "/opt/vespa-cli_${VESPA_CLI_VERSION}_linux_${GO_ARCH}/bin/vespa" /usr/local/bin/
 
+echo "Running deploy an application locally test..."
 # Run test
-python3 test/test.py -v -c test/_quick-start.yaml
-
+python3 test/test.py -v -c test/_deploy-an-application-local.yaml

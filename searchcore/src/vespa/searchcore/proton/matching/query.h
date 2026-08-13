@@ -3,23 +3,32 @@
 #pragma once
 
 #include <vespa/searchlib/common/geo_location_spec.h>
+#include <vespa/searchlib/common/serialized_query_tree.h>
+#include <vespa/searchlib/fef/iindexenvironment.h>
 #include <vespa/searchlib/fef/itermdata.h>
 #include <vespa/searchlib/fef/matchdatalayout.h>
-#include <vespa/searchlib/fef/iindexenvironment.h>
 #include <vespa/searchlib/query/tree/node.h>
 #include <vespa/searchlib/queryeval/blueprint.h>
 #include <vespa/searchlib/queryeval/irequestcontext.h>
 
-namespace vespalib { struct ThreadBundle; }
-namespace search::engine { class Trace; }
+namespace vespalib {
+struct ThreadBundle;
+}
+namespace search::engine {
+class Trace;
+}
+namespace search::queryeval {
+class QuerySetupStats;
+}
 
 namespace proton::matching {
 
+class AnnDeadlineConfiguration;
+class HandleRecorder;
 class ViewResolver;
 class ISearchContext;
 
-class Query
-{
+class Query {
 private:
     using Blueprint = search::queryeval::Blueprint;
     using GlobalFilter = search::queryeval::GlobalFilter;
@@ -32,10 +41,11 @@ private:
     Blueprint::UP                _blueprint;
     Blueprint::UP                _whiteListBlueprint;
     std::vector<GeoLocationSpec> _locations;
+    bool                         _needs_ranking = false;
 
 public:
     /** Convenience typedef. */
-    using GeoLocationSpecPtrs = std::vector<const GeoLocationSpec *>;
+    using GeoLocationSpecPtrs = std::vector<const GeoLocationSpec*>;
 
     Query();
     ~Query();
@@ -56,18 +66,8 @@ public:
      *
      * @return success(true)/failure(false)
      **/
-    bool buildTree(std::string_view stack,
-                   const std::string &location,
-                   const ViewResolver &resolver,
-                   const search::fef::IIndexEnvironment &idxEnv)
-    {
-        return buildTree(stack, location, resolver, idxEnv, false);
-    }
-    bool buildTree(std::string_view stack,
-                   const std::string &location,
-                   const ViewResolver &resolver,
-                   const search::fef::IIndexEnvironment &idxEnv,
-                   bool always_mark_phrase_expensive);
+    bool buildTree(const search::SerializedQueryTree& queryTree, const std::string& location,
+                   const ViewResolver& resolver, const search::fef::IIndexEnvironment& idxEnv);
 
     /**
      * Extract query terms from the query tree; to be used to build
@@ -75,7 +75,7 @@ public:
      *
      * @param terms where to collect terms
      **/
-    void extractTerms(std::vector<const search::fef::ITermData *> &terms);
+    void extractTerms(std::vector<const search::fef::ITermData*>& terms);
 
     /**
      * Extract locations from the query tree; to be used to build
@@ -83,21 +83,21 @@ public:
      *
      * @param locs where to collect locations
      **/
-    void extractLocations(GeoLocationSpecPtrs &locs);
+    void extractLocations(GeoLocationSpecPtrs& locs);
 
     /**
      * Reserve room for terms in the query in the given match data
      * layout. This function also prepares the createSearch function
      * for use.
      *
-     * @param context search context
      * @param mdl match data layout
      **/
-    void reserveHandles(const IRequestContext & requestContext,
-                        ISearchContext &context,
-                        search::fef::MatchDataLayout &mdl);
+    void reserve_handles(search::fef::MatchDataLayout& mdl);
 
-    void enumerate_blueprint_nodes() noexcept;
+    void make_blueprint(const IRequestContext& requestContext, ISearchContext& context,
+                        search::fef::MatchDataLayout& mdl);
+
+    void tag_needed_handles(HandleRecorder& handle_recorder, const search::fef::IIndexEnvironment& index_env);
 
     /**
      * Optimize the query to be executed. This function should be
@@ -107,12 +107,14 @@ public:
      * testing becomes harder. Not calling this function enables the
      * test to verify the original query without optimization.
      **/
-    void optimize(InFlow in_flow, bool sort_by_cost);
-    void fetchPostings(const ExecuteInfo & executeInfo);
+    void optimize(InFlow in_flow, bool sort_by_cost, bool keep_order);
+    void fetchPostings(const ExecuteInfo& executeInfo);
 
-    void handle_global_filter(const IRequestContext & requestContext, uint32_t docid_limit,
+    void handle_global_filter(const IRequestContext&          requestContext,
+                              const AnnDeadlineConfiguration& ann_deadline_config, uint32_t docid_limit,
                               double global_filter_lower_limit, double global_filter_upper_limit,
-                              search::engine::Trace& trace, bool sort_by_cost);
+                              search::queryeval::QuerySetupStats& setup_stats, search::engine::Trace& trace,
+                              bool sort_by_cost, bool keep_order, bool use_lazy_filter = false);
 
     /**
      * Calculates and handles the global filter if needed by the blueprint tree.
@@ -127,9 +129,16 @@ public:
      *
      * @return whether the global filter was set on the blueprint.
      */
-    static bool handle_global_filter(Blueprint& blueprint, uint32_t docid_limit,
+    static bool handle_global_filter(Blueprint& blueprint, const vespalib::Doom& doom,
+                                     const AnnDeadlineConfiguration& ann_deadline_config, uint32_t docid_limit,
                                      double global_filter_lower_limit, double global_filter_upper_limit,
-                                     vespalib::ThreadBundle &thread_bundle, search::engine::Trace* trace);
+                                     vespalib::ThreadBundle&             thread_bundle,
+                                     search::queryeval::QuerySetupStats& setup_stats, search::engine::Trace* trace,
+                                     bool use_lazy_filter = false);
+
+    static void perform_ann_searches(Blueprint& blueprint, const vespalib::Doom& doom,
+                                     const AnnDeadlineConfiguration&     ann_deadline_config,
+                                     search::queryeval::QuerySetupStats& setup_stats, search::engine::Trace* trace);
 
     void freeze();
     void set_matching_phase(search::queryeval::MatchingPhase matching_phase) const noexcept;
@@ -140,14 +149,17 @@ public:
      * @return iterator tree
      * @param md match data used for feature unpacking
      **/
-    std::unique_ptr<search::queryeval::SearchIterator> createSearch(search::fef::MatchData &md) const;
+    std::unique_ptr<search::queryeval::SearchIterator> createSearch(search::fef::MatchData& md) const;
 
     /**
      * Return an upper bound of how many hits this query will produce.
      * @return estimate of hits produced.
      */
     Blueprint::HitEstimate estimate() const;
-    const Blueprint * peekRoot() const { return _blueprint.get(); }
+    const Blueprint* peekRoot() const { return _blueprint.get(); }
+    // Hand the QueryEvalStats object to the underlying blueprint tree
+    void install_stats(search::queryeval::QueryEvalStats& stats);
+    bool needs_ranking() const noexcept { return _needs_ranking; }
 };
 
-}
+} // namespace proton::matching

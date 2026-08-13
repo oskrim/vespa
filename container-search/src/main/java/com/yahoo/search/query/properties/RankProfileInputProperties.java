@@ -3,18 +3,17 @@ package com.yahoo.search.query.properties;
 
 import com.yahoo.api.annotations.Beta;
 import com.yahoo.language.process.Embedder;
-import com.yahoo.processing.IllegalInputException;
 import com.yahoo.processing.request.CompoundName;
 import com.yahoo.search.Query;
-import com.yahoo.search.schema.RankProfile;
-import com.yahoo.search.schema.RankProfile.InputType;
-import com.yahoo.search.schema.SchemaInfo;
-import com.yahoo.search.schema.internal.TensorConverter;
 import com.yahoo.search.query.Properties;
 import com.yahoo.search.query.ranking.RankFeatures;
+import com.yahoo.search.schema.RankProfile;
+import com.yahoo.search.schema.SchemaInfo;
+import com.yahoo.search.schema.internal.TensorConverter;
 import com.yahoo.tensor.Tensor;
 import com.yahoo.tensor.TensorType;
 
+import java.time.Instant;
 import java.util.Map;
 
 /**
@@ -43,16 +42,21 @@ public class RankProfileInputProperties extends Properties {
             try {
                 var expectedType = typeOf(name);
                 if (expectedType != null && ! expectedType.declaredString()) {
+                    long timeLeftMs = query.getTimeLeft();
+                    var deadline = timeLeftMs > 0
+                            ? Instant.now().plusMillis(timeLeftMs)
+                            : null;
                     value = tensorConverter.convertTo(expectedType.tensorType(),
                                                       name.last(),
                                                       value,
                                                       query.getModel().getLanguage(),
                                                       context,
-                                                      query.properties());
+                                                      query.properties(),
+                                                      deadline);
                 }
             }
             catch (IllegalArgumentException e) {
-                throw new IllegalInputException("Could not set '" + name + "' to '" + value + "'", e);
+                throw new IllegalAssignmentException(name, value, e);
             }
         }
         super.set(name, value, context);
@@ -89,9 +93,9 @@ public class RankProfileInputProperties extends Properties {
     }
 
     private void throwIllegalInput(CompoundName name, Object value, TensorType expectedType) {
-        throw new IllegalInputException("Could not set '" + name + "' to '" + value + "': " +
-                                           "This input is declared in rank profile '" + query.getRanking().getProfile() +
-                                           "' as " + expectedType);
+        throw new IllegalAssignmentException(name, value,
+                                             "This input is declared in rank profile '" + query.getRanking().getProfile() +
+                                             "' as " + expectedType);
     }
 
 }

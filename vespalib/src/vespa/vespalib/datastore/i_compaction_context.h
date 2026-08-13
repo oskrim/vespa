@@ -3,10 +3,13 @@
 #pragma once
 
 #include "atomic_entry_ref.h"
+
 #include <memory>
 #include <span>
 
 namespace vespalib::datastore {
+
+class EntryRefFilter;
 
 /**
  * A compaction context is used when performing a compaction of data buffers in a data store.
@@ -16,8 +19,9 @@ namespace vespalib::datastore {
  */
 struct ICompactionContext {
     using UP = std::unique_ptr<ICompactionContext>;
-    virtual ~ICompactionContext() {}
+    virtual ~ICompactionContext() = default;
     virtual void compact(std::span<AtomicEntryRef> refs) = 0;
+    virtual const EntryRefFilter& entry_ref_filter() const = 0;
 };
 
-}
+} // namespace vespalib::datastore

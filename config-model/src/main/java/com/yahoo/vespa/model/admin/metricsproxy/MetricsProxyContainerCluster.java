@@ -17,6 +17,8 @@ import ai.vespa.metricsproxy.http.yamas.YamasHandler;
 import ai.vespa.metricsproxy.metric.ExternalMetrics;
 import ai.vespa.metricsproxy.metric.dimensions.ApplicationDimensions;
 import ai.vespa.metricsproxy.metric.dimensions.ApplicationDimensionsConfig;
+import ai.vespa.metricsproxy.metric.dimensions.MetricDimensionMapping;
+import ai.vespa.metricsproxy.metric.dimensions.MetricDimensionMappingConfig;
 import ai.vespa.metricsproxy.metric.dimensions.PublicDimensions;
 import ai.vespa.metricsproxy.rpc.RpcServer;
 import ai.vespa.metricsproxy.service.ConfigSentinelClient;
@@ -24,6 +26,7 @@ import ai.vespa.metricsproxy.service.SystemPollerProvider;
 import com.yahoo.config.model.deploy.DeployState;
 import com.yahoo.config.model.producer.TreeConfigProducer;
 import com.yahoo.config.provision.ApplicationId;
+import com.yahoo.config.provision.ClusterSpec;
 import com.yahoo.config.provision.Zone;
 import com.yahoo.container.jdisc.ThreadedHttpRequestHandler;
 import com.yahoo.osgi.provider.model.ComponentModel;
@@ -64,6 +67,7 @@ import static com.yahoo.vespa.model.admin.metricsproxy.MetricsProxyContainerClus
  */
 public class MetricsProxyContainerCluster extends ContainerCluster<MetricsProxyContainer> implements
         ApplicationDimensionsConfig.Producer,
+        MetricDimensionMappingConfig.Producer,
         ConsumersConfig.Producer,
         MonitoringConfig.Producer,
         MetricsNodesConfig.Producer
@@ -71,6 +75,9 @@ public class MetricsProxyContainerCluster extends ContainerCluster<MetricsProxyC
     public static final Logger log = Logger.getLogger(MetricsProxyContainerCluster.class.getName());
 
     public static final String NEW_DEFAULT_CONSUMER_ID = "new-default";
+
+    // The service/application name of the locally generated 'alive' packet; see HostLifeGatherer.
+    private static final String HOST_LIFE_SERVICE = "host_life";
 
     private static final String METRICS_PROXY_NAME = "metrics-proxy";
 
@@ -102,6 +109,12 @@ public class MetricsProxyContainerCluster extends ContainerCluster<MetricsProxyC
 
         addPlatformBundle(METRICS_PROXY_BUNDLE_FILE);
         addClusterComponents();
+
+        setJvmGCOptions(deployState.getProperties().jvmGCOptionsFlag()
+                .withClusterType(ClusterSpec.Type.admin)
+                .withClusterId(ClusterSpec.Id.from(name))
+                .value());
+        
         if (isHostedVespa())
             addAccessLog("metrics-proxy");
     }
@@ -113,6 +126,7 @@ public class MetricsProxyContainerCluster extends ContainerCluster<MetricsProxyC
         addMetricsProxyComponent(ApplicationDimensions.class);
         addMetricsProxyComponent(ConfigSentinelClient.class);
         addMetricsProxyComponent(ExternalMetrics.class);
+        addMetricsProxyComponent(MetricDimensionMapping.class);
         addMetricsProxyComponent(MetricsConsumers.class);
         addMetricsProxyComponent(MetricsManager.class);
         addMetricsProxyComponent(RpcServer.class);
@@ -184,6 +198,17 @@ public class MetricsProxyContainerCluster extends ContainerCluster<MetricsProxyC
         }
     }
 
+    @Override
+    public void getConfig(MetricDimensionMappingConfig.Builder builder) {
+        if (isHostedVespa()) {
+            builder.defaultDimension(PublicDimensions.HOSTNAME);
+            builder.defaultDimension(PublicDimensions.PARENT_HOSTNAME);
+            builder.service(HOST_LIFE_SERVICE, s -> s
+                    .dimension(PublicDimensions.HOSTNAME)
+                    .dimension(PublicDimensions.PARENT_HOSTNAME)
+                    .dimension(PublicDimensions.OS_VERSION));
+        }
+    }
 
     protected boolean messageBusEnabled() { return false; }
 

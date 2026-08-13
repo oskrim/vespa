@@ -1,6 +1,7 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.prelude.query;
 
+import ai.vespa.searchlib.searchprotocol.protobuf.SearchProtocol;
 
 /**
  * Ordered NearItem.
@@ -32,6 +33,20 @@ public class ONearItem extends NearItem {
     @Override
     public String getName() {
         return "ONEAR";
+    }
+
+    @Override
+    SearchProtocol.QueryTreeItem toProtobuf(SerializationContext context) {
+        var builder = SearchProtocol.ItemOnear.newBuilder();
+        builder.setDistance(distance);
+        builder.setNumNegativeTerms(numNegativeItems);
+        builder.setExclusionDistance(exclusionDistance);
+        for (var child : items()) {
+            builder.addChildren(child.toProtobuf(context));
+        }
+        return SearchProtocol.QueryTreeItem.newBuilder()
+                .setItemOnear(builder.build())
+                .build();
     }
 
 }

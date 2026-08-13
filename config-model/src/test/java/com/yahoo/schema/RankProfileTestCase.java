@@ -15,6 +15,7 @@ import com.yahoo.search.query.profile.types.FieldDescription;
 import com.yahoo.search.query.profile.types.FieldType;
 import com.yahoo.search.query.profile.types.QueryProfileType;
 import com.yahoo.search.query.profile.types.QueryProfileTypeRegistry;
+import com.yahoo.search.query.ranking.ElementGap;
 import com.yahoo.schema.derived.AttributeFields;
 import com.yahoo.schema.derived.RawRankProfile;
 import com.yahoo.schema.document.RankType;
@@ -31,9 +32,16 @@ import org.junit.jupiter.api.Test;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Optional;
+import java.util.OptionalDouble;
 import java.util.Set;
+import java.util.function.Function;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 /**
  * Tests rank profiles
@@ -306,11 +314,9 @@ public class RankProfileTestCase extends AbstractSchemaTestCase {
     }
 
     @Test
-    void testTermwiseLimitWithDeployOverride() throws ParseException {
+    void testTermwiseLimit() throws ParseException {
         verifyTermwiseLimitAndSomeMoreIncludingInheritance(new TestProperties(), createSD(null), null);
         verifyTermwiseLimitAndSomeMoreIncludingInheritance(new TestProperties(), createSD(0.78), 0.78);
-        verifyTermwiseLimitAndSomeMoreIncludingInheritance(new TestProperties().setDefaultTermwiseLimit(0.09), createSD(null), 0.09);
-        verifyTermwiseLimitAndSomeMoreIncludingInheritance(new TestProperties().setDefaultTermwiseLimit(0.09), createSD(0.37), 0.37);
     }
 
     private void verifyTermwiseLimitAndSomeMoreIncludingInheritance(ModelContext.Properties deployProperties, String sd, Double termwiseLimit) throws ParseException {
@@ -517,31 +523,48 @@ rank-profile feature_logging {
 
     @Test
     void approximate_nearest_neighbor_threshold_settings_are_configurable() throws ParseException {
-        verifyApproximateNearestNeighborThresholdSettings(0.7, null);
-        verifyApproximateNearestNeighborThresholdSettings(null, 0.3);
-        verifyApproximateNearestNeighborThresholdSettings(0.7, 0.3);
+        verifyApproximateNearestNeighborThresholdSettings(0.7, null, null);
+        verifyApproximateNearestNeighborThresholdSettings(null, 0.3, null);
+        verifyApproximateNearestNeighborThresholdSettings(null, null, 0.4);
+        verifyApproximateNearestNeighborThresholdSettings(0.7, 0.3, 0.4);
     }
 
-    private void verifyApproximateNearestNeighborThresholdSettings(Double postFilterThreshold, Double approximateThreshold) throws ParseException {
-        var rp = createRankProfile(postFilterThreshold, approximateThreshold, null);
+    private void verifyApproximateNearestNeighborThresholdSettings(Double postFilterThreshold, Double approximateThreshold, Double filterFirstThreshold) throws ParseException {
+        var rp = createRankProfile(postFilterThreshold, approximateThreshold, filterFirstThreshold, null, null, null);
         var rankProfile = rp.getFirst();
         var rawRankProfile = rp.getSecond();
+        verifyRankProfileSetting(rankProfile, rawRankProfile, RankProfile::getPostFilterThreshold,
+                                 postFilterThreshold, "vespa.matching.global_filter.upper_limit");
+        verifyRankProfileSetting(rankProfile, rawRankProfile, RankProfile::getApproximateThreshold,
+                                 approximateThreshold, "vespa.matching.global_filter.lower_limit");
+        verifyRankProfileSetting(rankProfile, rawRankProfile, RankProfile::getFilterFirstThreshold,
+                                 filterFirstThreshold, "vespa.matching.nns.filter_first_upper_limit");
+    }
 
-        if (postFilterThreshold != null) {
-            assertEquals((double)postFilterThreshold, rankProfile.getPostFilterThreshold().getAsDouble(), 0.000001);
-            assertEquals(String.valueOf(postFilterThreshold), findProperty(rawRankProfile.configProperties(), "vespa.matching.global_filter.upper_limit").get());
-        } else {
-            assertTrue(rankProfile.getPostFilterThreshold().isEmpty());
-            assertFalse(findProperty(rawRankProfile.configProperties(), "vespa.matching.global_filter.upper_limit").isPresent());
-        }
+    @Test
+    void filter_first_exploration_is_configurable() throws ParseException {
+	verifyFilterFirstExploration(null);
+	verifyFilterFirstExploration(0.35);
+    }
 
-        if (approximateThreshold != null) {
-            assertEquals((double)approximateThreshold, rankProfile.getApproximateThreshold().getAsDouble(), 0.000001);
-            assertEquals(String.valueOf(approximateThreshold), findProperty(rawRankProfile.configProperties(), "vespa.matching.global_filter.lower_limit").get());
-        } else {
-            assertTrue(rankProfile.getApproximateThreshold().isEmpty());
-            assertFalse(findProperty(rawRankProfile.configProperties(), "vespa.matching.global_filter.lower_limit").isPresent());
-        }
+    private void verifyFilterFirstExploration(Double filterFirstExploration) throws ParseException {
+        var rp = createRankProfile(null, null, null, filterFirstExploration, null, null);
+        var rankProfile = rp.getFirst();
+        var rawRankProfile = rp.getSecond();
+        verifyRankProfileSetting(rankProfile, rawRankProfile, RankProfile::getFilterFirstExploration,
+                                 filterFirstExploration, "vespa.matching.nns.filter_first_exploration");
+    }
+
+    @Test
+    void exploration_slack_is_configurable() throws ParseException {
+        verifyExplorationSlack(null);
+        verifyExplorationSlack(0.09);
+    }
+
+    private void verifyExplorationSlack(Double explorationSlack) throws ParseException {
+        var rp = createRankProfile(null, null, null, null, explorationSlack, null);
+        verifyRankProfileSetting(rp.getFirst(), rp.getSecond(), RankProfile::getExplorationSlack,
+                explorationSlack, "vespa.matching.nns.exploration_slack");
     }
 
     @Test
@@ -551,26 +574,195 @@ rank-profile feature_logging {
     }
 
     private void verifyTargetHitsMaxAdjustmentFactor(Double targetHitsMaxAdjustmentFactor) throws ParseException {
-        var rp = createRankProfile(null, null, targetHitsMaxAdjustmentFactor);
-        var rankProfile = rp.getFirst();
-        var rawRankProfile = rp.getSecond();
-        if (targetHitsMaxAdjustmentFactor != null) {
-            assertEquals((double)targetHitsMaxAdjustmentFactor, rankProfile.getTargetHitsMaxAdjustmentFactor().getAsDouble(), 0.000001);
-            assertEquals(String.valueOf(targetHitsMaxAdjustmentFactor), findProperty(rawRankProfile.configProperties(), "vespa.matching.nns.target_hits_max_adjustment_factor").get());
+        var rp = createRankProfile(null, null, null, null, null, targetHitsMaxAdjustmentFactor);
+        verifyRankProfileSetting(rp.getFirst(), rp.getSecond(), RankProfile::getTargetHitsMaxAdjustmentFactor,
+                                 targetHitsMaxAdjustmentFactor, "vespa.matching.nns.target_hits_max_adjustment_factor");
+    }
+
+    @Test
+    void weakand_stopword_limit_is_configurable() throws ParseException {
+        verifyWeakandStopwordLimit(null);
+        verifyWeakandStopwordLimit(0.6);
+    }
+
+    @Test
+    void weakand_allow_drop_all_is_configurable() throws ParseException {
+        verifyWeakandAllowDropAll(null);
+        verifyWeakandAllowDropAll(true);
+        verifyWeakandAllowDropAll(false);
+    }
+
+    @Test
+    void weakand_adjust_target_is_configurable() throws ParseException {
+        verifyWeakandAdjustTarget(null);
+        verifyWeakandAdjustTarget(0.01);
+    }
+
+    private void verifyWeakandStopwordLimit(Double stopwordLimit) throws ParseException {
+        var rp = createWeakandRankProfile(stopwordLimit, null, null);
+        verifyRankProfileSetting(rp.getFirst(), rp.getSecond(), RankProfile::getWeakandStopwordLimit,
+                                 stopwordLimit, "vespa.matching.weakand.stop_word_drop_limit");
+    }
+
+    private void verifyWeakandAllowDropAll(Boolean allowed) throws ParseException {
+        var rp = createWeakandRankProfile(null, allowed, null);
+        verifyRankProfileSetting(rp.getFirst(), rp.getSecond(), RankProfile::getWeakandAllowDropAll,
+                                 allowed, "vespa.matching.weakand.allow_drop_all");
+    }
+
+    private void verifyWeakandAdjustTarget(Double adjustTarget) throws ParseException {
+        var rp = createWeakandRankProfile(null, null, adjustTarget);
+        verifyRankProfileSetting(rp.getFirst(), rp.getSecond(), RankProfile::getWeakandAdjustTarget,
+                                 adjustTarget, "vespa.matching.weakand.stop_word_adjust_limit");
+    }
+
+    @Test
+    void filter_threshold_is_configurable() throws ParseException {
+        verifyFilterThreshold(null);
+        verifyFilterThreshold(0.05);
+    }
+
+    private void verifyFilterThreshold(Double threshold) throws ParseException {
+        var rp = createRankProfile(createSDWithRankProfile(null, null, null, null, null, null, null, null, null, threshold));
+        verifyRankProfileSetting(rp.getFirst(), rp.getSecond(), RankProfile::getFilterThreshold,
+                threshold, "vespa.matching.filter_threshold");
+    }
+
+    private static OptionalDouble optionalDoubleOfNullable(Double maybeDouble) {
+        // No ofNullable in OptionalDouble, probably due to auto boxing magics
+        return maybeDouble != null ? OptionalDouble.of(maybeDouble) : OptionalDouble.empty();
+    }
+
+    @Test
+    void field_specific_filter_threshold_is_configurable() throws ParseException {
+        var rps = """
+                  search test {
+                    document test {
+                      field f1 type string {
+                        indexing: index
+                      }
+                      field f2 type string {
+                        indexing: index
+                      }
+                      field f3 type string {
+                        indexing: index
+                      }
+                    }
+                    rank-profile my_profile {
+                      rank f1 {
+                        filter-threshold: 0.08
+                      }
+                      rank f2 {
+                        filter-threshold: 0.11
+                      }
+                    }
+                  }
+                  """;
+        var rp = createRankProfile(rps);
+
+        verifyRankProfileSetting(rp.getFirst(), rp.getSecond(),
+                (myRp) -> optionalDoubleOfNullable(myRp.explicitFieldRankFilterThresholds().get("f1")),
+                0.08, "vespa.matching.filter_threshold.f1");
+        verifyRankProfileSetting(rp.getFirst(), rp.getSecond(),
+                (myRp) -> optionalDoubleOfNullable(myRp.explicitFieldRankFilterThresholds().get("f2")),
+                0.11, "vespa.matching.filter_threshold.f2");
+        verifyRankProfileSetting(rp.getFirst(), rp.getSecond(),
+                (myRp) -> optionalDoubleOfNullable(myRp.explicitFieldRankFilterThresholds().get("f3")),
+                (Double)null, "vespa.matching.filter_threshold.f3");
+    }
+
+    private void verifyRankProfileSetting(RankProfile rankProfile, RawRankProfile rawRankProfile, Function<RankProfile, Boolean> func,
+                                          Boolean expValue, String expPropertyName) {
+        if (expValue != null) {
+            assertEquals(expValue, func.apply(rankProfile));
+            assertEquals(String.valueOf(expValue), findProperty(rawRankProfile.configProperties(), expPropertyName).get());
         } else {
-            assertTrue(rankProfile.getTargetHitsMaxAdjustmentFactor().isEmpty());
-            assertFalse(findProperty(rawRankProfile.configProperties(), "vespa.matching.nns.target_hits_max_adjustment_factor").isPresent());
+            assertNull(func.apply(rankProfile));
+            assertFalse(findProperty(rawRankProfile.configProperties(), expPropertyName).isPresent());
+        }
+    }
+
+    private void verifyRankProfileSetting(RankProfile rankProfile, RawRankProfile rawRankProfile, Function<RankProfile, OptionalDouble> func,
+                                          Double expValue, String expPropertyName) {
+        if (expValue != null) {
+            assertEquals((double)expValue, func.apply(rankProfile).getAsDouble(), 0.000001);
+            assertEquals(String.valueOf(expValue), findProperty(rawRankProfile.configProperties(), expPropertyName).get());
+        } else {
+            assertTrue(func.apply(rankProfile).isEmpty());
+            assertFalse(findProperty(rawRankProfile.configProperties(), expPropertyName).isPresent());
+        }
+    }
+
+    @Test
+    void field_specific_element_gap_is_configurable() throws ParseException {
+        var rps = """
+                  search test {
+                    document test {
+                      field f1 type string {
+                        indexing: index
+                      }
+                      field f2 type string {
+                        indexing: index
+                      }
+                      field f3 type string {
+                        indexing: index
+                      }
+                    }
+                    rank-profile my_profile {
+                      rank f1 {
+                        element-gap: 10
+                      }
+                      rank f2 {
+                        element-gap: infinity
+                      }
+                    }
+                  }
+                  """;
+        var rp = createRankProfile(rps);
+
+        verifyRankProfileSetting(rp.getFirst(), rp.getSecond(),
+                (myRp) -> Optional.ofNullable(myRp.explicitFieldRankElementGaps().get("f1")),
+                ElementGap.of(10), "vespa.matching.element_gap.f1");
+        verifyRankProfileSetting(rp.getFirst(), rp.getSecond(),
+                (myRp) -> Optional.ofNullable(myRp.explicitFieldRankElementGaps().get("f2")),
+                ElementGap.empty(), "vespa.matching.element_gap.f2");
+        verifyRankProfileSetting(rp.getFirst(), rp.getSecond(),
+                (myRp) -> Optional.ofNullable(myRp.explicitFieldRankElementGaps().get("f3")),
+                (ElementGap)null, "vespa.matching.element_gap.f3");
+    }
+
+    private void verifyRankProfileSetting(RankProfile rankProfile, RawRankProfile rawRankProfile, Function<RankProfile, Optional<ElementGap>> func,
+                                          ElementGap expValue, String expPropertyName) {
+        if (expValue != null) {
+            assertEquals(expValue, func.apply(rankProfile).get());
+            assertEquals(expValue.toString(), findProperty(rawRankProfile.configProperties(), expPropertyName).get());
+        } else {
+            assertFalse(func.apply(rankProfile).isPresent());
+            assertFalse(findProperty(rawRankProfile.configProperties(), expPropertyName).isPresent());
         }
     }
 
     private Pair<RankProfile, RawRankProfile> createRankProfile(Double postFilterThreshold,
                                                                 Double approximateThreshold,
+                                                                Double filterFirstThreshold,
+                                                                Double filterFirstExploration,
+                                                                Double explorationSlack,
                                                                 Double targetHitsMaxAdjustmentFactor) throws ParseException {
+        return createRankProfile(createSDWithRankProfile(postFilterThreshold, approximateThreshold, filterFirstThreshold, filterFirstExploration, explorationSlack, targetHitsMaxAdjustmentFactor, null, null, null, null));
+    }
+
+    private Pair<RankProfile, RawRankProfile> createWeakandRankProfile(Double weakAndStopwordLimit,
+                                                                       Boolean allowDropAll,
+                                                                       Double weakAndAdjustTarget) throws ParseException {
+        return createRankProfile(createSDWithRankProfile(null, null, null, null,  null, null, weakAndStopwordLimit, allowDropAll, weakAndAdjustTarget, null));
+    }
+
+    private Pair<RankProfile, RawRankProfile> createRankProfile(String schemaContent) throws ParseException {
         var rankProfileRegistry = new RankProfileRegistry();
         var props = new TestProperties();
         var queryProfileRegistry = new QueryProfileRegistry();
         var builder = new ApplicationBuilder(rankProfileRegistry, queryProfileRegistry, props);
-        builder.addSchema(createSDWithRankProfile(postFilterThreshold, approximateThreshold, targetHitsMaxAdjustmentFactor));
+        builder.addSchema(schemaContent);
         builder.build(true);
 
         var schema = builder.getSchema();
@@ -582,14 +774,28 @@ rank-profile feature_logging {
 
     private String createSDWithRankProfile(Double postFilterThreshold,
                                            Double approximateThreshold,
-                                           Double targetHitsMaxAdjustmentFactor) {
+                                           Double filterFirstThreshold,
+                                           Double filterFirstExploration,
+                                           Double explorationSlack,
+                                           Double targetHitsMaxAdjustmentFactor,
+                                           Double weakandStopwordLimit,
+                                           Boolean weakandAllowDropAll,
+                                           Double weakandAdjustTarget,
+                                           Double filterThreshold) {
         return joinLines(
                 "search test {",
                 "    document test {}",
                 "    rank-profile my_profile {",
                 (postFilterThreshold != null ?           ("        post-filter-threshold: " + postFilterThreshold) : ""),
                 (approximateThreshold != null ?          ("        approximate-threshold: " + approximateThreshold) : ""),
+                (filterFirstThreshold != null ?          ("        filter-first-threshold: " + filterFirstThreshold) : ""),
+                (filterFirstExploration != null  ?       ("        filter-first-exploration: " + filterFirstExploration) : ""),
+                (explorationSlack != null ?              ("        exploration-slack: " + explorationSlack) : ""),
                 (targetHitsMaxAdjustmentFactor != null ? ("        target-hits-max-adjustment-factor: " + targetHitsMaxAdjustmentFactor) : ""),
+                (weakandStopwordLimit != null ?          ("        weakand { stopword-limit: " + weakandStopwordLimit + "}") : ""),
+                (weakandAllowDropAll != null ?           ("        weakand { allow-drop-all: " + weakandAllowDropAll + "}") : ""),
+                (weakandAdjustTarget != null ?           ("        weakand { adjust-target: " + weakandAdjustTarget + "}") : ""),
+                (filterThreshold != null ?               ("        filter-threshold: " + filterThreshold) : ""),
                 "    }",
                 "}");
     }
@@ -616,6 +822,44 @@ rank-profile feature_logging {
         assertEquals(3, registry.all().size());
         RawRankProfile rawProfile = createRawRankProfile(registry.get(schema, "test"), schema);
         assertEquals("17.0", findProperty(rawProfile.configProperties(), "vespa.hitcollector.secondphase.rankscoredroplimit").get());
+    }
+
+    @Test
+    void testSwitchExpressionTransformation() throws ParseException {
+        RankProfileRegistry registry = new RankProfileRegistry();
+        ApplicationBuilder builder = new ApplicationBuilder(registry);
+        String input = """
+            schema test {
+              document test {
+                field myrank type int {
+                  indexing: attribute | summary
+                }
+              }
+              rank-profile test inherits default {
+                first-phase {
+                   expression: switch(attribute(myrank)) { case 100: 10000, case 50: 2500, default: 0 }
+                }
+              }
+            }
+            """;
+        builder.addSchema(input);
+        Application application = builder.build(true);
+        RankProfile profile = application.rankProfileRegistry().get("test", "test");
+
+        // Explicitly compile the profile to trigger transformations
+        var queryProfiles = new QueryProfileRegistry();
+        var importedModels = new ImportedMlModels();
+        RankProfile compiledProfile = profile.compile(queryProfiles, importedModels);
+
+        var rootNode = compiledProfile.getFirstPhaseRanking().getRoot();
+        String expression = rootNode.toString();
+
+        // Switch should be transformed to nested if statements
+        assertTrue(expression.contains("if"), "Expression should contain 'if' after transformation: " + expression);
+        assertFalse(expression.contains("switch"), "Expression should not contain 'switch' after transformation: " + expression);
+        assertTrue(expression.contains("attribute(myrank)"), "Expression should contain discriminant: " + expression);
+        assertTrue(expression.contains("10000"), "Expression should contain case result: " + expression);
+        assertTrue(expression.contains("2500"), "Expression should contain case result: " + expression);
     }
 
 }

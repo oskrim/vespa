@@ -13,6 +13,7 @@ import com.yahoo.vespa.config.server.ConfigActivationListener;
 import com.yahoo.vespa.config.server.ConfigServerDB;
 import com.yahoo.vespa.config.server.MockSecretStore;
 import com.yahoo.vespa.config.server.TestConfigDefinitionRepo;
+import com.yahoo.vespa.config.server.application.InheritableApplications;
 import com.yahoo.vespa.config.server.application.TenantApplicationsTest;
 import com.yahoo.vespa.config.server.filedistribution.FileDirectory;
 import com.yahoo.vespa.config.server.filedistribution.FileDistributionFactory;
@@ -57,7 +58,6 @@ public class TestTenantRepository extends TenantRepository {
               fileDistributionFactory,
               flagSource,
               new InThreadExecutorService(),
-              secretStore,
               hostProvisionerProvider,
               configserverConfig,
               new ConfigServerDB(configserverConfig),
@@ -69,7 +69,8 @@ public class TestTenantRepository extends TenantRepository {
               tenantListener,
               new ZookeeperServerConfig.Builder().myid(0).build(),
               OnnxModelCost.disabled(),
-              List.of(new DefaultEndpointCertificateSecretStore(secretStore)));
+              List.of(new DefaultEndpointCertificateSecretStore(secretStore)),
+              InheritableApplications.empty());
     }
 
     public static class Builder {
@@ -155,7 +156,9 @@ public class TestTenantRepository extends TenantRepository {
 
         public TenantRepository build() {
             if (fileDistributionFactory == null)
-                fileDistributionFactory = new FileDistributionFactory(configserverConfig, new FileDirectory(configserverConfig));
+                fileDistributionFactory = new FileDistributionFactory(configserverConfig,
+                                                                      new FileDirectory(configserverConfig),
+                                                                      new InMemoryFlagSource());
             return new TestTenantRepository(hostRegistry,
                                             curator,
                                             secretStore,

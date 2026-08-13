@@ -7,8 +7,9 @@ import java.util.Optional;
  * A deployer is used to deploy infrastructure applications.
  *
  * @author freva
+ * @author bjorncs
  */
-public interface InfraDeployer {
+public interface InfraDeployer extends AutoCloseable {
 
     /**
      * @param application the infrastructure application to be deployed
@@ -17,6 +18,13 @@ public interface InfraDeployer {
     Optional<Deployment> getDeployment(ApplicationId application);
 
     /** Deploys all supported infrastructure applications in this zone. */
-    void activateAllSupportedInfraApplications(boolean propagateException);
+    void activateAllSupportedInfraApplications(boolean propagateException, boolean enable);
+
+    boolean isEnabled();
+
+    /** Marks the specified node type as ready and triggers redeployment of its corresponding infrastructure application */
+    void readied(NodeType type);
+
+    void close();
 
 }

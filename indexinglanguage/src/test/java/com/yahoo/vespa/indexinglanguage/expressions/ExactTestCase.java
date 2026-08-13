@@ -2,35 +2,45 @@
 package com.yahoo.vespa.indexinglanguage.expressions;
 
 import com.yahoo.document.DataType;
-import com.yahoo.document.annotation.*;
+import com.yahoo.document.annotation.Annotation;
+import com.yahoo.document.annotation.SpanList;
+import com.yahoo.document.annotation.SpanNode;
+import com.yahoo.document.annotation.SpanTree;
+import com.yahoo.document.annotation.SpanTrees;
 import com.yahoo.document.datatypes.StringFieldValue;
 import com.yahoo.vespa.indexinglanguage.SimpleTestAdapter;
+import com.yahoo.vespa.indexinglanguage.linguistics.AnnotatorConfig;
 import org.junit.Test;
 
 import java.util.Iterator;
 
 import static com.yahoo.vespa.indexinglanguage.expressions.ExpressionAssert.assertVerify;
 import static com.yahoo.vespa.indexinglanguage.expressions.ExpressionAssert.assertVerifyThrows;
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotEquals;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
 
 /**
  * @author Simon Thoresen Hult
  */
+@SuppressWarnings({"deprecation", "removal"})
 public class ExactTestCase {
 
     @Test
     public void requireThatHashCodeAndEqualsAreImplemented() {
-        Expression exp = new ExactExpression();
+        Expression exp = new ExactExpression(new AnnotatorConfig());
         assertNotEquals(exp, new Object());
-        assertEquals(exp, new ExactExpression());
-        assertEquals(exp.hashCode(), new ExactExpression().hashCode());
+        assertEquals(exp, new ExactExpression(new AnnotatorConfig()));
+        assertEquals(exp.hashCode(), new ExactExpression(new AnnotatorConfig()).hashCode());
     }
 
     @Test
     public void requireThatValueIsNotChanged() {
         ExecutionContext ctx = new ExecutionContext(new SimpleTestAdapter());
         ctx.setCurrentValue(new StringFieldValue("FOO"));
-        new ExactExpression().execute(ctx);
+        new ExactExpression(new AnnotatorConfig()).execute(ctx);
 
         assertEquals("FOO", String.valueOf(ctx.getCurrentValue()));
     }
@@ -39,7 +49,7 @@ public class ExactTestCase {
     public void requireThatValueIsAnnotated() {
         ExecutionContext ctx = new ExecutionContext(new SimpleTestAdapter());
         ctx.setCurrentValue(new StringFieldValue("FOO"));
-        new ExactExpression().execute(ctx);
+        new ExactExpression(new AnnotatorConfig()).execute(ctx);
 
         assertAnnotation(0, 3, new StringFieldValue("foo"), (StringFieldValue)ctx.getCurrentValue());
     }
@@ -48,7 +58,7 @@ public class ExactTestCase {
     public void requireThatThereIsNoSegmentation() {
         ExecutionContext ctx = new ExecutionContext(new SimpleTestAdapter());
         ctx.setCurrentValue(new StringFieldValue("FOO BAR"));
-        new ExactExpression().execute(ctx);
+        new ExactExpression(new AnnotatorConfig()).execute(ctx);
 
         assertAnnotation(0, 7, new StringFieldValue("foo bar"), (StringFieldValue)ctx.getCurrentValue());
     }
@@ -57,7 +67,7 @@ public class ExactTestCase {
     public void requireThatRedundantAnnotationValueIsIgnored() {
         ExecutionContext ctx = new ExecutionContext(new SimpleTestAdapter());
         ctx.setCurrentValue(new StringFieldValue("foo"));
-        new ExactExpression().execute(ctx);
+        new ExactExpression(new AnnotatorConfig()).execute(ctx);
 
         assertAnnotation(0, 3, null, (StringFieldValue)ctx.getCurrentValue());
     }
@@ -66,7 +76,7 @@ public class ExactTestCase {
     public void requireThatLongStringsAreNotAnnotated() {
         ExecutionContext ctx = new ExecutionContext(new SimpleTestAdapter());
         ctx.setCurrentValue(new StringFieldValue("foo"));
-        new ExactExpression(2).execute(ctx);
+        new ExactExpression(new AnnotatorConfig().setMaxTokenLength(2)).execute(ctx);
 
         assertNull(((StringFieldValue)ctx.getCurrentValue()).getSpanTree(SpanTrees.LINGUISTICS));
     }
@@ -75,17 +85,17 @@ public class ExactTestCase {
     public void requireThatEmptyStringsAreNotAnnotated() {
         ExecutionContext ctx = new ExecutionContext(new SimpleTestAdapter());
         ctx.setCurrentValue(new StringFieldValue(""));
-        new ExactExpression().execute(ctx);
+        new ExactExpression(new AnnotatorConfig()).execute(ctx);
 
         assertNull(((StringFieldValue)ctx.getCurrentValue()).getSpanTree(SpanTrees.LINGUISTICS));
     }
 
     @Test
     public void requireThatExpressionCanBeVerified() {
-        Expression exp = new ExactExpression();
+        Expression exp = new ExactExpression(new AnnotatorConfig());
         assertVerify(DataType.STRING, exp, DataType.STRING);
-        assertVerifyThrows(null, exp, "Expected string input, but no input is specified");
-        assertVerifyThrows(DataType.INT, exp, "Expected string input, got int");
+        assertVerifyThrows("Invalid expression 'exact': Expected string input, but no input is provided", null, exp);
+        assertVerifyThrows("Invalid expression 'exact': Expected string input, got int", DataType.INT, exp);
     }
 
     private static void assertAnnotation(int expectedFrom, int expectedLen, StringFieldValue expectedVal,
@@ -109,4 +119,5 @@ public class ExactTestCase {
         assertNotNull(anno);
         assertEquals(expectedVal, anno.getFieldValue());
     }
+
 }

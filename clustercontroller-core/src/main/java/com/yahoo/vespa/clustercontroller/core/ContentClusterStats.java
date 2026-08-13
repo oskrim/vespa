@@ -13,20 +13,30 @@ import java.util.Set;
  *
  * @author hakonhall
  */
-public class ContentClusterStats implements Iterable<ContentNodeStats> {
+public record ContentClusterStats(long documentCountTotal,
+                                  long bytesTotal,
+                                  // Maps a content node index to the content node's stats.
+                                  Map<Integer, ContentNodeStats> mapToNodeStats)
+        implements Iterable<ContentNodeStats> {
 
-    // Maps a content node index to the content node's stats.
-    private final Map<Integer, ContentNodeStats> mapToNodeStats;
-
-    public ContentClusterStats(Set<Integer> storageNodes) {
-        mapToNodeStats = new HashMap<>(storageNodes.size());
+    private static Map<Integer, ContentNodeStats> toEmptyNodeStats(Set<Integer> storageNodes) {
+        Map<Integer, ContentNodeStats> mapToNodeStats = new HashMap<>(storageNodes.size());
         for (Integer index : storageNodes) {
             mapToNodeStats.put(index, new ContentNodeStats(index));
         }
+        return mapToNodeStats;
+    }
+
+    public ContentClusterStats(long documentCountTotal, long bytesTotal, Set<Integer> storageNodes) {
+        this(documentCountTotal, bytesTotal, toEmptyNodeStats(storageNodes));
+    }
+
+    public ContentClusterStats(Set<Integer> storageNodes) {
+        this(0, 0, storageNodes);
     }
 
     public ContentClusterStats(Map<Integer, ContentNodeStats> mapToNodeStats) {
-        this.mapToNodeStats = mapToNodeStats;
+        this(0, 0, mapToNodeStats);
     }
 
     @Override
@@ -34,27 +44,13 @@ public class ContentClusterStats implements Iterable<ContentNodeStats> {
         return mapToNodeStats.values().iterator();
     }
 
+    public long getDocumentCountTotal() { return documentCountTotal; }
+    public long getBytesTotal() { return bytesTotal; }
+
     public ContentNodeStats getNodeStats(Integer index) { return mapToNodeStats.get(index);}
 
     public int size() {
         return mapToNodeStats.size();
     }
 
-    @Override
-    public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
-        ContentClusterStats that = (ContentClusterStats) o;
-        return Objects.equals(mapToNodeStats, that.mapToNodeStats);
-    }
-
-    @Override
-    public int hashCode() {
-        return Objects.hash(mapToNodeStats);
-    }
-
-    @Override
-    public String toString() {
-        return String.format("{mapToNodeStats=[%s]}", Arrays.toString(mapToNodeStats.entrySet().toArray()));
-    }
 }

@@ -2,10 +2,9 @@
 package com.yahoo.language.lucene;
 
 import com.yahoo.component.provider.ComponentRegistry;
-import com.yahoo.language.Language;
-import com.yahoo.language.process.StemMode;
+import com.yahoo.language.Linguistics;
+import com.yahoo.language.process.LinguisticsParameters;
 import com.yahoo.language.process.Token;
-import com.yahoo.language.process.TokenScript;
 import com.yahoo.language.process.TokenType;
 import com.yahoo.language.process.Tokenizer;
 import com.yahoo.language.simple.SimpleToken;
@@ -13,6 +12,7 @@ import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.analysis.TokenStream;
 import org.apache.lucene.analysis.tokenattributes.CharTermAttribute;
 import org.apache.lucene.analysis.tokenattributes.OffsetAttribute;
+import org.apache.lucene.analysis.tokenattributes.PositionIncrementAttribute;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -30,21 +30,22 @@ class LuceneTokenizer implements Tokenizer {
     // Dummy value, just to stuff the Lucene interface.
     private final static String FIELD_NAME = "F";
 
-    private final AnalyzerFactory analyzerFactory;
+    private final Analyzers analyzers;
 
     public LuceneTokenizer(LuceneAnalysisConfig config) {
         this(config, new ComponentRegistry<>());
     }
-    public LuceneTokenizer(LuceneAnalysisConfig config, ComponentRegistry<Analyzer> analyzers) {
-        this.analyzerFactory = new AnalyzerFactory(config, analyzers);
+    public LuceneTokenizer(LuceneAnalysisConfig config, ComponentRegistry<Analyzer> analyzerComponents) {
+        this.analyzers = new Analyzers(config, analyzerComponents);
     }
 
     @Override
-    public Iterable<Token> tokenize(String input, Language language, StemMode stemMode, boolean removeAccents) {
+    public Iterable<Token> tokenize(String input, LinguisticsParameters parameters) {
         if (input.isEmpty()) return List.of();
 
-        List<Token> tokens = textToTokens(input, analyzerFactory.getAnalyzer(language, stemMode, removeAccents));
-        log.log(Level.FINEST, () -> "Tokenized '" + language + "' text='" + input + "' into: n=" + tokens.size() + ", tokens=" + tokens);
+        List<Token> tokens = textToTokens(input, analyzers.getAnalyzer(parameters));
+        log.log(Level.FINEST, () -> "Tokenized '" + parameters.language() +
+                                    "' text='" + input + "' into: n=" + tokens.size() + ", tokens=" + tokens);
         return tokens;
     }
 
@@ -54,23 +55,49 @@ class LuceneTokenizer implements Tokenizer {
 
         CharTermAttribute charTermAttribute = tokenStream.addAttribute(CharTermAttribute.class);
         OffsetAttribute offsetAttribute = tokenStream.addAttribute(OffsetAttribute.class);
+        PositionIncrementAttribute posIncAttribute = tokenStream.addAttribute(PositionIncrementAttribute.class);
         try {
             tokenStream.reset();
+            SimpleToken current = null;
             while (tokenStream.incrementToken()) {
-                // TODO: what to do with cases when multiple tokens are inserted into the position?
                 String originalString = text.substring(offsetAttribute.startOffset(), offsetAttribute.endOffset());
                 String tokenString = charTermAttribute.toString();
-                tokens.add(new SimpleToken(originalString, tokenString)
-                        .setType(TokenType.ALPHABETIC)
-                        .setOffset(offsetAttribute.startOffset())
-                        .setScript(TokenScript.UNKNOWN));
+                if (isAtSamePosition(current, posIncAttribute)) {
+                    current.addStem(tokenString);
+                }
+                else {
+                    current = new SimpleToken(originalString, tokenString).setType(TokenType.ALPHABETIC)
+                                                                          .setOffset(offsetAttribute.startOffset());
+                    tokens.add(current);
+                }
             }
-            tokenStream.end();
-            tokenStream.close();
         } catch (IOException e) {
             throw new RuntimeException("Failed to analyze: " + text, e);
+        } finally {
+            try {
+                tokenStream.end();
+                tokenStream.close();
+            } catch (IOException e) {
+                throw new RuntimeException("Failed to close stream: " + e);
+            }
         }
         return tokens;
+    }
+
+    private boolean isAtSamePosition(Token token, PositionIncrementAttribute posIncAttribute) {
+        if (token == null) return false;
+        return posIncAttribute.getPositionIncrement() == 0;
+    }
+
+    @Override
+    public boolean equals(Object other) {
+        // Config actually determines if Linguistics are equal
+        return (other instanceof LuceneTokenizer) && analyzers.equals(((LuceneTokenizer) other).analyzers);
+    }
+
+    @Override
+    public int hashCode() {
+        return analyzers.hashCode();
     }
 
 }

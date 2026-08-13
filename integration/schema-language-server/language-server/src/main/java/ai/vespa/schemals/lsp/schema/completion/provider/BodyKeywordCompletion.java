@@ -1,7 +1,9 @@
 package ai.vespa.schemals.lsp.schema.completion.provider;
 
+import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 
@@ -10,8 +12,10 @@ import org.eclipse.lsp4j.Hover;
 import org.eclipse.lsp4j.Position;
 import org.eclipse.lsp4j.Range;
 
+import ai.vespa.schemals.SchemaLanguageServer;
 import ai.vespa.schemals.context.EventCompletionContext;
-import ai.vespa.schemals.lsp.schema.completion.utils.CompletionUtils;
+import ai.vespa.schemals.lsp.common.completion.CompletionProvider;
+import ai.vespa.schemals.lsp.common.completion.CompletionUtils;
 import ai.vespa.schemals.lsp.schema.hover.SchemaHover;
 import ai.vespa.schemals.parser.ast.NL;
 import ai.vespa.schemals.parser.ast.RootRankProfile;
@@ -22,12 +26,16 @@ import ai.vespa.schemals.parser.ast.documentElm;
 import ai.vespa.schemals.parser.ast.fieldElm;
 import ai.vespa.schemals.parser.ast.fieldSetElm;
 import ai.vespa.schemals.parser.ast.firstPhase;
+import ai.vespa.schemals.parser.ast.globalPhase;
 import ai.vespa.schemals.parser.ast.hnswIndex;
 import ai.vespa.schemals.parser.ast.indexInsideField;
 import ai.vespa.schemals.parser.ast.indexOutsideDoc;
+import ai.vespa.schemals.parser.ast.onnxModel;
 import ai.vespa.schemals.parser.ast.openLbrace;
 import ai.vespa.schemals.parser.ast.rankProfile;
 import ai.vespa.schemals.parser.ast.rootSchema;
+import ai.vespa.schemals.parser.ast.secondPhase;
+import ai.vespa.schemals.parser.ast.significanceElm;
 import ai.vespa.schemals.parser.ast.sortingElm;
 import ai.vespa.schemals.parser.ast.structDefinitionElm;
 import ai.vespa.schemals.parser.ast.structFieldElm;
@@ -35,25 +43,26 @@ import ai.vespa.schemals.parser.ast.summaryInDocument;
 import ai.vespa.schemals.parser.ast.summaryInFieldLong;
 import ai.vespa.schemals.parser.ast.weightedsetElm;
 import ai.vespa.schemals.tree.CSTUtils;
-import ai.vespa.schemals.tree.SchemaNode;
+import ai.vespa.schemals.tree.Node;
 
 public class BodyKeywordCompletion implements CompletionProvider {
     // Currently key is the classLeafIdentifierString of a node with a body
     private static Map<Class<?>, List<CompletionItem>> bodyKeywordSnippets = new HashMap<>() {{
         put(rootSchema.class, List.of(
+            CompletionUtils.constructSnippet("annotation", "annotation ${1:name} {\n\t$0\n}"),
+            CompletionUtils.constructSnippet("constant", "constant ${1:name} {\n\t$0\n}"),
             CompletionUtils.constructSnippet("document", "document ${1:name} {\n\t$0\n}"),
-            FixedKeywordBodies.INDEX.getColonSnippet(true),
-            FixedKeywordBodies.INDEX.getBodySnippet(true),
+            CompletionUtils.constructSnippet("document-summary", "document-summary ${1:name} {\n\t$0\n}"),
             CompletionUtils.constructSnippet("field", "field ${1:name} type $2 {$0}"),
             CompletionUtils.constructSnippet("fieldset", "fieldset ${1:default} {\n\tfields: $0\n}"),
-            CompletionUtils.constructSnippet("rank-profile", "rank-profile ${1:name} {\n\t$0\n}"),
-            CompletionUtils.constructSnippet("constant", "constant ${1:name} {\n\t$0\n}"),
-            CompletionUtils.constructSnippet("onnx-model", "onnx-model ${1:name} {\n\t$0\n}"),
-            FixedKeywordBodies.STEMMING.getColonSnippet(),
-            CompletionUtils.constructSnippet("document-summary", "document-summary ${1:name} {\n\t$0\n}"),
-            CompletionUtils.constructSnippet("annotation", "annotation ${1:name} {\n\t$0\n}"),
             CompletionUtils.constructSnippet("import field", "import field ${1:name} as $2 {}"),
-            CompletionUtils.constructSnippet("raw-as-base64-in-summary", "raw-as-base64-in-summary")
+            CompletionUtils.constructSnippet("onnx-model", "onnx-model ${1:name} {\n\t$0\n}"),
+            CompletionUtils.constructSnippet("rank-profile", "rank-profile ${1:name} {\n\t$0\n}"),
+            CompletionUtils.constructSnippet("raw-as-base64-in-summary", "raw-as-base64-in-summary"),
+            FixedKeywordBodies.DOCUMENT_ID.getColonSnippet(),
+            FixedKeywordBodies.INDEX.getBodySnippet(true),
+            FixedKeywordBodies.INDEX.getColonSnippet(true),
+            FixedKeywordBodies.STEMMING.getColonSnippet()
         ));
 
         put(documentElm.class, List.of(
@@ -114,42 +123,78 @@ public class BodyKeywordCompletion implements CompletionProvider {
 
         put(rankProfile.class, List.of(
             FixedKeywordBodies.STRICT.getColonSnippet(false),
-            CompletionUtils.constructSnippet("diversity", "diversity {\n\tattribute: $1\n\tmin-groups: $0\n}"),
-            CompletionUtils.constructSnippet("match-phase", "match-phase {\n\tattribute: $1\n\torder: $2\n\tmax-hits: $3\n}"),
-            CompletionUtils.constructSnippet("first-phase", "first-phase {\n\t$0\n}"),
-            CompletionUtils.constructSnippet("second-phase", "second-phase {\n\t$0\n}"),
-            CompletionUtils.constructSnippet("global-phase", "global-phase {\n\t$0\n}"),
-            CompletionUtils.constructSnippet("function", "function $1() {\n\texpression: $0\n}"),
-            CompletionUtils.constructSnippet("inputs", "inputs {\n\t$0\n}"),
+            CompletionUtils.constructSnippet("approximate-threshold", "approximate-threshold: $0"),
             CompletionUtils.constructSnippet("constants", "constants {\n\t$0\n}"),
-            CompletionUtils.constructSnippet("onnx-model", "onnx-model $1 {\n\t$0\n}"),
-            CompletionUtils.constructSnippet("rank-properties", "rank-properties {\n\t$0\n}"),
-            CompletionUtils.constructSnippet("match-features", "match-features: $0", "match-features:"),
+            CompletionUtils.constructSnippet("diversity", "diversity {\n\tattribute: $1\n\tmin-groups: $0\n}"),
+            CompletionUtils.constructSnippet("exploration-slack", "exploration-slack: $0"),
+            CompletionUtils.constructSnippet("filter-first-exploration", "filter-first-exploration: $0"),
+            CompletionUtils.constructSnippet("filter-first-threshold", "filter-first-threshold: $0"),
+            CompletionUtils.constructSnippet("filter-threshold", "filter-threshold: $0"),
+            CompletionUtils.constructSnippet("first-phase", "first-phase {\n\t$0\n}"),
+            CompletionUtils.constructSnippet("function", "function $1() {\n\texpression: $0\n}"),
+            CompletionUtils.constructSnippet("global-phase", "global-phase {\n\t$0\n}"),
+            CompletionUtils.constructSnippet("inputs", "inputs {\n\t$0\n}"),
             CompletionUtils.constructSnippet("match-features", "match-features {\n\t$0\n}", "match-features {}"),
+            CompletionUtils.constructSnippet("match-features", "match-features: $0", "match-features:"),
+            CompletionUtils.constructSnippet("match-phase", "match-phase {\n\tattribute: $1\n\torder: $2\n\ttotal-max-hits: $3\n}"),
+            CompletionUtils.constructSnippet("min-hits-per-thread", "min-hits-per-thread: $0"),
             CompletionUtils.constructSnippet("mutate", "mutate {\n\t$0\n}"),
-            CompletionUtils.constructSnippet("summary-features", "summary-features: $0", "summary-features:"),
-            CompletionUtils.constructSnippet("summary-features", "summary-features {\n\t$0\n}", "summary-features {}"),
-            CompletionUtils.constructSnippet("rank-features", "rank-features: $0", "rank-features:"),
+            CompletionUtils.constructSnippet("num-search-partitions", "num-search-partitions: $0"),
+            CompletionUtils.constructSnippet("num-threads-per-search", "num-threads-per-search: $0"),
+            CompletionUtils.constructSnippet("onnx-model", "onnx-model $1 {\n\t$0\n}"),
+            CompletionUtils.constructSnippet("post-filter-threshold", "post-filter-threshold: $0"),
             CompletionUtils.constructSnippet("rank-features", "rank-features {\n\t$0\n}", "rank-features {}"),
+            CompletionUtils.constructSnippet("rank-features", "rank-features: $0", "rank-features:"),
+            CompletionUtils.constructSnippet("rank-properties", "rank-properties {\n\t$0\n}"),
+            CompletionUtils.constructSnippet("second-phase", "second-phase {\n\t$0\n}"),
+            CompletionUtils.constructSnippet("significance", "significance {\n\tuse-model: ${1|true,false|}\n}"),
+            CompletionUtils.constructSnippet("summary-features", "summary-features {\n\t$0\n}", "summary-features {}"),
+            CompletionUtils.constructSnippet("summary-features", "summary-features: $0", "summary-features:"),
+            CompletionUtils.constructSnippet("target-hits-max-adjustment-factor", "target-hits-max-adjustment-factor: $0"),
+            CompletionUtils.constructSnippet("termwise-limit", "termwise-limit: $0"),
+
             CompletionUtils.constructBasic("ignore-default-rank-features"),
-            CompletionUtils.constructBasic("num-threads-per-search"),
-            CompletionUtils.constructBasic("num-search-partitions"),
-            CompletionUtils.constructBasic("min-hits-per-thread"),
-            CompletionUtils.constructBasic("termwise-limit"),
-            CompletionUtils.constructBasic("post-filter-threshold"),
-            CompletionUtils.constructBasic("approximate-threshold"),
-            CompletionUtils.constructBasic("target-hits-max-adjustment-factor"),
             FixedKeywordBodies.RANK.getColonSnippet(true),
-            FixedKeywordBodies.RANK_TYPE.getColonSnippet(true)
+            FixedKeywordBodies.RANK_IN_PROFILE.getBodySnippet(true),
+            FixedKeywordBodies.RANK_TYPE.getColonSnippet(true),
+            FixedKeywordBodies.WEAKAND.getBodySnippet(false)
         ));
 
         put(RootRankProfile.class, get(rankProfile.class));
+
 
         put(firstPhase.class, List.of(
             CompletionUtils.constructSnippet("expression", "expression: $0", "expression:"),
             CompletionUtils.constructSnippet("expression", "expression {\n\t$0\n}", "expression {}"),
             CompletionUtils.constructSnippet("keep-rank-count", "keep-rank-count: $0"),
+            CompletionUtils.constructSnippet("total-keep-rank-count", "total-keep-rank-count: $0"),
             CompletionUtils.constructSnippet("rank-score-drop-limit", "rank-score-drop-limit: $0")
+        ));
+
+        put(secondPhase.class, List.of(
+            CompletionUtils.constructSnippet("expression", "expression: $0", "expression:"),
+            CompletionUtils.constructSnippet("expression", "expression {\n\t$0\n}", "expression {}"),
+            CompletionUtils.constructSnippet("rerank-count", "rerank-count: $0"),
+            CompletionUtils.constructSnippet("total-rerank-count", "total-rerank-count: $0"),
+            CompletionUtils.constructSnippet("rank-score-drop-limit", "rank-score-drop-limit: $0")
+        ));
+
+        put(globalPhase.class, List.of(
+            CompletionUtils.constructSnippet("expression", "expression: $0", "expression:"),
+            CompletionUtils.constructSnippet("expression", "expression {\n\t$0\n}", "expression {}"),
+            CompletionUtils.constructSnippet("keep-rank-count", "keep-rank-count: $0"),
+            CompletionUtils.constructSnippet("rank-score-drop-limit", "rank-score-drop-limit: $0")
+        ));
+
+        put(onnxModel.class, List.of(
+            CompletionUtils.constructSnippet("input", "input \"$1\": $0"),
+            CompletionUtils.constructSnippet("output", "output \"$1\": $0"),
+            CompletionUtils.constructSnippet("gpu-device", "gpu-device: $0"),
+            CompletionUtils.constructSnippet("file", "file: $0"),
+            CompletionUtils.constructSnippetDeprecated("uri", "uri: $0", "Not supported yet"),
+            CompletionUtils.constructSnippet("intraop-threads", "intraop-threads: $0"),
+            CompletionUtils.constructSnippet("interop-threads", "interop-threads: $0"),
+            FixedKeywordBodies.EXECUTION_MODE.getColonSnippet()
         ));
 
         put(fieldSetElm.class, List.of(
@@ -158,8 +203,17 @@ public class BodyKeywordCompletion implements CompletionProvider {
             CompletionUtils.constructSnippet("query-command", "query-command: ")
         ));
 
+        put(significanceElm.class, List.of(
+            CompletionUtils.constructSnippet("use-model", "use-model: ${1|true,false|}")
+        ));
+
         put(FixedKeywordBodies.MATCH.parentASTClass(), FixedKeywordBodies.MATCH.completionItems());
+
         put(FixedKeywordBodies.RANK.parentASTClass(), FixedKeywordBodies.RANK.completionItems());
+
+        put(FixedKeywordBodies.RANK_IN_PROFILE.parentASTClass(), FixedKeywordBodies.RANK_IN_PROFILE.completionItems());
+
+        put(FixedKeywordBodies.WEAKAND.parentASTClass(), FixedKeywordBodies.WEAKAND.completionItems());
 
         put(summaryInDocument.class, FixedKeywordBodies.SUMMARY.completionItems());
         put(summaryInFieldLong.class, FixedKeywordBodies.SUMMARY.completionItems());
@@ -177,11 +231,12 @@ public class BodyKeywordCompletion implements CompletionProvider {
         put(indexInsideField.class, FixedKeywordBodies.INDEX.completionItems());
         put(indexOutsideDoc.class, FixedKeywordBodies.INDEX.completionItems());
 
+        Path schemaHoverPath = SchemaLanguageServer.getDefaultDocumentationPath().resolve("schema");
         // compute docs
         for (var entry : this.entrySet()) {
             for (CompletionItem item : entry.getValue()) {
-                String markdownKey = "schema/" + item.getLabel().toUpperCase().replaceAll("-", "_");
-                Optional<Hover> hover = SchemaHover.getFileHoverInformation(markdownKey, new Range());
+                String markdownKey = item.getLabel().toUpperCase(Locale.ROOT).replaceAll("-", "_");
+                Optional<Hover> hover = SchemaHover.getFileHoverInformation(schemaHoverPath, markdownKey, new Range());
                 if (hover.isPresent() && hover.get().getContents().isRight()) {
                     item.setDocumentation(hover.get().getContents().getRight());
                 }
@@ -194,7 +249,7 @@ public class BodyKeywordCompletion implements CompletionProvider {
         Position searchPos = context.startOfWord();
         if (searchPos == null)searchPos = context.position;
 
-        SchemaNode last = CSTUtils.getLastCleanNode(context.document.getRootNode(), searchPos);
+        Node last = CSTUtils.getLastCleanNode(context.document.getRootNode(), searchPos);
 
         if (last == null) {
             return List.of();
@@ -202,7 +257,7 @@ public class BodyKeywordCompletion implements CompletionProvider {
 
         if (!last.isASTInstance(NL.class)) return List.of();
 
-        SchemaNode searchNode = last.getParent();
+        Node searchNode = last.getParent();
 
         if (searchNode == null) return List.of();
 

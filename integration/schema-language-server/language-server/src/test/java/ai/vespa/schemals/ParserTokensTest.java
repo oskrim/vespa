@@ -4,31 +4,59 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import java.lang.reflect.Field;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestFactory;
+import org.antlr.v4.runtime.Vocabulary;
+import org.junit.jupiter.api.DynamicTest;
 
 import ai.vespa.schemals.parser.SchemaParserLexer;
 import ai.vespa.schemals.parser.indexinglanguage.IndexingParserLexer;
 import ai.vespa.schemals.parser.rankingexpression.RankingExpressionParserLexer;
+import ai.vespa.schemals.parser.grouping.GroupingParserLexer;
+import ai.vespa.schemals.parser.yqlplus.YQLPlusLexer;
 
+import com.vladsch.flexmark.parser.Parser;
 import com.yahoo.schema.parser.SchemaParserConstants;
 import com.yahoo.vespa.indexinglanguage.parser.IndexingParserConstants;
 import com.yahoo.searchlib.rankingexpression.parser.RankingExpressionParserConstants;
+import com.yahoo.search.grouping.request.parser.GroupingParserConstants;
+import com.yahoo.search.yql.yqlplusLexer;
+
 
 /**
  * Tests that the set of tokens declared in JavaCC parsers are also present in CongoCC parsers.
  */
 public class ParserTokensTest {
+
     // These are special
     public static Set<String> javaCCSpecialTokens = Set.of(
         "DEFAULT", // Lexical State in JavaCC parser
         "SEARCHLIB_SKIP", // represents white space, handled differently in CongoCC
         "SINGLE_LINE_COMMENT", // not a regular token
+        "MULTI_LINE_COMMENT", // not a regular token
         "COMMENT", // not a regular token
+        // Below are tokens that represents a big regex in the original parser,
+        // which is implemented differently in our parser 
+        "EXPRESSION_SL",
+        "EXPRESSION_ML",
+        "MATCHFEATURES_SL",
+        "MATCHFEATURES_ML",
+        "MATCHFEATURES_ML_INHERITS",
+        "ONNX_INPUT_SL", 
+        "ONNX_OUTPUT_SL", 
+        "RANKFEATURES_SL",
+        "RANKFEATURES_ML",
+        "SELECT_ELEMENTS_BY_SL",
+        "SUMMARYFEATURES_SL",
+        "SUMMARYFEATURES_ML",
+        "SUMMARYFEATURES_ML_INHERITS",
         // Below are anonymous tokens, only there to help defining ranking expression rules. CongoCC ignores their names.
         // Schema:
         "BRACE_SL_LEVEL_1",
@@ -44,6 +72,11 @@ public class ParserTokensTest {
         "EXPONENT",
         "HEX",
         "OCTAL"
+    );
+
+    public static Set<String> antlrSpecialTokens = Set.of(
+        "COMMENT",
+        "WS"
     );
 
     private List<String> findMissingTokens(Field[] javaCCFields, Set<String> congoCCTokenStrings) {
@@ -65,7 +98,6 @@ public class ParserTokensTest {
         Field[] javaCCFields = SchemaParserConstants.class.getDeclaredFields();
 
         Set<String> congoCCTokenStrings = new HashSet<>();
-
         for (var tokenType : SchemaParserLexer.getRegularTokens()) {
             congoCCTokenStrings.add(tokenType.toString());
         }
@@ -80,7 +112,6 @@ public class ParserTokensTest {
         Field[] javaCCFields = IndexingParserConstants.class.getDeclaredFields();
 
         Set<String> congoCCTokenStrings = new HashSet<>();
-
         for (var tokenType : IndexingParserLexer.getRegularTokens()) {
             congoCCTokenStrings.add(tokenType.toString());
         }
@@ -94,7 +125,6 @@ public class ParserTokensTest {
         Field[] javaCCFields = RankingExpressionParserConstants.class.getDeclaredFields();
 
         Set<String> congoCCTokenStrings = new HashSet<>();
-
         for (var tokenType : RankingExpressionParserLexer.getRegularTokens()) {
             congoCCTokenStrings.add(tokenType.toString());
         }
@@ -102,4 +132,50 @@ public class ParserTokensTest {
         List<String> missing = findMissingTokens(javaCCFields, congoCCTokenStrings);
         assertEquals(0, missing.size(), "Missing ranking expression tokens in CongoCC: " + String.join(", ", missing));
     }
+
+    @Test
+    public void testVespaGroupingTokenList() {
+        Field[] javaCCFields = GroupingParserConstants.class.getDeclaredFields();
+
+        Set<String> congoCCTokenStrings = new HashSet<>();
+
+        for (var tokenType : GroupingParserLexer.getRegularTokens()) {
+            congoCCTokenStrings.add(tokenType.toString());
+        }
+
+        List<String> missing = findMissingTokens(javaCCFields, congoCCTokenStrings);
+        assertEquals(0, missing.size(), "Missing grouping tokens in CongoCC: " + String.join(", ", missing));
+    }
+
+    @Test
+    public void testYQLPlusTokenList() {
+        Vocabulary vocabulary = yqlplusLexer.VOCABULARY;
+
+        Set<String> antlrTokens = new HashSet<>();
+
+        for (int i = 0; i < vocabulary.getMaxTokenType(); i++) {
+            String symbolicName = vocabulary.getSymbolicName(i);
+            if (symbolicName != null) {
+                antlrTokens.add(symbolicName);
+            }
+        }
+
+        Set<String> congoCCTokenStrings = new HashSet<>();
+
+        for (var tokenType : YQLPlusLexer.getRegularTokens()) {
+            congoCCTokenStrings.add(tokenType.toString());
+        }
+
+        List<String> missing = new ArrayList<>();
+        for (var token : antlrTokens) {
+            if (antlrSpecialTokens.contains(token)) continue;
+
+            if (!congoCCTokenStrings.contains(token)) {
+                missing.add(token);
+            }
+        }
+
+        assertEquals(0, missing.size(), "Missing yqlplus tokens in CongoCC: " + String.join(", ", missing));
+    }
+
 }

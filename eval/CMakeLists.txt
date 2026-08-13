@@ -10,12 +10,12 @@ vespa_define_module(
     src/apps/tensor_conformance
 
     TESTS
-    src/tests/ann
     src/tests/apps/analyze_onnx_model
     src/tests/apps/eval_expr
     src/tests/eval/addr_to_symbol
     src/tests/eval/aggr
     src/tests/eval/array_array_map
+    src/tests/eval/cell_order
     src/tests/eval/cell_type_space
     src/tests/eval/compile_cache
     src/tests/eval/compiled_function
@@ -62,8 +62,10 @@ vespa_define_module(
     src/tests/instruction/dense_xw_product_function
     src/tests/instruction/fast_rename_optimizer
     src/tests/instruction/generic_cell_cast
+    src/tests/instruction/generic_cell_order
     src/tests/instruction/generic_concat
     src/tests/instruction/generic_create
+    src/tests/instruction/generic_filter_subspaces
     src/tests/instruction/generic_join
     src/tests/instruction/generic_map
     src/tests/instruction/generic_merge

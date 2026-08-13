@@ -2,15 +2,13 @@
 package com.yahoo.language.process;
 
 import com.yahoo.api.annotations.Beta;
-import com.yahoo.collections.LazyMap;
-import com.yahoo.language.Language;
 import com.yahoo.tensor.Tensor;
 import com.yahoo.tensor.TensorType;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
-import java.util.function.Supplier;
+import java.util.function.Function;
 
 /**
  * An embedder converts a text string to a tensor
@@ -19,7 +17,7 @@ import java.util.function.Supplier;
  */
 public interface Embedder {
 
-    /** Name of embedder when none is explicity given */
+    /** ID of embedder when none is explicitly given */
     String defaultEmbedderId = "default";
 
     /** An instance of this which throws IllegalStateException if attempted used */
@@ -69,6 +67,63 @@ public interface Embedder {
     Tensor embed(String text, Context context, TensorType tensorType);
 
     /**
+     * Same as {@link #embed(String, Context, TensorType)}, but operates on a list of text strings.
+     * This will typically be the chunks of a multi-value document field.
+     * Embedders supporting contextualized chunk embeddings or batch processing may override this method.
+     *
+     * @see #embed(String, Context, TensorType)
+     */
+    default List<Tensor> embed(List<String> texts, Context context, TensorType tensorType) {
+        return texts.stream()
+                .map(text -> embed(text, context, tensorType))
+                .toList();
+    }
+
+    /** Batching configuration of embed requests. */
+    record Batching(int maxSize, Duration maxDelay) {
+        public static final Batching DISABLED = new Batching(0, Duration.ZERO);
+        public Batching {
+            if (maxSize < 0) throw new IllegalArgumentException("maxSize must be non-negative, got " + maxSize);
+            if (maxDelay.isNegative()) throw new IllegalArgumentException("maxDelay must be non-negative, got " + maxDelay);
+        }
+        public boolean isEnabled() { return maxSize > 1; }
+        public static Batching of(int maxSize, Duration maxDelay) {
+            if (maxSize <= 1 || maxDelay.isZero() || maxDelay.isNegative()) return DISABLED;
+            return new Batching(maxSize, maxDelay);
+        }
+    }
+
+    default Batching batchingConfig() { return Batching.DISABLED; }
+
+    class Context extends InvocationContext<Context> {
+
+        public Context(String destination) {
+            super(destination);
+        }
+
+        public Context(String destination, Map<Object, Object> cache) {
+            super(destination, cache);
+        }
+
+        public Context(Context other) {
+            super(other);
+        }
+
+        public Context copy() {
+            return new Context(this);
+        }
+
+        /** Return the component id or 'unknown' if not set. */
+        public String getEmbedderId() { return getComponentId(); }
+
+        /** Sets the component id. */
+        public Context setEmbedderId(String componentId) {
+            return setComponentId(componentId);
+        }
+
+    }
+
+    /**
      * Runtime that is injectable through {@link Embedder} constructor.
      */
     @Beta
@@ -78,97 +133,19 @@ public interface Embedder {
         void sampleEmbeddingLatency(double millis, Context ctx);
         /** Add a sample embedding length to this */
         void sampleSequenceLength(long length, Context ctx);
+        /** Add a sample request count to this */
+        void sampleRequestCount(Context ctx);
+        /** Add a sample request failure to this */
+        void sampleRequestFailure(Context ctx, int statusCode);
 
         static Runtime testInstance() {
             return new Runtime() {
                 @Override public void sampleEmbeddingLatency(double millis, Context ctx) { }
                 @Override public void sampleSequenceLength(long length, Context ctx) { }
+                @Override public void sampleRequestCount(Context ctx) { }
+                @Override public void sampleRequestFailure(Context ctx, int statusCode) { }
             };
         }
-    }
-
-    class Context {
-
-        private Language language = Language.UNKNOWN;
-        private String destination;
-        private String embedderId = "unknown";
-        private final Map<Object, Object> cache;
-
-        public Context(String destination) {
-            this(destination, LazyMap.newHashMap());
-        }
-
-        /**
-         * @param destination the name of the recipient of this tensor
-         * @param cache a cache shared between all embed invocations for a single request
-         */
-        public Context(String destination, Map<Object, Object> cache) {
-            this.destination = destination;
-            this.cache = Objects.requireNonNull(cache);
-        }
-
-        private Context(Context other) {
-            language = other.language;
-            destination = other.destination;
-            embedderId = other.embedderId;
-            this.cache = other.cache;
-        }
-
-        public Context copy() { return new Context(this); }
-
-        /** Returns the language of the text, or UNKNOWN (default) to use a language independent embedding */
-        public Language getLanguage() { return language; }
-
-        /** Sets the language of the text, or UNKNOWN to use language independent embedding */
-        public Context setLanguage(Language language) {
-            this.language = language != null ? language : Language.UNKNOWN;
-            return this;
-        }
-
-        /**
-         * Returns the name of the recipient of this tensor.
-         *
-         * This is either a query feature name
-         * ("query(feature)"), or a schema and field name concatenated by a dot ("schema.field").
-         * This cannot be null.
-         */
-        public String getDestination() { return destination; }
-
-        /**
-         * Sets the name of the recipient of this tensor.
-         *
-         * This is either a query feature name
-         * ("query(feature)"), or a schema and field name concatenated by a dot ("schema.field").
-         */
-        public Context setDestination(String destination) {
-            this.destination = destination;
-            return this;
-        }
-
-        /** Return the embedder id or 'unknown' if not set */
-        public String getEmbedderId() { return embedderId; }
-
-        /** Sets the embedder id */
-        public Context setEmbedderId(String embedderId) {
-            this.embedderId = embedderId;
-            return this;
-        }
-
-        public void putCachedValue(Object key, Object value) {
-            cache.put(key, value);
-        }
-
-        /** Returns a cached value, or null if not present. */
-        public Object getCachedValue(Object key) {
-            return cache.get(key);
-        }
-
-        /** Returns the cached value, or computes and caches it if not present. */
-        @SuppressWarnings("unchecked")
-        public <T> T computeCachedValueIfAbsent(Object key, Supplier<? extends T> supplier) {
-            return (T) cache.computeIfAbsent(key, __ -> supplier.get());
-        }
-
     }
 
     class FailingEmbedder implements Embedder {
@@ -191,6 +168,20 @@ public interface Embedder {
         @Override
         public Tensor embed(String text, Context context, TensorType tensorType) {
             throw new IllegalStateException(message);
+        }
+
+        @Override
+        public boolean equals(Object other) {
+            return other instanceof FailingEmbedder;
+        }
+
+        @Override
+        public int hashCode() {
+            return getClass().getName().hashCode();
+        }
+
+        public static Function<String, Embedder> factory() {
+            return FailingEmbedder::new;
         }
 
     }

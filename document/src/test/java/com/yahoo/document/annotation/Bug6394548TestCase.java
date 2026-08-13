@@ -5,16 +5,26 @@ import com.yahoo.document.Document;
 import com.yahoo.document.DocumentTypeManager;
 import com.yahoo.document.DocumentTypeManagerConfigurer;
 import com.yahoo.document.StructDataType;
-import com.yahoo.document.datatypes.*;
-import com.yahoo.document.serialization.*;
+import com.yahoo.document.datatypes.Array;
+import com.yahoo.document.datatypes.DoubleFieldValue;
+import com.yahoo.document.datatypes.IntegerFieldValue;
+import com.yahoo.document.datatypes.MapFieldValue;
+import com.yahoo.document.datatypes.StringFieldValue;
+import com.yahoo.document.datatypes.Struct;
+import com.yahoo.document.serialization.DocumentDeserializer;
+import com.yahoo.document.serialization.DocumentDeserializerFactory;
+import com.yahoo.document.serialization.DocumentSerializer;
+import com.yahoo.document.serialization.DocumentSerializerFactory;
 import com.yahoo.io.GrowableByteBuffer;
 import org.junit.Test;
 
 import java.util.ArrayList;
 import java.util.Collections;
 
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
 
+@SuppressWarnings({"deprecation", "removal"})
 public class Bug6394548TestCase {
     @Test
     @SuppressWarnings("deprecation")
@@ -46,11 +56,11 @@ public class Bug6394548TestCase {
         String annotationsBefore = dumpAllAnnotations(tree);
 
         GrowableByteBuffer buffer = new GrowableByteBuffer();
-        DocumentSerializer serializer = DocumentSerializerFactory.create6(buffer);
+        DocumentSerializer serializer = DocumentSerializerFactory.createHead(buffer);
         serializer.write(doc);
 
         buffer.flip();
-        DocumentDeserializer deserializer = DocumentDeserializerFactory.create6(manager, buffer);
+        DocumentDeserializer deserializer = DocumentDeserializerFactory.createHead(manager, buffer);
         Document doc2 = new Document(deserializer);
 
         System.out.println(doc2.toXml());

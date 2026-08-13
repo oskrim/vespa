@@ -4,6 +4,7 @@ package com.yahoo.prelude.querytransform;
 import com.yahoo.prelude.query.AndItem;
 import com.yahoo.prelude.query.CompositeItem;
 import com.yahoo.prelude.query.EquivItem;
+import com.yahoo.prelude.query.FalseItem;
 import com.yahoo.prelude.query.HasIndexItem;
 import com.yahoo.prelude.query.IndexedItem;
 import com.yahoo.prelude.query.Item;
@@ -104,8 +105,7 @@ public class QueryRewrite {
         NotItem theOnlyNot = null;
         for (int i = 0; i < parent.getItemCount(); i++) {
             Item child = parent.getItem(i);
-            if (child instanceof NotItem) {
-                NotItem thisNot = (NotItem) child;
+            if (child instanceof NotItem thisNot) {
                 parent.setItem(i, thisNot.getPositiveItem());
                 if (theOnlyNot == null) {
                     theOnlyNot = thisNot;
@@ -181,9 +181,13 @@ public class QueryRewrite {
                     }
                     break;
                 case RECALLS_NOTHING:
-                    if ((item instanceof OrItem) || (item instanceof EquivItem) && item.items().size() > 1) {
-                        item.removeItem(i);
-                    } else if ((item instanceof AndItem) || (item instanceof NearItem) || (item instanceof WeakAndItem)) {
+                    if (item instanceof OrItem || item instanceof EquivItem || item instanceof WeakAndItem) {
+                        if (item.items().size() > 1) {
+                            item.removeItem(i);
+                        } else {
+                            return Recall.RECALLS_NOTHING;
+                        }
+                    } else if ((item instanceof AndItem) || (item instanceof NearItem)) {
                         return Recall.RECALLS_NOTHING;
                     } else if (item instanceof RankItem) {
                         if (i == 0) return Recall.RECALLS_NOTHING;
@@ -219,12 +223,11 @@ public class QueryRewrite {
             return item.isRanked();
         }
     }
-    
+
     private static Item collapseSingleComposites(Item item) {
-        if (!(item instanceof CompositeItem)) {
+        if (!(item instanceof CompositeItem parent)) {
             return item;
         }
-        CompositeItem parent = (CompositeItem)item;
         int numChildren = parent.getItemCount();
         for (int i = 0; i < numChildren; ++i) {
             Item oldChild = parent.getItem(i);
@@ -237,8 +240,7 @@ public class QueryRewrite {
     }
 
     private static Item rewriteSddocname(Item item) {
-        if (item instanceof CompositeItem) {
-            CompositeItem parent = (CompositeItem)item;
+        if (item instanceof CompositeItem parent) {
             for (int i = 0, len = parent.getItemCount(); i < len; ++i) {
                 Item oldChild = parent.getItem(i);
                 Item newChild = rewriteSddocname(oldChild);
@@ -246,8 +248,7 @@ public class QueryRewrite {
                     parent.setItem(i, newChild);
                 }
             }
-        } else if (item instanceof SimpleIndexedItem) {
-            SimpleIndexedItem oldItem = (SimpleIndexedItem)item;
+        } else if (item instanceof SimpleIndexedItem oldItem) {
             if (Hit.SDDOCNAME_FIELD.equals(oldItem.getIndexName())) {
                 SubstringItem newItem = new SubstringItem(oldItem.getIndexedString());
                 newItem.setIndexName("[documentmetastore]");

@@ -12,9 +12,14 @@ import ai.vespa.schemals.index.Symbol;
 import ai.vespa.schemals.index.FieldIndex.IndexingType;
 import ai.vespa.schemals.index.Symbol.SymbolType;
 import ai.vespa.schemals.tree.CSTUtils;
+import ai.vespa.schemals.tree.Node;
 import ai.vespa.schemals.tree.SchemaNode;
 import ai.vespa.schemals.tree.rankingexpression.RankNode;
 
+/**
+ * An argument referring to a named field.
+ * Can enforce specific field types and indexing modes.
+ */
 public class FieldArgument extends SymbolArgument {
 
     public static enum FieldType {
@@ -25,7 +30,8 @@ public class FieldArgument extends SymbolArgument {
         NUMERIC_ARRAY,
         STRING,
         STRING_ARRAY,
-        POSITION
+        POSITION,
+        PREDICATE
     };
 
     public static final EnumSet<FieldType> AnyFieldType = EnumSet.allOf(FieldType.class);
@@ -34,6 +40,11 @@ public class FieldArgument extends SymbolArgument {
     public static final EnumSet<FieldType> SingleValueOrArrayType = EnumSet.of(
         FieldType.NUMERIC,
         FieldType.STRING,
+        FieldType.NUMERIC_ARRAY,
+        FieldType.STRING_ARRAY
+    );
+
+    public static final EnumSet<FieldType> ArrayType = EnumSet.of(
         FieldType.NUMERIC_ARRAY,
         FieldType.STRING_ARRAY
     );
@@ -114,7 +125,7 @@ public class FieldArgument extends SymbolArgument {
             RankNode featureNode = node.getChildren().get(0);
             Optional<SchemaNode> firstProperty = featureNode.getProperty();
             if (firstProperty.isPresent()) {
-                SchemaNode parentNode = firstProperty.get().getParent();
+                Node parentNode = firstProperty.get().getParent();
                 Optional<Symbol> scope = CSTUtils.findScope(parentNode);
 
                 for (int i = 0; i < parentNode.size(); i += 2) {

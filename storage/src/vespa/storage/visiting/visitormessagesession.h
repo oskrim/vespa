@@ -7,7 +7,7 @@
 #include <vespa/messagebus/result.h>
 
 namespace documentapi {
-    class DocumentMessage;
+class DocumentMessage;
 }
 
 namespace storage {
@@ -15,14 +15,12 @@ namespace storage {
 struct VisitorMessageSession {
     using UP = std::unique_ptr<VisitorMessageSession>;
 
-    virtual ~VisitorMessageSession() {}
+    virtual ~VisitorMessageSession() = default;
 
     virtual mbus::Result send(std::unique_ptr<documentapi::DocumentMessage>) = 0;
 
     /** @return Returns the number of pending messages this session has. */
     virtual uint32_t pending() = 0;
-
 };
 
-} // storage
-
+} // namespace storage

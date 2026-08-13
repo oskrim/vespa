@@ -5,8 +5,8 @@ vespa_add_library(searchlib_common OBJECT
     bitvector.cpp
     bitvectorcache.cpp
     bitvectoriterator.cpp
-    bitword.cpp
     condensedbitvectors.cpp
+    create_and_freeze_times.cpp
     documentlocations.cpp
     documentsummary.cpp
     fileheadercontext.cpp
@@ -25,14 +25,17 @@ vespa_add_library(searchlib_common OBJECT
     matching_elements_fields.cpp
     packets.cpp
     partialbitvector.cpp
+    proto_to_json.cpp
     resultset.cpp
     schedule_sequenced_task_callback.cpp
+    serialized_query_tree.cpp
     serialnumfileheadercontext.cpp
     sort.cpp
     sortdata.cpp
     sortresults.cpp
     sortspec.cpp
     threaded_compactable_lid_space.cpp
+    transient_bitvector_snapshot.cpp
     tunefileinfo.cpp
     unique_issues.cpp
     DEPENDS

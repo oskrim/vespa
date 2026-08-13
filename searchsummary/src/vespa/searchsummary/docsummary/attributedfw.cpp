@@ -1,12 +1,16 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "attributedfw.h"
-#include "docsumwriter.h"
-#include "docsumstate.h"
+
 #include "docsum_field_writer_state.h"
+#include "docsumstate.h"
+#include "docsumwriter.h"
 #include "empty_docsum_field_writer_state.h"
+#include "summary_elements_selector.h"
+
 #include <vespa/eval/eval/value.h>
 #include <vespa/eval/eval/value_codec.h>
+#include <vespa/searchcommon/attribute/i_array_bool_read_view.h>
 #include <vespa/searchcommon/attribute/i_multi_value_attribute.h>
 #include <vespa/searchcommon/attribute/multi_value_traits.h>
 #include <vespa/searchlib/attribute/iattributemanager.h>
@@ -22,10 +26,12 @@ LOG_SETUP(".searchlib.docsummary.attributedfw");
 
 using namespace search;
 using search::attribute::BasicType;
+using search::attribute::IArrayBoolReadView;
 using search::attribute::IAttributeContext;
 using search::attribute::IAttributeVector;
 using search::attribute::IMultiValueAttribute;
 using search::attribute::IMultiValueReadView;
+using search::common::ElementIds;
 using vespalib::Issue;
 using vespalib::Memory;
 using vespalib::eval::Value;
@@ -35,34 +41,27 @@ using vespalib::slime::Symbol;
 
 namespace search::docsummary {
 
-AttrDFW::AttrDFW(const std::string & attrName) :
-    _attrName(attrName)
-{
+AttrDFW::AttrDFW(const std::string& attrName) : _attrName(attrName) {
 }
 
-const attribute::IAttributeVector&
-AttrDFW::get_attribute(const GetDocsumsState& s) const
-{
+const attribute::IAttributeVector& AttrDFW::get_attribute(const GetDocsumsState& s) const {
     return *s.getAttribute(getIndex());
 }
 
 namespace {
 
-class SingleAttrDFW : public AttrDFW
-{
+class SingleAttrDFW : public AttrDFW {
 public:
-    explicit SingleAttrDFW(const std::string & attrName) :
-        AttrDFW(attrName)
-    { }
-    void insertField(uint32_t docid, GetDocsumsState& state, Inserter &target) const override;
+    explicit SingleAttrDFW(const std::string& attrName) : AttrDFW(attrName) {}
+    void insert_field(uint32_t docid, const IDocsumStoreDocument* doc, GetDocsumsState& state,
+                      ElementIds selected_elements, Inserter& target) const override;
     bool isDefaultValue(uint32_t docid, const GetDocsumsState& state) const override {
         return get_attribute(state).isUndefined(docid);
     }
 };
 
-void
-SingleAttrDFW::insertField(uint32_t docid, GetDocsumsState& state, Inserter &target) const
-{
+void SingleAttrDFW::insert_field(uint32_t docid, const IDocsumStoreDocument*, GetDocsumsState& state, ElementIds,
+                                 Inserter& target) const {
     const auto& v = get_attribute(state);
     switch (v.getBasicType()) {
     case BasicType::Type::UINT2:
@@ -87,7 +86,7 @@ SingleAttrDFW::insertField(uint32_t docid, GetDocsumsState& state, Inserter &tar
         break;
     }
     case BasicType::Type::TENSOR: {
-        const tensor::ITensorAttribute *tv = v.asTensorAttribute();
+        const tensor::ITensorAttribute* tv = v.asTensorAttribute();
         assert(tv != nullptr);
         const auto tensor = tv->getTensor(docid);
         if (tensor) {
@@ -116,13 +115,10 @@ SingleAttrDFW::insertField(uint32_t docid, GetDocsumsState& state, Inserter &tar
     return;
 }
 
-
 //-----------------------------------------------------------------------------
 
 template <typename MultiValueType>
-const IMultiValueReadView<MultiValueType>*
-make_read_view(const IAttributeVector& attribute, vespalib::Stash& stash)
-{
+const IMultiValueReadView<MultiValueType>* make_read_view(const IAttributeVector& attribute, vespalib::Stash& stash) {
     auto multi_value_attribute = attribute.as_multi_value_attribute();
     if (multi_value_attribute != nullptr) {
         return multi_value_attribute->make_read_view(IMultiValueAttribute::MultiValueTag<MultiValueType>(), stash);
@@ -130,50 +126,38 @@ make_read_view(const IAttributeVector& attribute, vespalib::Stash& stash)
     return nullptr;
 }
 
-template <typename MultiValueType>
-class MultiAttrDFWState : public DocsumFieldWriterState
-{
-    const std::string&                    _field_name;
+template <typename MultiValueType> class MultiAttrDFWState : public DocsumFieldWriterState {
+    const std::string&                         _field_name;
     const IMultiValueReadView<MultiValueType>* _read_view;
-    const MatchingElements*                    _matching_elements;
+
 public:
-    MultiAttrDFWState(const std::string& field_name, const IAttributeVector& attr, vespalib::Stash& stash, const MatchingElements* matching_elements);
+    MultiAttrDFWState(const std::string& field_name, const IAttributeVector& attr, vespalib::Stash& stash);
     ~MultiAttrDFWState() override;
-    void insertField(uint32_t docid, Inserter& target) override;
+    void insertField(uint32_t docid, ElementIds selected_elements, Inserter& target) override;
 };
 
-
 template <typename MultiValueType>
-MultiAttrDFWState<MultiValueType>::MultiAttrDFWState(const std::string& field_name, const IAttributeVector& attr, vespalib::Stash& stash, const MatchingElements* matching_elements)
-    : _field_name(field_name),
-      _read_view(make_read_view<MultiValueType>(attr, stash)),
-      _matching_elements(matching_elements)
-{
+MultiAttrDFWState<MultiValueType>::MultiAttrDFWState(const std::string& field_name, const IAttributeVector& attr,
+                                                     vespalib::Stash& stash)
+    : _field_name(field_name), _read_view(make_read_view<MultiValueType>(attr, stash)) {
 }
 
-template <typename MultiValueType>
-MultiAttrDFWState<MultiValueType>::~MultiAttrDFWState() = default;
+template <typename MultiValueType> MultiAttrDFWState<MultiValueType>::~MultiAttrDFWState() = default;
 
-template <typename V>
-void
-set_value(V value, Symbol item_symbol, Cursor& cursor)
-{
+template <typename V> void set_value(V value, Symbol item_symbol, Cursor& cursor) {
     if constexpr (std::is_same_v<V, const char*>) {
         cursor.setString(item_symbol, value);
-    } else if constexpr(std::is_floating_point_v<V>) {
+    } else if constexpr (std::is_floating_point_v<V>) {
         cursor.setDouble(item_symbol, value);
     } else {
         cursor.setLong(item_symbol, value);
     }
 }
 
-template <typename V>
-void
-append_value(V value, Cursor& arr)
-{
+template <typename V> void append_value(V value, Cursor& arr) {
     if constexpr (std::is_same_v<V, const char*>) {
         arr.addString(value);
-    } else if constexpr(std::is_floating_point_v<V>) {
+    } else if constexpr (std::is_floating_point_v<V>) {
         arr.addDouble(value);
     } else {
         arr.addLong(value);
@@ -184,9 +168,7 @@ Memory ITEM("item");
 Memory WEIGHT("weight");
 
 template <typename MultiValueType>
-void
-MultiAttrDFWState<MultiValueType>::insertField(uint32_t docid, Inserter& target)
-{
+void MultiAttrDFWState<MultiValueType>::insertField(uint32_t docid, ElementIds selected_elements, Inserter& target) {
     using ValueType = multivalue::ValueType_t<MultiValueType>;
     if (!_read_view) {
         return;
@@ -195,127 +177,149 @@ MultiAttrDFWState<MultiValueType>::insertField(uint32_t docid, Inserter& target)
     if (elements.empty()) {
         return;
     }
-    if (_matching_elements) {
-        const auto& matching_elems = _matching_elements->get_matching_elements(docid, _field_name);
-        if (matching_elems.empty() || matching_elems.back() >= elements.size()) {
+    if (!selected_elements.all_elements()) {
+        if (selected_elements.empty() || selected_elements.back() >= elements.size()) {
             return;
         }
-        Cursor &arr = target.insertArray(elements.size());
+        Cursor& arr = target.insertArray(elements.size());
         if constexpr (multivalue::is_WeightedValue_v<MultiValueType>) {
             Symbol itemSymbol = arr.resolve(ITEM);
             Symbol weightSymbol = arr.resolve(WEIGHT);
-            for (uint32_t id_to_keep : matching_elems) {
-                auto& element = elements[id_to_keep];
+            for (uint32_t id_to_keep : selected_elements) {
+                auto&   element = elements[id_to_keep];
                 Cursor& elemC = arr.addObject();
                 set_value<ValueType>(element.value(), itemSymbol, elemC);
                 elemC.setLong(weightSymbol, element.weight());
             }
         } else {
-            for (uint32_t id_to_keep : matching_elems) {
+            for (uint32_t id_to_keep : selected_elements) {
                 append_value<ValueType>(elements[id_to_keep], arr);
             }
         }
     } else {
-        Cursor &arr = target.insertArray(elements.size());
+        Cursor& arr = target.insertArray(elements.size());
         if constexpr (multivalue::is_WeightedValue_v<MultiValueType>) {
             Symbol itemSymbol = arr.resolve(ITEM);
             Symbol weightSymbol = arr.resolve(WEIGHT);
-            for (const auto & element : elements) {
+            for (const auto& element : elements) {
                 Cursor& elemC = arr.addObject();
                 set_value<ValueType>(element.value(), itemSymbol, elemC);
                 elemC.setLong(weightSymbol, element.weight());
             }
         } else {
-            for (const auto & element : elements) {
+            for (const auto& element : elements) {
                 append_value<ValueType>(element, arr);
             }
         }
     }
 }
 
-class MultiAttrDFW : public AttrDFW {
-private:
-    bool _filter_elements;
-    uint32_t _state_index; // index into _fieldWriterStates in GetDocsumsState
-    std::shared_ptr<MatchingElementsFields> _matching_elems_fields;
+class MultiAttrDFWStateBool : public DocsumFieldWriterState {
+    const IArrayBoolReadView* _read_view;
 
 public:
-    MultiAttrDFW(const std::string& attr_name, bool filter_elements, std::shared_ptr<MatchingElementsFields> matching_elems_fields)
-        : AttrDFW(attr_name),
-          _filter_elements(filter_elements),
-          _state_index(0),
-          _matching_elems_fields(std::move(matching_elems_fields))
-    {
-        if (filter_elements && _matching_elems_fields) {
-            _matching_elems_fields->add_field(attr_name);
-        }
-    }
-    bool setFieldWriterStateIndex(uint32_t fieldWriterStateIndex) override;
-    void insertField(uint32_t docid, GetDocsumsState& state, Inserter& target) const override;
+    MultiAttrDFWStateBool(const IAttributeVector& attr, vespalib::Stash& stash);
+    ~MultiAttrDFWStateBool() override;
+    void insertField(uint32_t docid, ElementIds selected_elements, Inserter& target) override;
 };
 
-bool
-MultiAttrDFW::setFieldWriterStateIndex(uint32_t fieldWriterStateIndex)
-{
+MultiAttrDFWStateBool::MultiAttrDFWStateBool(const IAttributeVector& attr, vespalib::Stash& stash)
+    : _read_view(nullptr) {
+    auto multi_value_attribute = attr.as_multi_value_attribute();
+    if (multi_value_attribute != nullptr) {
+        _read_view = multi_value_attribute->make_read_view(IMultiValueAttribute::ArrayBoolTag(), stash);
+    }
+}
+
+MultiAttrDFWStateBool::~MultiAttrDFWStateBool() = default;
+
+void MultiAttrDFWStateBool::insertField(uint32_t docid, ElementIds selected_elements, Inserter& target) {
+    if (!_read_view) {
+        return;
+    }
+    auto elements = _read_view->get_values(docid);
+    if (elements.empty()) {
+        return;
+    }
+    if (!selected_elements.all_elements()) {
+        if (selected_elements.empty() || selected_elements.back() >= elements.size()) {
+            return;
+        }
+        Cursor& arr = target.insertArray();
+        for (uint32_t id_to_keep : selected_elements) {
+            arr.addBool(elements[id_to_keep]);
+        }
+    } else {
+        Cursor& arr = target.insertArray(elements.size());
+        for (bool element : elements) {
+            arr.addBool(element);
+        }
+    }
+}
+
+class MultiAttrDFW : public AttrDFW {
+private:
+    uint32_t _state_index; // index into _fieldWriterStates in GetDocsumsState
+
+public:
+    MultiAttrDFW(const std::string& attr_name) : AttrDFW(attr_name), _state_index(0) {}
+    bool setFieldWriterStateIndex(uint32_t fieldWriterStateIndex) override;
+    void insert_field(uint32_t docid, const IDocsumStoreDocument* doc, GetDocsumsState& state,
+                      ElementIds selected_elements, Inserter& target) const override;
+};
+
+bool MultiAttrDFW::setFieldWriterStateIndex(uint32_t fieldWriterStateIndex) {
     _state_index = fieldWriterStateIndex;
     return true;
 }
 
 template <typename DataType>
-DocsumFieldWriterState*
-make_field_writer_state_helper(const std::string& field_name, const IAttributeVector& attr, vespalib::Stash& stash, const MatchingElements* matching_elements)
-{
+DocsumFieldWriterState* make_field_writer_state_helper(const std::string& field_name, const IAttributeVector& attr,
+                                                       vespalib::Stash& stash) {
     bool is_weighted_set = attr.hasWeightedSetType();
     if (is_weighted_set) {
-        return &stash.create<MultiAttrDFWState<multivalue::WeightedValue<DataType>>>(field_name, attr, stash, matching_elements);
+        return &stash.create<MultiAttrDFWState<multivalue::WeightedValue<DataType>>>(field_name, attr, stash);
     } else {
-        return &stash.create<MultiAttrDFWState<DataType>>(field_name, attr, stash, matching_elements);
+        return &stash.create<MultiAttrDFWState<DataType>>(field_name, attr, stash);
     }
 }
 
-DocsumFieldWriterState*
-make_field_writer_state(const std::string& field_name, const IAttributeVector& attr, vespalib::Stash& stash, const MatchingElements* matching_elements)
-{
+DocsumFieldWriterState* make_field_writer_state(const std::string& field_name, const IAttributeVector& attr,
+                                                vespalib::Stash& stash) {
     auto type = attr.getBasicType();
     switch (type) {
     case BasicType::Type::STRING:
-        return make_field_writer_state_helper<const char*>(field_name, attr, stash, matching_elements);
+        return make_field_writer_state_helper<const char*>(field_name, attr, stash);
     case BasicType::Type::INT8:
-        return make_field_writer_state_helper<int8_t>(field_name, attr, stash, matching_elements);
+        return make_field_writer_state_helper<int8_t>(field_name, attr, stash);
     case BasicType::Type::INT16:
-        return make_field_writer_state_helper<int16_t>(field_name, attr, stash, matching_elements);
+        return make_field_writer_state_helper<int16_t>(field_name, attr, stash);
     case BasicType::Type::INT32:
-        return make_field_writer_state_helper<int32_t>(field_name, attr, stash, matching_elements);
+        return make_field_writer_state_helper<int32_t>(field_name, attr, stash);
     case BasicType::Type::INT64:
-        return make_field_writer_state_helper<int64_t>(field_name, attr, stash, matching_elements);
+        return make_field_writer_state_helper<int64_t>(field_name, attr, stash);
     case BasicType::Type::FLOAT:
-        return make_field_writer_state_helper<float>(field_name, attr, stash, matching_elements);
+        return make_field_writer_state_helper<float>(field_name, attr, stash);
     case BasicType::Type::DOUBLE:
-        return make_field_writer_state_helper<double>(field_name, attr, stash, matching_elements);
-    default:
-        ;
+        return make_field_writer_state_helper<double>(field_name, attr, stash);
+    case BasicType::Type::BOOL:
+        return &stash.create<MultiAttrDFWStateBool>(attr, stash);
+    default:;
     }
     return &stash.create<EmptyDocsumFieldWriterState>();
 }
 
-void
-MultiAttrDFW::insertField(uint32_t docid, GetDocsumsState& state, vespalib::slime::Inserter &target) const
-{
+void MultiAttrDFW::insert_field(uint32_t docid, const IDocsumStoreDocument*, GetDocsumsState& state,
+                                ElementIds selected_elements, Inserter& target) const {
     auto& field_writer_state = state._fieldWriterStates[_state_index];
     if (!field_writer_state) {
-        const MatchingElements *matching_elements = nullptr;
-        if (_filter_elements) {
-            matching_elements = &state.get_matching_elements(*_matching_elems_fields);
-        }
         const auto& attr = get_attribute(state);
-        field_writer_state = make_field_writer_state(getAttributeName(), attr, state.get_stash(), matching_elements);
+        field_writer_state = make_field_writer_state(getAttributeName(), attr, state.get_stash());
     }
-    field_writer_state->insertField(docid, target);
+    field_writer_state->insertField(docid, selected_elements, target);
 }
 
-std::unique_ptr<DocsumFieldWriter>
-create_multi_writer(const IAttributeVector& attr, bool filter_elements, std::shared_ptr<MatchingElementsFields> matching_elems_fields)
-{
+std::unique_ptr<DocsumFieldWriter> create_multi_writer(const IAttributeVector& attr) {
     auto type = attr.getBasicType();
     switch (type) {
     case BasicType::STRING:
@@ -325,7 +329,8 @@ create_multi_writer(const IAttributeVector& attr, bool filter_elements, std::sha
     case BasicType::INT64:
     case BasicType::FLOAT:
     case BasicType::DOUBLE:
-        return std::make_unique<MultiAttrDFW>(attr.getName(), filter_elements, std::move(matching_elems_fields));
+    case BasicType::BOOL:
+        return std::make_unique<MultiAttrDFW>(attr.getName());
     default:
         // should not happen
         LOG(error, "Bad value for attribute type: %u", type);
@@ -333,25 +338,21 @@ create_multi_writer(const IAttributeVector& attr, bool filter_elements, std::sha
     }
 }
 
-}
+} // namespace
 
-std::unique_ptr<DocsumFieldWriter>
-AttributeDFWFactory::create(const IAttributeManager& attr_mgr,
-                            const std::string& attr_name,
-                            bool filter_elements,
-                            std::shared_ptr<MatchingElementsFields> matching_elems_fields)
-{
-    auto ctx = attr_mgr.createContext();
+std::unique_ptr<DocsumFieldWriter> AttributeDFWFactory::create(const IAttributeManager& attr_mgr,
+                                                               const std::string&       attr_name) {
+    auto        ctx = attr_mgr.createContext();
     const auto* attr = ctx->getAttribute(attr_name);
     if (attr == nullptr) {
         Issue::report("No valid attribute vector found: '%s'", attr_name.c_str());
         return {};
     }
     if (attr->hasMultiValue()) {
-        return create_multi_writer(*attr, filter_elements, std::move(matching_elems_fields));
+        return create_multi_writer(*attr);
     } else {
         return std::make_unique<SingleAttrDFW>(attr->getName());
     }
 }
 
-}
+} // namespace search::docsummary

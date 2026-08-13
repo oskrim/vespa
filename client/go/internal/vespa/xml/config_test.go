@@ -265,6 +265,51 @@ func TestParseNodeCount(t *testing.T) {
 	assertNodeCount(t, "[2, 1]", 0, 0, true)
 }
 
+func TestParseWithoutTokenClient(t *testing.T) {
+	s := `
+<services xmlns:deploy="vespa" xmlns:preprocess="properties">
+  <container id="qrs">
+    <clients>
+    	<client id="client0">
+     		<certificate file="security/clients.pem"/>
+     	</client>
+    </clients>
+  </container>
+</services>
+`
+	services, err := ReadServices(strings.NewReader(s))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if services.ContainsAnyTokenClient() {
+		t.Fatal("parser indicates token endpoint, but none present")
+	}
+}
+
+func TestParseWithTokenClient(t *testing.T) {
+	s := `
+<services xmlns:deploy="vespa" xmlns:preprocess="properties">
+  <container id="qrs">
+    <clients>
+    	<client id="client0">
+     		<certificate file="security/clients.pem"/>
+     	</client>
+      	<client id="client1">
+      		<token id="my-cool-token"/>
+      	</client>
+    </clients>
+  </container>
+</services>
+`
+	services, err := ReadServices(strings.NewReader(s))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !services.ContainsAnyTokenClient() {
+		t.Fatal("parser indicates no token endpoint, but should be present")
+	}
+}
+
 func assertReplace(t *testing.T, input, want, parentElement, element string, data interface{}) {
 	got, err := Replace(strings.NewReader(input), parentElement, element, data)
 	if err != nil {
@@ -285,6 +330,51 @@ func assertNodeCount(t *testing.T, input string, wantMin, wantMax int, wantErr b
 	}
 	if min != wantMin || max != wantMax {
 		t.Errorf("got min = %d, max = %d, want min = %d, max = %d", min, max, wantMin, wantMax)
+	}
+}
+
+func TestVaultNames(t *testing.T) {
+	// No secrets element
+	s, err := ReadServices(strings.NewReader(`<services><container id="c"><nodes count="1"/></container></services>`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := s.VaultNames(); len(got) != 0 {
+		t.Errorf("expected no vault names, got %v", got)
+	}
+
+	// Single secret with vault
+	s, err = ReadServices(strings.NewReader(`<services>
+  <container id="c">
+    <secrets>
+      <secret vault="my-vault" name="foo"/>
+    </secrets>
+    <nodes count="1"/>
+  </container>
+</services>`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := s.VaultNames(); !reflect.DeepEqual(got, []string{"my-vault"}) {
+		t.Errorf("expected [my-vault], got %v", got)
+	}
+
+	// Multiple vaults (deduplicated and sorted)
+	s, err = ReadServices(strings.NewReader(`<services>
+  <container id="c">
+    <secrets>
+      <secret vault="vault-b" name="foo"/>
+      <secret vault="vault-a" name="bar"/>
+      <secret vault="vault-b" name="baz"/>
+    </secrets>
+    <nodes count="1"/>
+  </container>
+</services>`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := s.VaultNames(); !reflect.DeepEqual(got, []string{"vault-a", "vault-b"}) {
+		t.Errorf("expected [vault-a vault-b], got %v", got)
 	}
 }
 

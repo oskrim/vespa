@@ -1,33 +1,36 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "resultclass.h"
+
 #include "docsum_field_writer.h"
+#include "summary_elements_selector.h"
+
+#include <vespa/searchlib/common/matching_elements_fields.h>
+
 #include <vespa/vespalib/stllike/hashtable.hpp>
 
 namespace search::docsummary {
 
-ResultClass::ResultClass(const char *name)
+ResultClass::ResultClass(const std::string& name)
     : _name(name),
       _entries(),
       _nameMap(),
       _dynInfo(),
       _omit_summary_features(false),
-      _num_field_writer_states(0)
-{ }
-
+      _num_field_writer_states(0),
+      _matching_elements_fields() {
+    _matching_elements_fields = std::make_shared<MatchingElementsFields>();
+}
 
 ResultClass::~ResultClass() = default;
 
-int
-ResultClass::getIndexFromName(const char* name) const
-{
+int ResultClass::getIndexFromName(const std::string& name) const {
     auto found = _nameMap.find(name);
     return (found != _nameMap.end()) ? found->second : -1;
 }
 
-bool
-ResultClass::addConfigEntry(const char *name, std::unique_ptr<DocsumFieldWriter> docsum_field_writer)
-{
+bool ResultClass::addConfigEntry(const std::string& name, const SummaryElementsSelector& elements_selector,
+                                 std::unique_ptr<DocsumFieldWriter> docsum_field_writer) {
     if (_nameMap.find(name) != _nameMap.end()) {
         return false;
     }
@@ -42,20 +45,17 @@ ResultClass::addConfigEntry(const char *name, std::unique_ptr<DocsumFieldWriter>
             ++_num_field_writer_states;
         }
     }
+    e.set_elements_selector(elements_selector);
     e.set_writer(std::move(docsum_field_writer));
     _entries.push_back(std::move(e));
     return true;
 }
 
-bool
-ResultClass::addConfigEntry(const char *name)
-{
-    return addConfigEntry(name, {});
+bool ResultClass::addConfigEntry(const std::string& name) {
+    return addConfigEntry(name, SummaryElementsSelector::select_all(), {});
 }
 
-bool
-ResultClass::all_fields_generated(const vespalib::hash_set<std::string>& fields) const
-{
+bool ResultClass::all_fields_generated(const vespalib::hash_set<std::string>& fields) const {
     if (_dynInfo._generateCnt == getNumEntries()) {
         return true;
     }
@@ -70,4 +70,4 @@ ResultClass::all_fields_generated(const vespalib::hash_set<std::string>& fields)
     return true;
 }
 
-}
+} // namespace search::docsummary

@@ -12,22 +12,20 @@ namespace search::index {
 class FieldLengthInfo {
 private:
     double   _average_field_length;
+    double   _average_element_length;
     uint32_t _num_samples;
 
 public:
-    FieldLengthInfo() noexcept
-        : FieldLengthInfo(0.0, 0)
-    {
-    }
+    FieldLengthInfo() noexcept : FieldLengthInfo(0.0, 0.0, 0) {}
 
-    FieldLengthInfo(double average_field_length, uint32_t num_samples) noexcept
+    FieldLengthInfo(double average_field_length, double average_element_length, uint32_t num_samples) noexcept
         : _average_field_length(average_field_length),
-          _num_samples(num_samples)
-    {
-    }
+          _average_element_length(average_element_length),
+          _num_samples(num_samples) {}
 
     [[nodiscard]] double get_average_field_length() const noexcept { return _average_field_length; }
+    [[nodiscard]] double get_average_element_length() const noexcept { return _average_element_length; }
     [[nodiscard]] uint32_t get_num_samples() const noexcept { return _num_samples; }
 };
 
-}
+} // namespace search::index

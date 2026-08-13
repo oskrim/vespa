@@ -1,7 +1,13 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.indexinglanguage.expressions;
 
-import com.yahoo.document.*;
+import com.yahoo.document.ArrayDataType;
+import com.yahoo.document.DataType;
+import com.yahoo.document.DocumentType;
+import com.yahoo.document.Field;
+import com.yahoo.document.MapDataType;
+import com.yahoo.document.StructDataType;
+import com.yahoo.document.WeightedSetDataType;
 import com.yahoo.document.datatypes.Array;
 import com.yahoo.document.datatypes.FieldValue;
 import com.yahoo.document.datatypes.MapFieldValue;
@@ -23,9 +29,11 @@ public final class ForEachExpression extends CompositeExpression {
     private final Expression expression;
 
     public ForEachExpression(Expression expression) {
-        super(UnresolvedDataType.INSTANCE);
         this.expression = Objects.requireNonNull(expression);
     }
+
+    @Override
+    public boolean isMutating() { return expression.isMutating(); }
 
     public Expression getInnerExpression() { return expression; }
 
@@ -41,60 +49,81 @@ public final class ForEachExpression extends CompositeExpression {
     }
 
     @Override
-    public DataType setInputType(DataType inputType, VerificationContext context) {
-        // TODO: Activate type checking
-        // if ( ! inputType.isMultivalue())
-        //    throw new IllegalArgumentException("for_each requires a multivalue type, but gets " + inputType);
-        expression.setInputType(inputType.getNestedType(), context);
-        return super.setInputType(inputType, context);
-    }
+    public DataType setInputType(DataType inputType, TypeContext context) {
+        super.setInputType(inputType, context);
+        if (inputType == null) return null;
 
-    @Override
-    public DataType setOutputType(DataType outputType, VerificationContext context) {
-        // TODO: Activate type checking
-        // if ( ! outputType.isMultivalue())
-        //    throw new IllegalArgumentException("for_each produces a multivalue type, but " + outputType + " is required");
-        expression.setOutputType(outputType.getNestedType(), context);
-        return super.setOutputType(outputType, context);
-    }
-
-    @Override
-    protected void doVerify(VerificationContext context) {
-        DataType valueType = context.getCurrentType();
-        if (valueType instanceof ArrayDataType || valueType instanceof WeightedSetDataType) {
-            // Set type for block evaluation
-            context.setCurrentType(valueType.getNestedType());
-
-            // Evaluate block, which sets valueType to the output of the block
-            context.verify(expression);
-
+        if (inputType instanceof ArrayDataType || inputType instanceof WeightedSetDataType) {
             // Value type outside block becomes the collection type having the block output type as argument
-            if (valueType instanceof ArrayDataType) {
-                context.setCurrentType(DataType.getArray(context.getCurrentType()));
-            } else {
-                WeightedSetDataType wset = (WeightedSetDataType)valueType;
-                context.setCurrentType(DataType.getWeightedSet(context.getCurrentType(), wset.createIfNonExistent(), wset.removeIfZero()));
-            }
+            return withInnerType(expression.setInputType(inputType.getNestedType(), context), inputType);
         }
-        else if (valueType instanceof StructDataType) {
-            for (Field field : ((StructDataType)valueType).getFields()) {
-                DataType fieldType = field.getDataType();
-                DataType structValueType = context.setCurrentType(fieldType).verify(expression).getCurrentType();
-                if (!fieldType.isAssignableFrom(structValueType))
-                    throw new VerificationException(this, "Expected " + fieldType.getName() + " output, got " +
-                                                          structValueType.getName());
-            }
-            context.setCurrentType(valueType);
+        else if (inputType instanceof StructDataType struct) {
+            return verifyStructFields(struct, context);
         }
-        else if (valueType instanceof MapDataType) {
+        if (inputType instanceof MapDataType) {
             // Inner value will be MapEntryFieldValue which has the same type as the map
-            DataType outputType = context.verify(expression).getCurrentType();
-            context.setCurrentType(new ArrayDataType(outputType));
+            DataType outputType = expression.setInputType(inputType, context);
+            if (outputType == null) return getOutputType(context);
+            return DataType.getArray(outputType);
         }
         else {
             throw new VerificationException(this, "Expected Array, Struct, WeightedSet or Map input, got " +
-                                                  valueType.getName());
+                                                  inputType.getName());
         }
+    }
+
+    @Override
+    public DataType setOutputType(DataType outputType, TypeContext context) {
+        if (outputType == null) return null;
+        super.setOutputType(outputType, context);
+
+        if (outputType instanceof ArrayDataType || outputType instanceof WeightedSetDataType) {
+            DataType innerInputType = expression.setOutputType(outputType.getNestedType(), context);
+            if (innerInputType instanceof MapDataType mapDataType) // A map converted to an array of entries
+                return mapDataType;
+            else
+                return withInnerType(innerInputType, outputType);
+        }
+        else if (outputType instanceof StructDataType struct) {
+            return verifyStructFields(struct, context);
+        }
+        else if (outputType instanceof AnyDataType) {
+            return outputType;
+        }
+        else {
+            throw new VerificationException(this, "Expected Array, Struct, WeightedSet or Map input, got " +
+                                                  outputType.getName());
+        }
+    }
+
+    private DataType withInnerType(DataType innerType, DataType collectionType) {
+        if (innerType == null) return null;
+        if (collectionType instanceof WeightedSetDataType wset)
+            return DataType.getWeightedSet(innerType, wset.createIfNonExistent(), wset.removeIfZero());
+        else
+            return DataType.getArray(innerType);
+    }
+
+    /**
+     * Verifies that each struct field is compatible with the expression.
+     * This is symmetric in both verification directions since the expression just need to be compatible with
+     * all the struct fields.
+     */
+    private DataType verifyStructFields(StructDataType struct, TypeContext context) {
+        for (Field field : struct.getFields()) {
+            DataType fieldType = field.getDataType();
+            DataType fieldOutputType = expression.setInputType(fieldType, context);
+            if (fieldOutputType != null && ! fieldOutputType.isAssignableTo(fieldType))
+                throw new VerificationException(this, "Struct field '" + field.getName() + "' has type " + fieldType.getName() +
+                                                      " but expression produces " + fieldOutputType.getName());
+            DataType fieldInputType = expression.setOutputType(fieldType, context);
+            if (fieldOutputType != null && ! fieldType.isAssignableTo(fieldInputType))
+                throw new VerificationException(this, "Struct field '" + field.getName() + "' has type " + fieldType.getName() +
+                                                      " but expression requires " + fieldInputType.getName());
+            if (fieldOutputType == null && fieldInputType == null)
+                return null; // Neither direction could be inferred
+        }
+        return struct;
     }
 
     @Override
@@ -102,12 +131,8 @@ public final class ForEachExpression extends CompositeExpression {
         FieldValue input = context.getCurrentValue();
         if (input instanceof Array || input instanceof WeightedSet) {
             FieldValue next = new ExecutionConverter(context, expression).convert(input);
-            if (next == null) {
-                VerificationContext verificationContext = new VerificationContext(context.getFieldValue());
-                context.fillVariableTypes(verificationContext);
-                verificationContext.setCurrentType(input.getDataType()).verify(this);
-                next = verificationContext.getCurrentType().createFieldValue();
-            }
+            if (next == null)
+                next = getOutputType().createFieldValue();
             context.setCurrentValue(next);
         } else if (input instanceof Struct || input instanceof Map) {
             context.setCurrentValue(new ExecutionConverter(context, expression).convert(input));
@@ -115,14 +140,6 @@ public final class ForEachExpression extends CompositeExpression {
             throw new IllegalArgumentException("Expected Array, Struct, WeightedSet or Map input, got " +
                                                input.getDataType().getName());
         }
-    }
-
-    @Override
-    public DataType createdOutputType() {
-        if (expression.createdOutputType() == null) {
-            return null;
-        }
-        return UnresolvedDataType.INSTANCE;
     }
 
     @Override
@@ -162,7 +179,7 @@ public final class ForEachExpression extends CompositeExpression {
         /** Converts a map into an array by passing each entry through the expression. */
         @Override
         protected FieldValue convertMap(MapFieldValue<FieldValue, FieldValue> map) {
-            var values = new Array<>(new ArrayDataType(expression.createdOutputType()), map.size());
+            var values = new Array<>(new ArrayDataType(expression.getOutputType()), map.size());
             for (var entry : map.entrySet())
                 values.add(doConvert(new MapEntryFieldValue(entry.getKey(), entry.getValue())));
             return values;

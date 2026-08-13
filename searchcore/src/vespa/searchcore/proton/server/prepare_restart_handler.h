@@ -3,6 +3,8 @@
 #pragma once
 
 #include <vespa/config-proton.h>
+#include <vespa/searchcore/proton/flushengine/set_strategy_result.h>
+
 #include <condition_variable>
 #include <memory>
 #include <mutex>
@@ -22,16 +24,11 @@ public:
     using ProtonConfig = vespa::config::search::core::internal::InternalProtonType;
 
 private:
-    FlushEngine &_flushEngine;
-    std::mutex _mutex;
-    std::condition_variable _cond;
-    bool _running;
-
-    void performPrepareRestart(const ProtonConfig &protonCfg, std::unique_lock<std::mutex> &lock);
+    FlushEngine& _flushEngine;
 
 public:
-    PrepareRestartHandler(FlushEngine &flushEngine);
-    bool prepareRestart(const ProtonConfig &protonCfg);
+    PrepareRestartHandler(FlushEngine& flushEngine);
+    flushengine::SetStrategyResult prepare_restart2(const ProtonConfig& protonCfg, uint32_t wait_strategy_id);
 };
 
-}
+} // namespace proton

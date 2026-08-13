@@ -5,11 +5,9 @@
 
 namespace config {
 
-
-class ConfigProvider
-{
+class ConfigProvider {
 public:
-    virtual ~ConfigProvider() { }
+    virtual ~ConfigProvider() = default;
 
     /**
      * Fetches the appropriate ConfigValue.
@@ -27,4 +25,3 @@ public:
 };
 
 } // namespace config
-

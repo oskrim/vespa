@@ -3,6 +3,10 @@ package ai.vespa.metricsproxy.http.application;
 
 import ai.vespa.metricsproxy.core.ConsumersConfig;
 import ai.vespa.metricsproxy.core.MetricsConsumers;
+import ai.vespa.metricsproxy.metric.dimensions.ApplicationDimensions;
+import ai.vespa.metricsproxy.metric.dimensions.ApplicationDimensionsConfig;
+import ai.vespa.metricsproxy.metric.dimensions.NodeDimensions;
+import ai.vespa.metricsproxy.metric.dimensions.NodeDimensionsConfig;
 import ai.vespa.metricsproxy.metric.dimensions.PublicDimensions;
 import ai.vespa.metricsproxy.metric.model.ConsumerId;
 import ai.vespa.metricsproxy.metric.model.json.GenericApplicationModel;
@@ -29,6 +33,7 @@ import static ai.vespa.metricsproxy.http.ValuesFetcher.defaultMetricsConsumerId;
 import static ai.vespa.metricsproxy.http.application.ApplicationMetricsHandler.METRICS_V1_PATH;
 import static ai.vespa.metricsproxy.http.application.ApplicationMetricsHandler.METRICS_VALUES_PATH;
 import static ai.vespa.metricsproxy.http.application.ApplicationMetricsHandler.PROMETHEUS_VALUES_PATH;
+import static ai.vespa.metricsproxy.http.application.HostnameDimensionProcessor.HOSTNAME_DIMENSION_NAME;
 import static ai.vespa.metricsproxy.metric.model.json.JacksonUtil.objectMapper;
 import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
 import static com.github.tomakehurst.wiremock.client.WireMock.equalTo;
@@ -79,7 +84,9 @@ public class ApplicationMetricsHandlerTest {
 
         ApplicationMetricsHandler handler = new ApplicationMetricsHandler(Executors.newSingleThreadExecutor(),
                                                                           applicationMetricsRetriever,
-                                                                          getMetricsConsumers());
+                                                                          getMetricsConsumers(),
+                                                                          getApplicationDimensions(),
+                                                                          getNodeDimensions());
         applicationMetricsRetriever.getMetrics(defaultMetricsConsumerId);
         applicationMetricsRetriever.getMetrics(ConsumerId.toConsumerId(CUSTOM_CONSUMER));
         applicationMetricsRetriever.startPollAndWait();
@@ -143,14 +150,6 @@ public class ApplicationMetricsHandlerTest {
     }
 
     @Test
-    public void prometheus_response_contains_hostname() {
-        String response = testDriver.sendRequest(PROMETHEUS_VALUES_URI).readAll();
-        Arrays.stream(response.split("\n"))
-                .filter(line -> line.contains("{"))
-                .forEach(line -> assertTrue(line.contains("hostname")));
-    }
-
-    @Test
     public void prometheus_response_obeys_format() {
         String response = testDriver.sendRequest(PROMETHEUS_VALUES_URI).readAll();
         Arrays.stream(response.split("\n"))
@@ -178,13 +177,14 @@ public class ApplicationMetricsHandlerTest {
 
         GenericService searchnode = jsonModel.nodes.get(0).services.get(0);
         Map<String, String> dimensions = searchnode.metrics.get(0).dimensions;
-        assertEquals(7, dimensions.size());
+        assertEquals(8, dimensions.size());
         assertEquals("music.default", dimensions.get(PublicDimensions.APPLICATION_ID));
         assertEquals("container/default", dimensions.get(PublicDimensions.CLUSTER_ID));
         assertEquals("us-west", dimensions.get(PublicDimensions.ZONE));
         assertEquals("search/", dimensions.get(PublicDimensions.API));
         assertEquals("music", dimensions.get(PublicDimensions.DOCUMENT_TYPE));
         assertEquals("default0", dimensions.get(PublicDimensions.SERVICE_ID));
+        assertEquals(HOST, dimensions.get(HOSTNAME_DIMENSION_NAME));
         assertFalse(dimensions.containsKey("clusterid"));
     }
 
@@ -201,6 +201,12 @@ public class ApplicationMetricsHandlerTest {
         String response = testDriver.sendRequest(METRICS_V1_URI + "/invalid").readAll();
         JsonNode root = objectMapper().readTree(response);
         assertTrue(root.has("error"));
+    }
+
+    @Test
+    public void status_metrics_contains_application_dimensions() {
+        String response = testDriver.sendRequest(PROMETHEUS_VALUES_URI).readAll();
+        assertTrue(response.contains("vespa_node_status{applicationId=\"my-app\",} 1.0"));
     }
 
     private GenericApplicationModel getResponseAsJsonModel(String consumer) {
@@ -237,5 +243,15 @@ public class ApplicationMetricsHandlerTest {
                                             .consumer(new ConsumersConfig.Consumer.Builder()
                                                               .name(CUSTOM_CONSUMER))
                                             .build());
+    }
+
+    protected static ApplicationDimensions getApplicationDimensions() {
+        return new ApplicationDimensions(new ApplicationDimensionsConfig.Builder()
+                .dimensions("applicationId", "my-app")
+                .build());
+    }
+
+    protected static NodeDimensions getNodeDimensions() {
+        return new NodeDimensions(new NodeDimensionsConfig.Builder().build());
     }
 }

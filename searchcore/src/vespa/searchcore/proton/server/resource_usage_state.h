@@ -2,46 +2,70 @@
 
 #pragma once
 
+#include "resource_usage_with_limit.h"
+
+#include <vespa/searchcore/proton/attribute/attribute_usage_stats.h>
+
+#include <algorithm>
+
 namespace proton {
 
 /**
- * Class representing the state of an resource (e.g. disk or memory) with its limit and current usage:
- *   - usage: How much of this resource is currently used (number between 0 and 1).
- *   - limit: How much of this resource is allowed to use (number between 0 and 1).
- *   - utilization: How much of the allowed part of this resource is used (usage/limit).
+ * Class used to describe state of resource usage relative to configured limits.
+ * In addition, relative transient disk and memory usage are tracked.
  */
-class ResourceUsageState
-{
-private:
-    double _limit;
-    double _usage;
+class ResourceUsageState {
+    ResourceUsageWithLimit _diskState;
+    ResourceUsageWithLimit _memoryState;
+    double                 _non_transient_disk_usage;
+    double                 _non_transient_memory_usage;
+    double                 _reserved_disk_space;
+    double                 _reserved_disk_space_factor;
+    double                 _reserved_memory;
+    double                 _reserved_memory_factor;
+    double                 _transient_disk_usage;
+    double                 _transient_memory_usage;
+    ResourceUsageWithLimit _max_attribute_address_space_state;
+    AttributeUsageStats    _attribute_usage;
 
 public:
-    ResourceUsageState()
-        : _limit(1.0),
-          _usage(0)
-    {
+    ResourceUsageState();
+    ResourceUsageState(const ResourceUsageWithLimit& diskState_, const ResourceUsageWithLimit& memoryState_);
+    ResourceUsageState(const ResourceUsageWithLimit& diskState_, const ResourceUsageWithLimit& memoryState_,
+                       double non_transient_disk_usage_, double non_transient_memory_usage_,
+                       double reserved_disk_space_, double reserved_disk_space_factor_, double reserved_memory_,
+                       double reserved_memory_factor, double transient_disk_usage_, double transient_memory_usage_);
+    ResourceUsageState(const ResourceUsageWithLimit& diskState_, const ResourceUsageWithLimit& memoryState_,
+                       double non_transient_disk_usage_, double non_transient_memory_usage_,
+                       double reserved_disk_space_, double reserved_disk_space_factor_, double reserved_memory_,
+                       double reserved_memory_factor_, double transient_disk_usage_, double transient_memory_usage_,
+                       const ResourceUsageWithLimit& max_attribute_address_space_state,
+                       const AttributeUsageStats&    attribute_usage);
+    ~ResourceUsageState();
+    bool operator==(const ResourceUsageState& rhs) const;
+    bool operator!=(const ResourceUsageState& rhs) const;
+    const ResourceUsageWithLimit& diskState() const noexcept { return _diskState; }
+    const ResourceUsageWithLimit& memoryState() const noexcept { return _memoryState; }
+    double reserved_disk_space() const noexcept { return _reserved_disk_space; }
+    double reserved_disk_space_factor() const noexcept { return _reserved_disk_space_factor; }
+    [[nodiscard]] double reserved_memory() const noexcept { return _reserved_memory; }
+    [[nodiscard]] double reserved_memory_factor() const noexcept { return _reserved_memory_factor; }
+    double transient_disk_usage() const noexcept { return _transient_disk_usage; }
+    double transient_memory_usage() const noexcept { return _transient_memory_usage; }
+    double non_transient_disk_usage() const noexcept { return _non_transient_disk_usage; }
+    double non_transient_memory_usage() const noexcept { return _non_transient_memory_usage; }
+    bool aboveDiskLimit(double resourceLimitFactor) const { return diskState().aboveLimit(resourceLimitFactor); }
+    bool aboveMemoryLimit(double resourceLimitFactor) const { return memoryState().aboveLimit(resourceLimitFactor); }
+    const ResourceUsageWithLimit& max_attribute_address_space_state() const noexcept {
+        return _max_attribute_address_space_state;
     }
-    ResourceUsageState(double limit_, double usage_)
-        : _limit(limit_),
-          _usage(usage_)
-    {
+    const AttributeUsageStats& attribute_usage() const noexcept { return _attribute_usage; }
+    // Disk usage reported to cluster controller and exported as metric.
+    double reported_disk_usage() const noexcept {
+        return _non_transient_disk_usage + _reserved_disk_space * _reserved_disk_space_factor;
     }
-    bool operator==(const ResourceUsageState &rhs) const {
-        return ((_limit == rhs._limit) &&
-                (_usage == rhs._usage));
-    }
-    bool operator!=(const ResourceUsageState &rhs) const {
-        return ! ((*this) == rhs);
-    }
-    double limit() const { return _limit; }
-    double usage() const { return _usage; }
-    double utilization() const { return _usage/_limit; }
-    bool aboveLimit() const {
-        return aboveLimit(1.0);
-    }
-    bool aboveLimit(double lowWatermarkFactor) const {
-        return usage() > (limit() * lowWatermarkFactor);
+    [[nodiscard]] double reported_memory_usage() const noexcept {
+        return _non_transient_memory_usage + _reserved_memory * _reserved_memory_factor;
     }
 };
 

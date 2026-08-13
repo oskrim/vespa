@@ -1,16 +1,20 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.indexinglanguage.expressions;
 
-import com.yahoo.document.*;
+import com.yahoo.document.DataType;
+import com.yahoo.document.Document;
+import com.yahoo.document.DocumentType;
+import com.yahoo.document.Field;
+import com.yahoo.document.StructDataType;
 import com.yahoo.document.datatypes.FieldValue;
 import com.yahoo.document.datatypes.StringFieldValue;
 import com.yahoo.document.datatypes.Struct;
-import com.yahoo.vespa.indexinglanguage.SimpleDocumentAdapter;
+import com.yahoo.vespa.indexinglanguage.SimpleDocumentFieldValues;
 import org.junit.Test;
 
-import static com.yahoo.vespa.indexinglanguage.expressions.ExpressionAssert.assertVerify;
-import static com.yahoo.vespa.indexinglanguage.expressions.ExpressionAssert.assertVerifyThrows;
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.fail;
 
 /**
  * @author Simon Thoresen Hult
@@ -33,17 +37,6 @@ public class GetFieldTestCase {
     }
 
     @Test
-    public void requireThatExpressionCanBeVerified() {
-        StructDataType type = new StructDataType("my_struct");
-        type.addField(new Field("foo", DataType.STRING));
-        Expression exp = new GetFieldExpression("foo");
-        assertVerify(type, exp, DataType.STRING);
-        assertVerifyThrows(null, exp, "Expected any input, but no input is specified");
-        assertVerifyThrows(DataType.INT, exp, "Expected a struct or map, bit got an int");
-        assertVerifyThrows(type, new GetFieldExpression("bar"), "Field 'bar' not found in struct type 'my_struct'");
-    }
-
-    @Test
     public void requireThatStructFieldsCanBeRead() {
         DataType barType = DataType.STRING;
         FieldValue bar = barType.createFieldValue("bar");
@@ -58,7 +51,7 @@ public class GetFieldTestCase {
         Document doc = new Document(docType, "id:scheme:my_doc::");
         doc.setFieldValue("foo", foo);
 
-        ExecutionContext ctx = new ExecutionContext(new SimpleDocumentAdapter(doc));
+        ExecutionContext ctx = new ExecutionContext(new SimpleDocumentFieldValues(doc));
         assertEquals(bar, new StatementExpression(new InputExpression("foo"),
                                                   new GetFieldExpression("bar")).execute(ctx));
     }

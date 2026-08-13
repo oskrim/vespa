@@ -517,16 +517,10 @@ public enum Language {
      * @return True if this is a CJK language.
      */
     public boolean isCjk() {
-        switch (this) {
-            case CHINESE_SIMPLIFIED:
-            case CHINESE_TRADITIONAL:
-            case JAPANESE:
-            case KOREAN:
-            case THAI:
-                return true;
-            default:
-                return false;
-        }
+        return switch (this) {
+            case CHINESE_SIMPLIFIED, CHINESE_TRADITIONAL, JAPANESE, KOREAN, THAI -> true;
+            default -> false;
+        };
     }
 
     /**
@@ -534,7 +528,7 @@ public enum Language {
      * Returns UNKNOWN when passed null or an unknown language tag.
      *
      * @param languageTag the language tag for which the <code>Language</code> to return
-     * @return the corresponding <code>Language</code>, or {@link #UNKNOWN} if not known
+     * @return the corresponding <code>Language</code>, or {@link #UNKNOWN} if not known or if the argument is null
      */
     public static Language fromLanguageTag(String languageTag) {
         if (languageTag == null) return UNKNOWN;
@@ -587,6 +581,7 @@ public enum Language {
         }
         if (str.equals("zh")) {
             if (locale.getCountry().equalsIgnoreCase("cn") ||
+                locale.getScript().equalsIgnoreCase("hans") ||
                 locale.getVariant().equalsIgnoreCase("hans")) {
                 return CHINESE_SIMPLIFIED;
             }

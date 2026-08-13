@@ -4,6 +4,7 @@ package com.yahoo.vespa.model.container.configserver;
 import com.yahoo.cloud.config.ConfigserverConfig;
 import com.yahoo.cloud.config.CuratorConfig;
 import com.yahoo.cloud.config.ZookeeperServerConfig;
+
 import com.yahoo.config.model.producer.TreeConfigProducer;
 import com.yahoo.config.provision.Environment;
 import com.yahoo.config.provision.RegionName;
@@ -12,6 +13,7 @@ import com.yahoo.config.provision.Zone;
 import com.yahoo.container.core.VipStatusConfig;
 import com.yahoo.container.jdisc.config.HealthMonitorConfig;
 import com.yahoo.net.HostName;
+import com.yahoo.text.Text;
 import com.yahoo.vespa.defaults.Defaults;
 import com.yahoo.vespa.model.container.ContainerCluster;
 import com.yahoo.vespa.model.container.configserver.option.ConfigOptions;
@@ -19,6 +21,8 @@ import com.yahoo.vespa.model.container.configserver.option.ConfigOptions.ConfigS
 
 import java.util.Optional;
 import java.util.stream.IntStream;
+
+import static com.yahoo.config.model.api.ModelContext.FeatureFlags;
 
 /**
  * Represents a config server cluster.
@@ -34,11 +38,13 @@ public class ConfigserverCluster extends TreeConfigProducer
         ZookeeperServerConfig.Producer {
 
     private final ConfigOptions options;
+    private final FeatureFlags featureFlags;
     private ContainerCluster<?> containerCluster;
 
-    public ConfigserverCluster(TreeConfigProducer<?> parent, String subId, ConfigOptions options) {
+    public ConfigserverCluster(TreeConfigProducer<?> parent, String subId, ConfigOptions options, FeatureFlags featureFlags) {
         super(parent, subId);
         this.options = options;
+        this.featureFlags = featureFlags;
     }
 
     public void setContainerCluster(ContainerCluster<?> containerCluster) {
@@ -59,7 +65,7 @@ public class ConfigserverCluster extends TreeConfigProducer
         int[] zookeeperIds = getConfigServerZookeeperIds();
 
         if (configServers.length != zookeeperIds.length) {
-            throw new IllegalArgumentException(String.format("Number of provided config server hosts (%d) must be the " +
+            throw new IllegalArgumentException(Text.format("Number of provided config server hosts (%d) must be the " +
                     "same as number of provided config server zookeeper ids (%d)",
                     configServers.length, zookeeperIds.length));
         }
@@ -69,7 +75,7 @@ public class ConfigserverCluster extends TreeConfigProducer
         // however, we cannot change this id for an existing server
         for (int i = 0; i < configServers.length; i++) {
             if (zookeeperIds[i] < 0) {
-                throw new IllegalArgumentException(String.format("Zookeeper ids cannot be negative, was %d for %s",
+                throw new IllegalArgumentException(Text.format("Zookeeper ids cannot be negative, was %d for %s",
                         zookeeperIds[i], configServers[i].hostName));
             }
             if (configServers[i].hostName.equals(myhostname)) {
@@ -87,6 +93,7 @@ public class ConfigserverCluster extends TreeConfigProducer
         builder.reconfigureEnsemble(!isHostedVespa);
         builder.snapshotMethod(options.zooKeeperSnapshotMethod());
         builder.juteMaxBuffer(options.zookeeperJuteMaxBuffer());
+        builder.preAllocSizeKb(featureFlags.zookeeperPreAllocSize());
     }
 
     @Override
@@ -95,8 +102,9 @@ public class ConfigserverCluster extends TreeConfigProducer
             builder.configModelPluginDir(pluginDir);
         }
         if (options.zookeeperBarrierTimeout().isPresent()) {
-            builder.zookeeper(new ConfigserverConfig.Zookeeper.Builder().barrierTimeout(options.zookeeperBarrierTimeout().get()));
+            builder.zookeeper(new ConfigserverConfig.Zookeeper.Builder().barrierTimeout(options.zookeeperBarrierTimeout().get().toSeconds()));
         }
+        options.applicationLockTimeoutSeconds().ifPresent(timeout -> builder.applicationLockTimeoutSeconds(timeout.toSeconds()));
         if (options.rpcPort().isPresent()) {
             builder.rpcport(options.rpcPort().get());
         }

@@ -1,8 +1,11 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.indexinglanguage.linguistics;
 
+import ai.vespa.sampling.ProbabilisticSampleRate;
+import com.yahoo.document.DocumentId;
 import com.yahoo.document.annotation.Annotation;
 import com.yahoo.document.annotation.AnnotationTypes;
+import com.yahoo.document.annotation.internal.SimpleIndexingAnnotations;
 import com.yahoo.document.annotation.Span;
 import com.yahoo.document.annotation.SpanList;
 import com.yahoo.document.annotation.SpanTree;
@@ -13,23 +16,51 @@ import com.yahoo.language.process.StemMode;
 import com.yahoo.language.process.Token;
 import com.yahoo.language.process.Tokenizer;
 import com.yahoo.text.Text;
+import com.yahoo.vespa.indexinglanguage.expressions.InvalidInputException;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.logging.Filter;
+import java.util.logging.LogRecord;
+import java.util.logging.Logger;
+import java.util.Locale;
 
 import static com.yahoo.language.LinguisticsCase.toLowerCase;
 
 /**
- * This is a tool for adding {@link AnnotationTypes} type annotations to {@link StringFieldValue} objects.
+ * This annotates strings that are to be indexed with the tokens to index,
+ * as produced by the give linguistics implementation.
+ * Using annotations lets us provide the tokens to index without mutating
+ * the original string which we need to store.
+ * The annotations are placed in an annotation tree named "linguistics".
  *
  * @author Simon Thoresen Hult
  */
+@SuppressWarnings({"deprecation", "removal"})
 public class LinguisticsAnnotator {
+
+    private static final Logger log = Logger.getLogger(LinguisticsAnnotator.class.getName());
+    // Temporary environment variable to disable this check
+    private static final boolean binaryCheckDisabled =
+            Boolean.parseBoolean(System.getenv("VESPA_DISABLE_LINGUISTICS_BINARY_CHECK"));
+
+    static {
+        class RateLimitingLogFilter implements Filter {
+            // A very conservative sampling rate to avoid spamming the logs during reindexing
+            final ProbabilisticSampleRate sampleRate = ProbabilisticSampleRate.withSystemDefaults(0.1);
+            final Filter prevFilter;
+            RateLimitingLogFilter(Filter prevFilter) { this.prevFilter = prevFilter; }
+            @Override public boolean isLoggable(LogRecord lr) {
+                return sampleRate.shouldSample() && (prevFilter == null || prevFilter.isLoggable(lr));
+            }
+        }
+        log.setFilter(new RateLimitingLogFilter(log.getFilter()));
+    }
 
     private final Linguistics factory;
     private final AnnotatorConfig config;
 
-    private static class TermOccurrences {
+    static class TermOccurrences {
 
         final Map<String, Integer> termOccurrences = new HashMap<>();
         final int maxOccurrences;
@@ -66,36 +97,124 @@ public class LinguisticsAnnotator {
      * @param text the text to annotate
      * @return whether anything was annotated
      */
-    public boolean annotate(StringFieldValue text) {
-        if (text.getSpanTree(SpanTrees.LINGUISTICS) != null) return true;  // Already annotated with LINGUISTICS.
-
+    public boolean annotate(StringFieldValue text, DocumentId docId, boolean isReindexingOperation) {
         Tokenizer tokenizer = factory.getTokenizer();
         String input = (text.getString().length() <= config.getMaxTokenizeLength())
-                ? text.getString()
-                : Text.substringByCodepoints(text.getString(), 0, config.getMaxTokenizeLength());
-        Iterable<Token> tokens = tokenizer.tokenize(input, config.getLanguage(), config.getStemMode(),
-                                                    config.getRemoveAccents());
+                       ? text.getString()
+                       : Text.substringByCodepoints(text.getString(), 0, config.getMaxTokenizeLength());
+
+        if (checkLikelyBinaryData(input, docId, isReindexingOperation)) return false;
+
+        Iterable<Token> tokens = tokenizer.tokenize(input, config.asLinguisticsParameters());
         TermOccurrences termOccurrences = new TermOccurrences(config.getMaxTermOccurrences());
+
+        // Try simple path first
+        if (text.wantSimpleAnnotations()) {
+            return annotateSimple(text, tokens, termOccurrences);
+        }
+
+        // Fallback to full SpanTree mode
+        return annotateFull(text, tokens, termOccurrences);
+    }
+
+    /**
+     * Lightweight annotation path - creates flat arrays instead of object graphs.
+     * Package-private for testing.
+     */
+    boolean annotateSimple(StringFieldValue text,
+                           Iterable<Token> tokens,
+                           TermOccurrences termOccurrences) {
+        SimpleIndexingAnnotations simple = new SimpleIndexingAnnotations();
+        String input = text.getString();
+        for (Token token : tokens) {
+            addAnnotationSimple(simple, input, token, termOccurrences);
+        }
+        if (simple.getCount() > 0) {
+            text.setSimpleAnnotations(simple);
+            return true;
+        } else {
+            return false;
+        }
+    }
+
+    private void addAnnotationSimple(SimpleIndexingAnnotations simple, String input, Token token,
+                                    TermOccurrences termOccurrences) {
+        if (!token.isSpecialToken()) {
+            if (token.getNumComponents() > 0) {
+                for (int i = 0; i < token.getNumComponents(); ++i) {
+                    addAnnotationSimple(simple, input, token.getComponent(i), termOccurrences);
+                }
+                return;
+            }
+            if (!token.isIndexable()) return;
+        }
+
+        int from = (int) token.getOffset();
+        int length = token.getOrig().length();
+
+        if (from >= input.length()) return;
+        if (from + length > input.length()) return;
+
+        if (config.getStemMode() == StemMode.ALL) {
+            addAllStemsSimple(simple, input, token, from, length, termOccurrences);
+        } else {
+            String term = token.getTokenString();
+            if (term == null || term.trim().isEmpty()) return;
+            if (term.length() > config.getMaxTokenLength()) return;
+            if (!termOccurrences.termCountBelowLimit(term)) return;
+
+            String termOverride = term.equals(token.getOrig()) ? null : term;
+            simple.add(from, length, termOverride);
+        }
+    }
+
+    private void addAllStemsSimple(SimpleIndexingAnnotations simple, String input, Token token,
+                                   int from, int length, TermOccurrences termOccurrences) {
+        String indexableOriginal = config.getLowercase() ? toLowerCase(token.getOrig()) : token.getOrig();
+        String term = token.getTokenString();
+
+        if (term != null) {
+            if (term.length() <= config.getMaxTokenLength() && termOccurrences.termCountBelowLimit(term)) {
+                String termOverride = term.equals(token.getOrig()) ? null : term;
+                simple.add(from, length, termOverride);
+            }
+            if (!term.equals(indexableOriginal) && indexableOriginal.length() <= config.getMaxTokenLength() &&
+                termOccurrences.termCountBelowLimit(indexableOriginal)) {
+                String termOverride = indexableOriginal.equals(token.getOrig()) ? null : indexableOriginal;
+                simple.add(from, length, termOverride);
+            }
+        }
+
+        for (int i = 0; i < token.getNumStems(); i++) {
+            String stem = token.getStem(i);
+            if (stem.equals(indexableOriginal) || (term != null && stem.equals(term))) continue;
+            if (stem.length() > config.getMaxTokenLength()) continue;
+            if (!termOccurrences.termCountBelowLimit(stem)) continue;
+            simple.add(from, length, stem);
+        }
+    }
+
+    /** For unit testing only */
+    boolean annotate(StringFieldValue text) { return annotate(text, null, false); }
+
+    /**
+     * Full SpanTree annotation path - creates object graphs with Span/Annotation objects.
+     * Package-private for testing.
+     */
+    boolean annotateFull(StringFieldValue text, Iterable<Token> tokens, TermOccurrences termOccurrences) {
         SpanTree tree = new SpanTree(SpanTrees.LINGUISTICS);
         for (Token token : tokens)
-            addAnnotationSpan(text.getString(), tree.spanList(), token, config.getStemMode(), termOccurrences,
-                    config.getMaxTokenLength());
+            addAnnotationSpan(text.getString(), tree.spanList(), token, config.getStemMode(), config.getLowercase(),
+                              termOccurrences, config.getMaxTokenLength());
 
         if (tree.numAnnotations() == 0) return false;
         text.setSpanTree(tree);
         return true;
     }
 
-    /**
-     * Creates a TERM annotation which has the term as annotation (only) if it is different from the
-     * original.
-     *
-     * @param term the term
-     * @param origTerm the original term
-     * @return the created TERM annotation
-     */
-    public static Annotation termAnnotation(String term, String origTerm) {
-        if (term.equals(origTerm))
+    /** Creates a TERM annotation which has the term as annotation (only) if it is different from the original. */
+    public static Annotation termAnnotation(String term, String originalTerm) {
+        if (term.equals(originalTerm))
             return new Annotation(AnnotationTypes.TERM);
         else
             return new Annotation(AnnotationTypes.TERM, new StringFieldValue(term));
@@ -103,20 +222,17 @@ public class LinguisticsAnnotator {
 
     private static void addAnnotation(Span here, String term, String orig, TermOccurrences termOccurrences,
                                       int maxTokenLength) {
-        if (term.length() > maxTokenLength) {
-            return;
-        }
-        if (termOccurrences.termCountBelowLimit(term)) {
+        if (term.length() > maxTokenLength) return;
+        if (termOccurrences.termCountBelowLimit(term))
             here.annotate(termAnnotation(term, orig));
-        }
     }
 
     private static void addAnnotationSpan(String input, SpanList parent, Token token, StemMode mode,
-                                          TermOccurrences termOccurrences, int maxTokenLength) {
+                                          boolean lowercase, TermOccurrences termOccurrences, int maxTokenLength) {
         if ( ! token.isSpecialToken()) {
             if (token.getNumComponents() > 0) {
                 for (int i = 0; i < token.getNumComponents(); ++i) {
-                    addAnnotationSpan(input, parent, token.getComponent(i), mode, termOccurrences, maxTokenLength);
+                    addAnnotationSpan(input, parent, token.getComponent(i), mode, lowercase, termOccurrences, maxTokenLength);
                 }
                 return;
             }
@@ -132,29 +248,55 @@ public class LinguisticsAnnotator {
         }
         if (mode == StemMode.ALL) {
             Span where = parent.span((int)token.getOffset(), token.getOrig().length());
-
-            String lowercasedOrig = toLowerCase(token.getOrig());
+            String indexableOriginal = lowercase ? toLowerCase(token.getOrig()) : token.getOrig();
             String term = token.getTokenString();
             if (term != null) {
                 addAnnotation(where, term, token.getOrig(), termOccurrences, maxTokenLength);
-                if ( ! term.equals(lowercasedOrig))
-                    addAnnotation(where, lowercasedOrig, token.getOrig(), termOccurrences, maxTokenLength);
+                if ( ! term.equals(indexableOriginal))
+                    addAnnotation(where, indexableOriginal, token.getOrig(), termOccurrences, maxTokenLength);
             }
             for (int i = 0; i < token.getNumStems(); i++) {
                 String stem = token.getStem(i);
-                if (! (stem.equals(lowercasedOrig) || stem.equals(term)))
+                if (! (stem.equals(indexableOriginal) || stem.equals(term)))
                     addAnnotation(where, stem, token.getOrig(), termOccurrences, maxTokenLength);
             }
         } else {
             String term = token.getTokenString();
             if (term == null || term.trim().isEmpty()) return;
-            if (term.length() > maxTokenLength) {
-                return;
-            }
-            if (termOccurrences.termCountBelowLimit(term))  {
+            if (term.length() > maxTokenLength) return;
+            if (termOccurrences.termCountBelowLimit(term))
                 parent.span((int)token.getOffset(), token.getOrig().length()).annotate(termAnnotation(term, token.getOrig()));
-            }
         }
     }
 
+    /**
+     * Use the ratio of Unicode replacement characters as heuristic if the text is likely representing binary data
+     *
+     * @see <a href="https://en.wikipedia.org/wiki/Specials_(Unicode_block)#Replacement_character">...</a>
+     * @throws IllegalArgumentException if text is likely binary data and is <strong>not</strong> a reindexing operation
+     * @return true if the text is likely binary data and is a reindexing operation, false otherwise
+     */
+    private boolean checkLikelyBinaryData(String text, DocumentId docId, boolean isReindexingOperation) {
+        if (binaryCheckDisabled) return false;
+
+        var maxRatio = config.getMaxReplacementCharactersRatio();
+        var maxCharacters = config.getMaxReplacementCharacters();
+        // Skip if both thresholds are disabled
+        if (maxRatio >= 1 && (maxCharacters < 0 || maxCharacters == Integer.MAX_VALUE)) return false;
+        var replacementCharCount = text.chars().filter(c -> c == 0xFFFD).count();
+        if (replacementCharCount > maxCharacters && replacementCharCount > text.length() * maxRatio) {
+            var reason = String.format(Locale.ROOT,
+                    "Some text of length %d is classified as binary data as it contains %d Unicode replacement characters. " +
+                    "(max-replacement-character-ratio=%d%%, max-replacement-characters=%d)",
+                    text.length(), replacementCharCount, (int)Math.round(maxRatio * 100) , maxCharacters);
+            var docIdString = (docId != null) ? Text.format("%s", docId.toString()) : "<unknown>";
+            if (isReindexingOperation) {
+                log.warning(Text.format("Skipping tokenization of \'%s\' while reindexing: %s. ", docIdString, reason));
+                return true;
+            } else {
+                throw new InvalidInputException(reason);
+            }
+        }
+        return false;
+    }
 }

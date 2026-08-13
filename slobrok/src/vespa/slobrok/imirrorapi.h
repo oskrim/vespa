@@ -12,13 +12,13 @@ namespace slobrok::api {
  **/
 class IMirrorAPI {
 protected:
-    static bool match(const char *name, const char *pattern);
+    static bool match(const char* name, const char* pattern);
 
 public:
     /**
      * @brief Release any allocated resources.
      **/
-    virtual ~IMirrorAPI() { }
+    virtual ~IMirrorAPI() = default;
 
     /**
      * @brief pair of <name, connectionspec>.
@@ -51,9 +51,9 @@ public:
     virtual SpecList lookup(std::string_view pattern) const = 0;
 
     /**
-     * Obtain the number of updates seen by this mirror. The value may wrap, but will never become 0 again. This can be
-     * used for name lookup optimization, because the results returned by lookup() will never change unless this number
-     * also changes.
+     * Obtain the number of updates seen by this mirror. The value may wrap, but will never become 0 again. This can
+     *be used for name lookup optimization, because the results returned by lookup() will never change unless this
+     *number also changes.
      *
      * @return number of slobrok updates seen
      **/
@@ -62,4 +62,4 @@ public:
     virtual bool ready() const = 0;
 };
 
-}
+} // namespace slobrok::api

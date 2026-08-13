@@ -1,24 +1,21 @@
 package ai.vespa.schemals.lsp.schema.hover;
 
-import java.io.BufferedReader;
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
-import java.util.stream.Collectors;
 
 import org.eclipse.lsp4j.Hover;
 import org.eclipse.lsp4j.MarkupContent;
 import org.eclipse.lsp4j.MarkupKind;
 import org.eclipse.lsp4j.Range;
 
-import ai.vespa.schemals.SchemaLanguageServer;
+import ai.vespa.schemals.common.FileUtils;
 import ai.vespa.schemals.context.EventPositionContext;
 import ai.vespa.schemals.index.Symbol;
 import ai.vespa.schemals.index.Symbol.SymbolStatus;
@@ -29,8 +26,9 @@ import ai.vespa.schemals.parser.indexinglanguage.ast.INDEX;
 import ai.vespa.schemals.parser.indexinglanguage.ast.SUMMARY;
 import ai.vespa.schemals.schemadocument.resolvers.RankExpression.SpecificFunction;
 import ai.vespa.schemals.tree.CSTUtils;
+import ai.vespa.schemals.tree.Node;
+import ai.vespa.schemals.tree.Node.LanguageType;
 import ai.vespa.schemals.tree.SchemaNode;
-import ai.vespa.schemals.tree.SchemaNode.LanguageType;
 import ai.vespa.schemals.tree.rankingexpression.RankNode;
 
 /**
@@ -62,8 +60,8 @@ public class SchemaHover {
      * This function takes a node which should point to some node where a symbol is defined,
      * and returns optionally a string containing all contiguous comments above the definition, joined by newline.
      */
-    private static Optional<String> getSymbolDocumentationComments(SchemaNode node, String documentContent) {
-        int offset = node.getOriginalBeginOffset();
+    private static Optional<String> getSymbolDocumentationComments(Node node, String documentContent) {
+        int offset = node.getBeginOffset();
         if (offset == -1) return Optional.empty();
 
         int linePointer = documentContent.lastIndexOf("\n", offset);
@@ -85,7 +83,7 @@ public class SchemaHover {
     /**
      * Special handling of struct over to list the fields inside and where they are inherited from.
      */
-    private static Hover getStructHover(SchemaNode node, EventPositionContext context) {
+    private static Hover getStructHover(Node node, EventPositionContext context) {
 
         Optional<Symbol> structDefinitionSymbol = context.schemaIndex.getSymbolDefinition(node.getSymbol());
         
@@ -115,12 +113,12 @@ public class SchemaHover {
      * Special handling of field hover to also list which indexing settings are set (index | attribute | summary)
      * as well as whether the field is inside or outside its document.
      */
-    private static Hover getFieldHover(SchemaNode node, EventPositionContext context) {
+    private static Hover getFieldHover(Node node, EventPositionContext context) {
         Optional<Symbol> fieldDefinitionSymbol = context.schemaIndex.getSymbolDefinition(node.getSymbol());
 
         if (fieldDefinitionSymbol.isEmpty()) return null;
 
-        Optional<SchemaNode> dataTypeNode = context.schemaIndex.fieldIndex().getFieldDataTypeNode(fieldDefinitionSymbol.get());
+        Optional<Node> dataTypeNode = context.schemaIndex.fieldIndex().getFieldDataTypeNode(fieldDefinitionSymbol.get());
         
         String typeText = "unknown";
         if (dataTypeNode.isPresent()) {
@@ -152,7 +150,7 @@ public class SchemaHover {
         for (int i = 0; i < indexingTypes.length; ++i) {
             if (i == 0) hoverText += "\n\t";
             else hoverText += " | ";
-            hoverText += indexingTypes[i].toString().toLowerCase();
+            hoverText += indexingTypes[i].toString().toLowerCase(Locale.ROOT);
         }
 
         String fieldDefinitionDocumentContent = context.scheduler.getDocument(fieldDefinitionSymbol.get().getFileURI()).getCurrentContent();
@@ -166,18 +164,21 @@ public class SchemaHover {
         return new Hover(new MarkupContent(MarkupKind.MARKDOWN, "```\n" + hoverText + "\n```"));
     }
 
-    private static Hover getSymbolHover(SchemaNode node, EventPositionContext context) {
+    private static Hover getSymbolHover(Node node, Path documentationPath, EventPositionContext context) {
         switch(node.getSymbol().getType()) {
             case STRUCT:
                 return getStructHover(node, context);
             case FIELD:
                 return getFieldHover(node, context);
+            case FOREACH:
+                return getFileHoverInformation(
+                        documentationPath.resolve("rankExpression"), 
+                        "foreach(dimension,variable,feature,condition,operation)", 
+                        node.getRange()).orElse(null);
+            case LABEL:
+                return new Hover(new MarkupContent(MarkupKind.PLAINTEXT, "label"));
             default:
                 break;
-        }
-
-        if (node.getSymbol().getType() == SymbolType.LABEL) {
-            return new Hover(new MarkupContent(MarkupKind.PLAINTEXT, "label"));
         }
 
         if (node.getSymbol().getStatus() == SymbolStatus.BUILTIN_REFERENCE) {
@@ -188,7 +189,7 @@ public class SchemaHover {
             Optional<Symbol> definition = context.schemaIndex.getSymbolDefinition(node.getSymbol());
 
             if (definition.isPresent()) {
-                SchemaNode definitionNode = definition.get().getNode();
+                Node definitionNode = definition.get().getNode();
 
                 if (definitionNode.getParent() != null) {
                     String text = definitionNode.getParent().getText();
@@ -217,7 +218,7 @@ public class SchemaHover {
 
     private static Hover getIndexingHover(SchemaNode hoverNode, EventPositionContext context) {
         // Taken from:
-        // https://docs.vespa.ai/en/reference/schema-reference.html#indexing
+        // https://docs.vespa.ai/en/reference/schemas/schemas.html#indexing
         // Too specific to include in documentation fetcher IMO.
         
         // Note: these AST classes belong to the indexinglanguage parser
@@ -247,19 +248,21 @@ public class SchemaHover {
         return null;
     }
 
-    private static Optional<Hover> rankFeatureHover(SchemaNode node, EventPositionContext context) {
+    private static Optional<Hover> rankFeatureHover(SchemaNode node, EventPositionContext context, Path rankFeatureDocPath) {
 
         // Search for rankNode connection
-        SchemaNode currentNode = node;
-        while (currentNode.getLanguageType() == LanguageType.RANK_EXPRESSION && currentNode.getRankNode().isEmpty()) {
+        Node currentNode = node;
+        while (currentNode.getLanguageType() == LanguageType.RANK_EXPRESSION && currentNode.getSchemaNode().getRankNode().isEmpty()) {
             currentNode = currentNode.getParent();
         }
 
-        if (currentNode.getRankNode().isEmpty()) {
+        SchemaNode schemaNode = currentNode.getSchemaNode();
+
+        if (schemaNode.getRankNode().isEmpty()) {
             return Optional.empty();
         }
 
-        RankNode rankNode = currentNode.getRankNode().get();
+        RankNode rankNode = schemaNode.getRankNode().get();
 
         Optional<SpecificFunction> rankNodeSignature = rankNode.getFunctionSignature();
 
@@ -274,7 +277,7 @@ public class SchemaHover {
             functionSignature.clearProperty();
         }
 
-        Optional<Hover> result = getRankFeatureHover(functionSignature);
+        Optional<Hover> result = getRankFeatureHover(functionSignature, rankFeatureDocPath);
         result.ifPresent(hover -> hover.setRange(node.getRange()));
         return result;
     }
@@ -284,29 +287,32 @@ public class SchemaHover {
      * @param function
      * @return Hover with empty range
      */
-    public static Optional<Hover> getRankFeatureHover(SpecificFunction function) {
-        Optional<Hover> result = getFileHoverInformation("rankExpression/" + function.getSignatureString(), new Range());
+    public static Optional<Hover> getRankFeatureHover(SpecificFunction function, Path rankFeatureDocPath) {
+        Optional<Hover> result = getFileHoverInformation(rankFeatureDocPath, function.getSignatureString(), new Range());
 
         if (result.isPresent()) {
             return result;
         }
 
-        return getFileHoverInformation("rankExpression/" + function.getSignatureString(true), new Range());
+        return getFileHoverInformation(rankFeatureDocPath, function.getSignatureString(true), new Range());
     }
 
-    public static Hover getHover(EventPositionContext context) {
-        SchemaNode node = CSTUtils.getSymbolAtPosition(context.document.getRootNode(), context.position);
+    public static Hover getHover(EventPositionContext context, Path documentationPath) {
+        Node node = CSTUtils.getSymbolAtPosition(context.document.getRootNode(), context.position);
+        
+        if (node != null && node.isSchemaNode()) {
+            SchemaNode schemaNode = node.getSchemaNode();
+            Hover symbolHover = getSymbolHover(schemaNode, documentationPath, context);
 
-        if (node != null) {
-            Hover symbolHover = getSymbolHover(node, context);
+            if (symbolHover == null) return null;
 
-            if (node.getLanguageType() == LanguageType.RANK_EXPRESSION) {
+            if (schemaNode.getLanguageType() == LanguageType.RANK_EXPRESSION) {
                 var content = symbolHover.getContents();
                 if (content.isRight()) {
                     MarkupContent markupContent = content.getRight();
                     if (markupContent.getValue() == "builtin") {
 
-                        Optional<Hover> builtinHover = rankFeatureHover(node, context);
+                        Optional<Hover> builtinHover = rankFeatureHover(schemaNode, context, documentationPath.resolve("rankExpression"));
                         if (builtinHover.isPresent()) {
                             return builtinHover.get();
                         }
@@ -318,20 +324,21 @@ public class SchemaHover {
         }
 
         node = CSTUtils.getLeafNodeAtPosition(context.document.getRootNode(), context.position);
-        if (node == null) return null;
+        if (node == null || !node.isSchemaNode()) return null;
+        SchemaNode schemaNode = node.getSchemaNode();
 
-        if (node.getLanguageType() == LanguageType.INDEXING) {
-            return getIndexingHover(node, context);
+        if (schemaNode.getLanguageType() == LanguageType.INDEXING) {
+            return getIndexingHover(schemaNode, context);
         }
 
-        Optional<Hover> hoverInfo = getFileHoverInformation("schema/" + node.getClassLeafIdentifierString(), node.getRange());
+        Optional<Hover> hoverInfo = getFileHoverInformation(documentationPath.resolve("schema"), schemaNode.getClassLeafIdentifierString(), schemaNode.getRange());
         if (hoverInfo.isEmpty()) {
             return null;
         }
         return hoverInfo.get();
     }
 
-    public static Optional<Hover> getFileHoverInformation(String markdownKey, Range range) {
+    public static Optional<Hover> getFileHoverInformation(Path hoverDirectory, String markdownKey, Range range) {
         // avoid doing unnecessary IO operations
         if (markdownContentCache.containsKey(markdownKey)) {
             Optional<MarkupContent> mdContent = markdownContentCache.get(markdownKey);
@@ -343,10 +350,10 @@ public class SchemaHover {
             }
         }
 
-        if (SchemaLanguageServer.serverPath == null)return Optional.empty();
         String fileName = markdownKey + ".md";
+        fileName = FileUtils.sanitizeFileName(fileName);
 
-        Path markdownPath = SchemaLanguageServer.serverPath.resolve("hover").resolve(fileName);
+        Path markdownPath = hoverDirectory.resolve(fileName);
 
         try {
             String markdown = Files.readString(markdownPath);

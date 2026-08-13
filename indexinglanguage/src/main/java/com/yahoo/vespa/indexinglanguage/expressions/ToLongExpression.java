@@ -9,22 +9,22 @@ import com.yahoo.document.datatypes.LongFieldValue;
  */
 public final class ToLongExpression extends Expression {
 
-    public ToLongExpression() {
-        super(UnresolvedDataType.INSTANCE);
+    @Override
+    public DataType setInputType(DataType input, TypeContext context) {
+        super.setInputType(input, context);
+        return DataType.LONG;
     }
 
     @Override
-    protected void doVerify(VerificationContext context) {
-        context.setCurrentType(createdOutputType());
+    public DataType setOutputType(DataType output, TypeContext context) {
+        super.setOutputType(DataType.LONG, output, null, context);
+        return getInputType(context);
     }
 
     @Override
     protected void doExecute(ExecutionContext context) {
         context.setCurrentValue(new LongFieldValue(Long.valueOf(String.valueOf(context.getCurrentValue()))));
     }
-
-    @Override
-    public DataType createdOutputType() { return DataType.LONG; }
 
     @Override
     public String toString() { return "to_long"; }

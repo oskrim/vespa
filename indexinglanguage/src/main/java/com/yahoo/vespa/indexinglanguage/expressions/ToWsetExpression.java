@@ -15,7 +15,6 @@ public final class ToWsetExpression extends Expression {
     private final Boolean removeIfZero;
 
     public ToWsetExpression(boolean createIfNonExistent, boolean removeIfZero) {
-        super(UnresolvedDataType.INSTANCE);
         this.createIfNonExistent = createIfNonExistent;
         this.removeIfZero = removeIfZero;
     }
@@ -25,25 +24,32 @@ public final class ToWsetExpression extends Expression {
     public boolean getRemoveIfZero() { return removeIfZero; }
 
     @Override
-    protected void doVerify(VerificationContext context) {
-        context.setCurrentType(DataType.getWeightedSet(context.getCurrentType(), createIfNonExistent, removeIfZero));
+    public DataType setInputType(DataType input, TypeContext context) {
+        super.setInputType(input, context);
+        if (input == null) return null;
+        return outputType(input);
+    }
+
+    @Override
+    public DataType setOutputType(DataType output, TypeContext context) {
+        if ( ! (output instanceof WeightedSetDataType))
+            throw new VerificationException(this, "This creates a WeightedSet, but type " + output.getName() + " is needed");
+        super.setOutputType(output, context);
+        return getInputType(context);
     }
 
     @SuppressWarnings({ "unchecked", "rawtypes" })
     @Override
     protected void doExecute(ExecutionContext context) {
         FieldValue input = context.getCurrentValue();
-        DataType inputType = input.getDataType();
-
-        WeightedSetDataType outputType = DataType.getWeightedSet(inputType, createIfNonExistent, removeIfZero);
-        WeightedSet output = outputType.createFieldValue();
+        WeightedSet output = outputType(input.getDataType()).createFieldValue();
         output.add(input);
-
         context.setCurrentValue(output);
     }
 
-    @Override
-    public DataType createdOutputType() { return UnresolvedDataType.INSTANCE; }
+    private WeightedSetDataType outputType(DataType inputType) {
+        return DataType.getWeightedSet(inputType, createIfNonExistent, removeIfZero);
+    }
 
     @Override
     public String toString() {

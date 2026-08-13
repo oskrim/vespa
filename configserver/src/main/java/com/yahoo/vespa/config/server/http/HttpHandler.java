@@ -1,11 +1,13 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.config.server.http;
 
+import com.yahoo.concurrent.UncheckedTimeoutException;
 import com.yahoo.config.provision.ApplicationLockException;
 import com.yahoo.config.provision.CertificateNotReadyException;
 import com.yahoo.config.provision.NodeAllocationException;
 import com.yahoo.config.provision.ParentHostUnavailableException;
 import com.yahoo.config.provision.QuotaExceededException;
+import com.yahoo.config.provision.RequestedNodesMissingException;
 import com.yahoo.config.provision.exception.ActivationConflictException;
 import com.yahoo.config.provision.exception.LoadBalancerServiceException;
 import com.yahoo.container.jdisc.HttpRequest;
@@ -58,12 +60,14 @@ public class HttpHandler extends ThreadedHttpRequestHandler {
             return HttpErrorResponse.internalServerError(getMessage(e, request));
         } catch (UnknownVespaVersionException e) {
             return HttpErrorResponse.unknownVespaVersion(getMessage(e, request));
-        } catch (RequestTimeoutException e) {
+        } catch (RequestTimeoutException | UncheckedTimeoutException e) {
             return HttpErrorResponse.requestTimeout(getMessage(e, request));
         } catch (ApplicationLockException e) {
             return HttpErrorResponse.applicationLockFailure(getMessage(e, request));
         } catch (ParentHostUnavailableException e) {
             return HttpErrorResponse.parentHostNotReady(getMessage(e, request));
+        } catch (RequestedNodesMissingException e) {
+            return HttpErrorResponse.requestedNodesMissing(getMessage(e, request));
         } catch (CertificateNotReadyException e) {
             return HttpErrorResponse.certificateNotReady(getMessage(e, request));
         } catch (ConfigNotConvergedException e) {

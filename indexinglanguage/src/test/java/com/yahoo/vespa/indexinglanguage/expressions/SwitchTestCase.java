@@ -12,7 +12,13 @@ import java.util.Map;
 
 import static com.yahoo.vespa.indexinglanguage.expressions.ExpressionAssert.assertVerify;
 import static com.yahoo.vespa.indexinglanguage.expressions.ExpressionAssert.assertVerifyThrows;
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotEquals;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertSame;
+import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 /**
  * @author Simon Thoresen Hult
@@ -56,19 +62,17 @@ public class SwitchTestCase {
     public void requireThatExpressionCanBeVerified() {
         Expression foo = SimpleExpression.newConversion(DataType.STRING, DataType.INT);
         Expression exp = new SwitchExpression(Map.of("foo", foo));
-        assertVerify(DataType.STRING, exp, DataType.STRING); // does not touch output
-        assertVerifyThrows(null, exp, "Expected string input, but no input is specified");
-        assertVerifyThrows(DataType.INT, exp, "Expected string input, got int");
+        assertVerify(DataType.STRING, exp, DataType.INT);
+        assertVerifyThrows("Invalid expression 'switch { case \"foo\": SimpleExpression; }': Expected string input, but no input is provided", null, exp);
+        assertVerifyThrows("Invalid expression 'switch { case \"foo\": SimpleExpression; }': Expected string input, got int", DataType.INT, exp);
     }
 
     @Test
     public void requireThatCasesAreVerified() {
         Map<String, Expression> cases = new HashMap<>();
         cases.put("foo", SimpleExpression.newRequired(DataType.INT));
-        assertVerifyThrows(DataType.STRING, new SwitchExpression(cases),
-                           "Expected int input, got string");
-        assertVerifyThrows(DataType.STRING, new SwitchExpression(Map.of(), SimpleExpression.newRequired(DataType.INT)),
-                           "Expected int input, got string");
+        assertVerifyThrows("Invalid expression 'SimpleExpression': Expected int input, got string", DataType.STRING, new SwitchExpression(cases));
+        assertVerifyThrows("Invalid expression 'SimpleExpression': Expected int input, got string", DataType.STRING, new SwitchExpression(Map.of(), SimpleExpression.newRequired(DataType.INT)));
     }
 
     @Test
@@ -122,7 +126,6 @@ public class SwitchTestCase {
         Expression exp = new SwitchExpression(cases, defaultExp);
         assertEvaluate(new StringFieldValue("foo"), exp, new StringFieldValue("bar"));
         assertEvaluate(new StringFieldValue("baz"), exp, new StringFieldValue("cox"));
-        assertEvaluate(null, exp, new StringFieldValue("cox"));
     }
 
     private static void assertEvaluate(FieldValue input, Expression exp, FieldValue expectedOutVar) {

@@ -15,7 +15,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Test fixture to setup current and next content clusters used for change validation.
+ * Test fixture to set up current and next content clusters used for change validation.
  *
  * @author geirst
  */
@@ -24,7 +24,7 @@ public abstract class ContentClusterFixture {
     protected ContentCluster currentCluster;
     protected ContentCluster nextCluster;
 
-    public ContentClusterFixture(String currentSd, String nextSd) throws Exception {
+    public ContentClusterFixture(String currentSd, String nextSd) {
         currentCluster = createCluster(currentSd);
         nextCluster = createCluster(nextSd);
     }
@@ -34,16 +34,16 @@ public abstract class ContentClusterFixture {
         this.nextCluster = nextCluster;
     }
 
-    public ContentClusterFixture(String entireSd) throws Exception {
+    public ContentClusterFixture(String entireSd) {
         currentCluster = createClusterFromEntireSd(entireSd);
         nextCluster = createClusterFromEntireSd(entireSd);
     }
 
-    protected static ContentCluster createClusterFromEntireSd(String sdContent) throws Exception {
+    protected static ContentCluster createClusterFromEntireSd(String sdContent) {
         return new ContentClusterBuilder().build(ContentClusterUtils.createMockRoot(List.of(sdContent)));
     }
 
-    private static ContentCluster createCluster(String sdContent) throws Exception {
+    private static ContentCluster createCluster(String sdContent) {
         return new ContentClusterBuilder().build(
                 ContentClusterUtils.createMockRoot(
                         List.of(new SchemaBuilder().content(sdContent).build())));
@@ -66,17 +66,17 @@ public abstract class ContentClusterFixture {
     }
 
     public void assertValidation() {
-        List<VespaConfigChangeAction> act = validate();
-        assertTrue(act.isEmpty());
+        List<VespaConfigChangeAction> action = validate();
+        assertTrue(action.isEmpty());
     }
 
-    public void assertValidation(VespaConfigChangeAction exp) {
-        assertValidation(List.of(exp));
+    public void assertValidation(VespaConfigChangeAction expected) {
+        assertValidation(List.of(expected));
     }
 
-    public void assertValidation(List<VespaConfigChangeAction> exp) {
-        List<VespaConfigChangeAction> act = validate();
-        assertEquals(exp, act);
+    public void assertValidation(List<VespaConfigChangeAction> expected) {
+        List<VespaConfigChangeAction> action = validate();
+        assertEquals(expected, action);
     }
 
     public abstract List<VespaConfigChangeAction> validate();

@@ -1,9 +1,9 @@
 <!-- Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root. -->
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://vespa.ai/assets/vespa-ai-logo-heather.svg">
-  <source media="(prefers-color-scheme: light)" srcset="https://vespa.ai/assets/vespa-ai-logo-rock.svg">
-  <img alt="#Vespa" width="200" src="https://vespa.ai/assets/vespa-ai-logo-rock.svg" style="margin-bottom: 25px;">
+  <source media="(prefers-color-scheme: dark)" srcset="https://assets.vespa.ai/logos/Vespa-logo-green-RGB.svg">
+  <source media="(prefers-color-scheme: light)" srcset="https://assets.vespa.ai/logos/Vespa-logo-dark-RGB.svg">
+  <img alt="#Vespa" width="200" src="https://assets.vespa.ai/logos/Vespa-logo-dark-RGB.svg" style="margin-bottom: 25px;">
 </picture>
 
 # Vespa clients
@@ -20,7 +20,7 @@ This part of the Vespa repository got Vespa client implementations for operation
 
 The Vespa command-line tool, see the [README](go/README.md).
 Use the Vespa CLI to deploy, feed and query a Vespa application,
-for local, self-hosted or [Vespa Cloud](https://cloud.vespa.ai/) instances.
+for local, self-hosted or [Vespa Cloud](https://vespa.ai/free-trial/) instances.
 
 ## pyvespa
 
@@ -42,12 +42,12 @@ This is a [work-in-progress javascript app](js/app) for querying a Vespa applica
 ### vespa\_query\_dsl
 
 This lib is used for composing Vespa
-[YQL queries](https://docs.vespa.ai/en/reference/query-language-reference.html).
+[YQL queries](https://docs.vespa.ai/en/reference/querying/yql.html).
 For usage, refer to the [QTest.java](src/test/java/ai/vespa/client/dsl/QTest.java) unit test.
 
 ToDos:
 
-- [ ] support `predicate` (https://docs.vespa.ai/en/predicate-fields.html)
+- [ ] support `predicate` (https://docs.vespa.ai/en/querying/predicate-fields.html)
 - [ ] support methods for checking positive/negative conditions for specific field
 - [x] support order by annotation
 - [x] support order by

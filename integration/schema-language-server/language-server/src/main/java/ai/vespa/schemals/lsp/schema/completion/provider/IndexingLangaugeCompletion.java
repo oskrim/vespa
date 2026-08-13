@@ -6,11 +6,12 @@ import org.eclipse.lsp4j.CompletionItem;
 import org.eclipse.lsp4j.Position;
 
 import ai.vespa.schemals.context.EventCompletionContext;
-import ai.vespa.schemals.lsp.schema.completion.utils.CompletionUtils;
+import ai.vespa.schemals.lsp.common.completion.CompletionProvider;
+import ai.vespa.schemals.lsp.common.completion.CompletionUtils;
 import ai.vespa.schemals.parser.ast.COLON;
 import ai.vespa.schemals.parser.ast.INDEXING;
 import ai.vespa.schemals.tree.CSTUtils;
-import ai.vespa.schemals.tree.SchemaNode;
+import ai.vespa.schemals.tree.Node;
 
 /**
  * IndexingLangaugeProvider
@@ -20,7 +21,8 @@ public class IndexingLangaugeCompletion implements CompletionProvider {
     private boolean matchCommon(EventCompletionContext context) {
         Position searchPos = context.startOfWord();
         if (searchPos == null)searchPos = context.position;
-        SchemaNode last = CSTUtils.getLastCleanNode(context.document.getRootNode(), searchPos);
+        Node last = CSTUtils.getLastCleanNode(context.document.getRootNode(), searchPos);
+        if (last == null) return false;
 
         if (last.isASTInstance(INDEXING.class)) return true;
         if (last.isASTInstance(COLON.class) && last.getPreviousSibling() != null && last.getPreviousSibling().isASTInstance(INDEXING.class))return true;
@@ -39,6 +41,7 @@ public class IndexingLangaugeCompletion implements CompletionProvider {
                 CompletionUtils.withSortingPrefix("b", CompletionUtils.constructBasic("input")),
                 CompletionUtils.withSortingPrefix("b", CompletionUtils.constructBasic("set_language")),
                 CompletionUtils.withSortingPrefix("c", CompletionUtils.constructBasic("embed")),
+                CompletionUtils.withSortingPrefix("c", CompletionUtils.constructBasic("chunk")),
                 CompletionUtils.withSortingPrefix("c", CompletionUtils.constructBasic("binarize")),
                 CompletionUtils.withSortingPrefix("c", CompletionUtils.constructBasic("hash")),
                 CompletionUtils.withSortingPrefix("c", CompletionUtils.constructBasic("to_array")),

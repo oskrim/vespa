@@ -11,41 +11,32 @@ public final class GetVarExpression extends Expression {
     private final String variableName;
 
     public GetVarExpression(String variableName) {
-        super(null);
         this.variableName = variableName;
     }
+
+    @Override
+    public boolean requiresInput() { return false; }
 
     public String getVariableName() { return variableName; }
 
     @Override
-    public DataType setInputType(DataType inputType, VerificationContext context) {
+    public DataType setInputType(DataType inputType, TypeContext context) {
         super.setInputType(inputType, context);
-        return context.getVariable(variableName);
-    }
-
-    @Override
-    public DataType setOutputType(DataType outputType, VerificationContext context) {
-        super.setOutputType(context.getVariable(variableName), outputType, context);
-        return AnyDataType.instance;
-    }
-
-    @Override
-    protected void doVerify(VerificationContext context) {
-        DataType input = context.getVariable(variableName);
-        if (input == null) {
+        DataType output = context.getVariableType(variableName);
+        if (output == null)
             throw new VerificationException(this, "Variable '" + variableName + "' not found");
-        }
-        context.setCurrentType(input);
+        return output;
+    }
+
+    @Override
+    public DataType setOutputType(DataType outputType, TypeContext context) {
+        super.setOutputType(context.getVariableType(variableName), outputType, null, context);
+        return AnyDataType.instance;
     }
 
     @Override
     protected void doExecute(ExecutionContext context) {
         context.setCurrentValue(context.getVariable(variableName));
-    }
-
-    @Override
-    public DataType createdOutputType() {
-        return UnresolvedDataType.INSTANCE;
     }
 
     @Override

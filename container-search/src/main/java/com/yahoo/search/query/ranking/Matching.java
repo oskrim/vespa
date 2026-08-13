@@ -1,33 +1,42 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.search.query.ranking;
 
-import com.yahoo.processing.IllegalInputException;
-import com.yahoo.search.query.Ranking;
 import com.yahoo.search.query.profile.types.FieldDescription;
+import com.yahoo.search.query.profile.types.QueryProfileFieldType;
 import com.yahoo.search.query.profile.types.QueryProfileType;
 
+import java.util.Locale;
 import java.util.Objects;
 
 /**
  * Holds the settings for the matching feature.
  *
- * @author baldersheim
+ * @author Henning Baldersheim
  */
 public class Matching implements Cloneable {
 
     /** The type representing the property arguments consumed by this */
     private static final QueryProfileType argumentType;
 
+    public static final String MATCHING = "matching";
     public static final String TERMWISELIMIT = "termwiseLimit";
     public static final String NUMTHREADSPERSEARCH = "numThreadsPerSearch";
     public static final String NUMSEARCHPARTITIIONS = "numSearchPartitions";
     public static final String MINHITSPERTHREAD = "minHitsPerThread";
     public static final String POST_FILTER_THRESHOLD = "postFilterThreshold";
+    public static final String EXPLORATION_SLACK = "explorationSlack";
     public static final String APPROXIMATE_THRESHOLD = "approximateThreshold";
+    public static final String FILTER_FIRST_THRESHOLD = "filterFirstThreshold";
+    public static final String FILTER_FIRST_EXPLORATION = "filterFirstExploration";
     public static final String TARGET_HITS_MAX_ADJUSTMENT_FACTOR = "targetHitsMaxAdjustmentFactor";
+    public static final String LAZY_FILTER = "lazyFilter";
+    public static final String FILTER_THRESHOLD = "filterThreshold";
+    public static final String ANNTIMEBUDGET = "anntimebudget";
+    public static final String ANNTIMEOUT = "anntimeout";
+    public static final String WEAKAND = "weakand";
 
     static {
-        argumentType =new QueryProfileType(Ranking.MATCHING);
+        argumentType = new QueryProfileType(MATCHING);
         argumentType.setStrict(true);
         argumentType.setBuiltin(true);
         argumentType.addField(new FieldDescription(TERMWISELIMIT, "double"));
@@ -36,7 +45,15 @@ public class Matching implements Cloneable {
         argumentType.addField(new FieldDescription(MINHITSPERTHREAD, "integer"));
         argumentType.addField(new FieldDescription(POST_FILTER_THRESHOLD, "double"));
         argumentType.addField(new FieldDescription(APPROXIMATE_THRESHOLD, "double"));
+        argumentType.addField(new FieldDescription(FILTER_FIRST_THRESHOLD, "double"));
+        argumentType.addField(new FieldDescription(FILTER_FIRST_EXPLORATION, "double"));
+        argumentType.addField(new FieldDescription(EXPLORATION_SLACK, "double"));
         argumentType.addField(new FieldDescription(TARGET_HITS_MAX_ADJUSTMENT_FACTOR, "double"));
+        argumentType.addField(new FieldDescription(LAZY_FILTER, "boolean"));
+        argumentType.addField(new FieldDescription(FILTER_THRESHOLD, "double"));
+        argumentType.addField(new FieldDescription(ANNTIMEBUDGET, "string"));
+        argumentType.addField(new FieldDescription(ANNTIMEOUT, new QueryProfileFieldType(AnnTimeout.getArgumentType())));
+        argumentType.addField(new FieldDescription(WEAKAND, new QueryProfileFieldType(WeakAnd.getArgumentType())));
         argumentType.freeze();
     }
 
@@ -48,7 +65,15 @@ public class Matching implements Cloneable {
     private Integer minHitsPerThread = null;
     private Double postFilterThreshold = null;
     private Double approximateThreshold = null;
+    private Double filterFirstThreshold = null;
+    private Double filterFirstExploration = null;
+    private Double explorationSlack = null;
     private Double targetHitsMaxAdjustmentFactor = null;
+    private Boolean lazyFilter = null;
+    private Double filterThreshold = null;
+    private Long annTimeBudget = null;
+    private AnnTimeout annTimeout = new AnnTimeout();
+    private WeakAnd weakAnd = new WeakAnd();
 
     public Double getTermwiseLimit() { return termwiseLimit; }
     public Integer getNumThreadsPerSearch() { return numThreadsPerSearch; }
@@ -56,15 +81,32 @@ public class Matching implements Cloneable {
     public Integer getMinHitsPerThread() { return minHitsPerThread; }
     public Double getPostFilterThreshold() { return postFilterThreshold; }
     public Double getApproximateThreshold() { return approximateThreshold; }
+    public Double getFilterFirstThreshold() { return filterFirstThreshold; }
+    public Double getFilterFirstExploration() { return filterFirstExploration; }
+    public Double getExplorationSlack() { return explorationSlack; }
     public Double getTargetHitsMaxAdjustmentFactor() { return targetHitsMaxAdjustmentFactor; }
+    public Boolean getLazyFilter() { return lazyFilter; }
+    public Double getFilterThreshold() { return filterThreshold; }
+    public Long getAnnTimeBudget() { return annTimeBudget; }
+    public AnnTimeout getAnnTimeout() { return annTimeout; }
+    public WeakAnd getWeakAnd() { return weakAnd; }
+
+    private static void validateRange(String field, double v, double lboundIncl, double uboundIncl) {
+        if (v < lboundIncl || v > uboundIncl) {
+            throw new IllegalArgumentException(String.format(Locale.US, "%s must be in the range [%.1f, %.1f], but is %.1f",
+                                                             field, lboundIncl, uboundIncl, v));
+
+        }
+    }
 
     public void setTermwiselimit(double value) {
-        if ((value < 0.0) || (value > 1.0)) {
-            throw new IllegalInputException("termwiselimit must be in the range [0.0, 1.0]. It is " + value);
-        }
+        validateRange(TERMWISELIMIT, value, 0.0, 1.0);
         termwiseLimit = value;
     }
     public void setNumThreadsPerSearch(int value) {
+        if (value < 1) {
+            throw new IllegalArgumentException("ranking.matching.numthreadspersearch must be > 0");
+        }
         numThreadsPerSearch = value;
     }
     public void setNumSearchPartitions(int value) {
@@ -79,13 +121,31 @@ public class Matching implements Cloneable {
     public void setApproximateThreshold(double threshold) {
         approximateThreshold = threshold;
     }
+    public void setFilterFirstThreshold(double threshold) {
+        filterFirstThreshold = threshold;
+    }
+    public void setFilterFirstExploration(double threshold) {
+        filterFirstExploration = threshold;
+    }
+    public void setExplorationSlack(double slack) {
+        explorationSlack = slack;
+    }
     public void setTargetHitsMaxAdjustmentFactor(double factor) {
         targetHitsMaxAdjustmentFactor = factor;
+    }
+    public void setLazyFilter(boolean enabled) {
+        lazyFilter = enabled;
+    }
+    public void setFilterThreshold(double threshold) {
+        validateRange(FILTER_THRESHOLD, threshold, 0.0, 1.0);
+        filterThreshold = threshold;
+    }
+    public void setAnnTimeBudget(Long budget) {
+        annTimeBudget = budget > 0xFFFF_FFFFL ? 0xFFFF_FFFFL : budget < 0 ? 0 : budget;
     }
 
     /** Internal operation - DO NOT USE */
     public void prepare(RankProperties rankProperties) {
-
         if (termwiseLimit != null) {
             rankProperties.put("vespa.matching.termwise_limit", String.valueOf(termwiseLimit));
         }
@@ -104,15 +164,38 @@ public class Matching implements Cloneable {
         if (approximateThreshold != null) {
             rankProperties.put("vespa.matching.global_filter.lower_limit", String.valueOf(approximateThreshold));
         }
+        if (filterFirstThreshold != null) {
+            rankProperties.put("vespa.matching.nns.filter_first_upper_limit", String.valueOf(filterFirstThreshold));
+        }
+        if (filterFirstThreshold != null) {
+            rankProperties.put("vespa.matching.nns.filter_first_exploration", String.valueOf(filterFirstExploration));
+        }
+        if (explorationSlack != null) {
+            rankProperties.put("vespa.matching.nns.exploration_slack", String.valueOf(explorationSlack));
+        }
         if (targetHitsMaxAdjustmentFactor != null) {
             rankProperties.put("vespa.matching.nns.target_hits_max_adjustment_factor", String.valueOf(targetHitsMaxAdjustmentFactor));
         }
+        if (lazyFilter != null) {
+            rankProperties.put("vespa.matching.nns.lazy_filter", String.valueOf(lazyFilter));
+        }
+        if (filterThreshold != null) {
+            rankProperties.put("vespa.matching.filter_threshold", String.valueOf(filterThreshold));
+        }
+        if (annTimeBudget != null) {
+            rankProperties.put("vespa.matching.nns.anntimebudget", String.valueOf(annTimeBudget));
+        }
+        annTimeout.prepare(rankProperties);
+        weakAnd.prepare(rankProperties);
     }
 
     @Override
     public Matching clone() {
         try {
-            return (Matching) super.clone();
+            var clone =  (Matching) super.clone();
+            clone.annTimeout = this.annTimeout.clone();
+            clone.weakAnd = this.weakAnd.clone();
+            return clone;
         }
         catch (CloneNotSupportedException e) {
             throw new RuntimeException("Won't happen", e);
@@ -125,18 +208,28 @@ public class Matching implements Cloneable {
         if (o == null || getClass() != o.getClass()) return false;
         Matching matching = (Matching) o;
         return Objects.equals(termwiseLimit, matching.termwiseLimit) &&
-                Objects.equals(numThreadsPerSearch, matching.numThreadsPerSearch) &&
-                Objects.equals(numSearchPartitions, matching.numSearchPartitions) &&
-                Objects.equals(minHitsPerThread, matching.minHitsPerThread) &&
-                Objects.equals(postFilterThreshold, matching.postFilterThreshold) &&
-                Objects.equals(approximateThreshold, matching.approximateThreshold) &&
-                Objects.equals(targetHitsMaxAdjustmentFactor, matching.targetHitsMaxAdjustmentFactor);
+               Objects.equals(numThreadsPerSearch, matching.numThreadsPerSearch) &&
+               Objects.equals(numSearchPartitions, matching.numSearchPartitions) &&
+               Objects.equals(minHitsPerThread, matching.minHitsPerThread) &&
+               Objects.equals(postFilterThreshold, matching.postFilterThreshold) &&
+               Objects.equals(approximateThreshold, matching.approximateThreshold) &&
+               Objects.equals(filterFirstThreshold, matching.filterFirstThreshold) &&
+               Objects.equals(filterFirstExploration, matching.filterFirstExploration) &&
+               Objects.equals(explorationSlack, matching.explorationSlack) &&
+               Objects.equals(targetHitsMaxAdjustmentFactor, matching.targetHitsMaxAdjustmentFactor) &&
+               Objects.equals(lazyFilter, matching.lazyFilter) &&
+               Objects.equals(filterThreshold, matching.filterThreshold) &&
+               Objects.equals(annTimeBudget, matching.annTimeBudget) &&
+               Objects.equals(annTimeout, matching.annTimeout) &&
+               Objects.equals(weakAnd, matching.weakAnd);
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(termwiseLimit, numThreadsPerSearch, numSearchPartitions, minHitsPerThread,
-                postFilterThreshold, approximateThreshold, targetHitsMaxAdjustmentFactor);
+                            postFilterThreshold, approximateThreshold, filterFirstThreshold, filterFirstExploration,
+                            explorationSlack, targetHitsMaxAdjustmentFactor, lazyFilter, filterThreshold, annTimeBudget,
+                            annTimeout, weakAnd);
     }
 }
 

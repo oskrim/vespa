@@ -2,6 +2,7 @@
 package com.yahoo.vespa.model.container.http;
 
 import com.yahoo.config.provision.DataplaneToken;
+import com.yahoo.text.Text;
 
 import java.security.cert.X509Certificate;
 import java.util.Collection;
@@ -14,7 +15,8 @@ import static com.yahoo.vespa.model.container.http.Client.Permission.READ;
 import static com.yahoo.vespa.model.container.http.Client.Permission.WRITE;
 
 /**
- * Represents a client. The client is identified by one of the provided certificates and have a set of permissions.
+ * Represents a client. The client is identified by one of the provided certificates or a token
+ * and have a set of permissions.
  *
  * @author mortent
  * @author bjorncs
@@ -75,7 +77,7 @@ public class Client {
             return switch (v) {
                 case "read" -> READ;
                 case "write" -> WRITE;
-                default -> throw new IllegalArgumentException("Invalid permission '%s'. Valid values are 'read' and 'write'.".formatted(v));
+                default -> throw new IllegalArgumentException(Text.format("Invalid permission '%s'. Valid values are 'read' and 'write'.", v));
             };
         }
 

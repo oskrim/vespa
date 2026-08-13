@@ -1,13 +1,26 @@
-#!/bin/bash
+#!/usr/bin/env bash
+#
 # Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+#
+# Uploads Java and C++ test results to Buildkite Analytics.
 
-set -euo pipefail
+set -o errexit
+set -o nounset
+set -o pipefail
+
+: "${WORKDIR:?Environment variable WORKDIR must be set (working directory for test results)}"
+: "${LOG_DIR:?Environment variable LOG_DIR must be set (directory containing C++ test results)}"
+
+if [[ -n "${DEBUG:-}" ]]; then
+    set -o xtrace
+fi
 
 if [[ $BUILDKITE != true ]]; then
     echo "Skipping artifact publishing when not executed by Buildkite."
     exit 0
 fi
 
+echo "--- 📊 Uploading test results to Buildkite Analytics"
 if [[ $(arch) == x86_64 ]]; then
     JAVA_TEST_TOKEN=$UNIT_TEST_JAVA_AMD64_TOKEN
     CPP_TEST_TOKEN=$UNIT_TEST_CPP_AMD64_TOKEN
@@ -16,14 +29,10 @@ else
     CPP_TEST_TOKEN=$UNIT_TEST_CPP_ARM64_TOKEN
 fi
 
-if [[ -z $JAVA_TEST_TOKEN ]]; then
-    echo "Missing JAVA_TEST_TOKEN. Exiting."
-    exit 1
-fi
-if [[ -z $CPP_TEST_TOKEN ]]; then
-    echo "Missing CPP_TEST_TOKEN. Exiting."
-    exit 1
-fi
+{ set +o xtrace; } 2>/dev/null
+: "${JAVA_TEST_TOKEN:?Environment variable JAVA_TEST_TOKEN must be set (token for uploading Java test results)}"
+: "${CPP_TEST_TOKEN:?Environment variable CPP_TEST_TOKEN must be set (token for uploading C++ test results)}"
+[[ -n "${DEBUG:-}" ]] && set -o xtrace
 
 upload_result() {
     curl \
@@ -44,13 +53,14 @@ upload_result() {
 
 export -f upload_result
 
+echo "Uploading Java test results..."
 # Upload all surefire TEST-*.xml reports
 cd "$WORKDIR"
 export BUILDKITE_ANALYTICS_TOKEN=$JAVA_TEST_TOKEN
 # shellcheck disable=2038
 find . -name "TEST-*.xml" -type f | xargs -n 1 -P 50 -I '{}' bash -c "upload_result {}"
 
+echo "Uploading C++ test results..."
 # Upload the cpp test report
 export BUILDKITE_ANALYTICS_TOKEN=$CPP_TEST_TOKEN
 upload_result "$LOG_DIR/vespa-cpptest-results.xml"
-

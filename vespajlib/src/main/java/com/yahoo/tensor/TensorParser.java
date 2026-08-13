@@ -7,8 +7,8 @@ import java.util.List;
 import java.util.Optional;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
+import com.yahoo.tensor.serialization.HexEncoding;
 import com.yahoo.tensor.serialization.JsonFormat;
-import static com.yahoo.tensor.serialization.JsonFormat.decodeHexString;
 
 /**
  * @author bratseth
@@ -33,8 +33,7 @@ class TensorParser {
         }
     }
 
-    static Tensor tensorFromBody(String tensorString, Optional<TensorType> explicitType) {
-        Optional<TensorType> type;
+    static Tensor tensorFromBody(String tensorString, Optional<TensorType> type) {
         String valueString;
 
         // The order in which dimensions are written in the type string.
@@ -45,17 +44,18 @@ class TensorParser {
         tensorString = tensorString.trim();
         if (tensorString.startsWith("tensor")) {
             int colonIndex = tensorString.indexOf(':');
+            if( colonIndex < 0 )
+                throw new IllegalArgumentException("Expected ':' after 'tensor'");
             String typeString = tensorString.substring(0, colonIndex);
             dimensionOrder = new ArrayList<>();
             TensorType typeFromString = TensorTypeParser.fromSpec(typeString, dimensionOrder);
-            if (explicitType.isPresent() && ! explicitType.get().equals(typeFromString))
+            if (type.isPresent() && ! type.get().equals(typeFromString))
                 throw new IllegalArgumentException("Got tensor with type string '" + typeString + "', but was " +
-                                                   "passed type " + explicitType.get());
+                                                   "passed type " + type.get());
             type = Optional.of(typeFromString);
             valueString = tensorString.substring(colonIndex + 1);
         }
         else {
-            type = explicitType;
             valueString = tensorString;
             dimensionOrder = null;
         }
@@ -72,19 +72,23 @@ class TensorParser {
             return tensorFromDenseValueString(valueString, type, dimensionOrder);
         }
         else {
-            var t = maybeFromBinaryValueString(valueString, type, dimensionOrder);
-            if (t.isPresent()) { return t.get(); }
+            if (type.isEmpty() || type.get().equals(TensorType.empty)) {
+                try {
+                    return Tensor.Builder.of(TensorType.empty).cell(Double.parseDouble(tensorString)).build();
+                } catch (NumberFormatException e) {
+                    var message = type.isEmpty() ? "Expected a number, hex string, or a string starting by {, [ or tensor(...)"
+                                                 : "Expected a number";
+                    throw new IllegalArgumentException(message);
+                }
+            }
+            else {
+                var invalidHexStringReason = HexEncoding.validateHex(valueString, type.get());
+                if (invalidHexStringReason.isPresent())
+                    throw new IllegalArgumentException(invalidHexStringReason.get());
+                else
+                    return tensorFromDenseValueString(valueString, type, dimensionOrder);
+            }
 
-            if (explicitType.isPresent() && ! explicitType.get().equals(TensorType.empty))
-                throw new IllegalArgumentException("Got a zero-dimensional tensor value ('" + tensorString +
-                                                   "') where type " + explicitType.get() + " is required");
-            try {
-                return Tensor.Builder.of(TensorType.empty).cell(Double.parseDouble(tensorString)).build();
-            }
-            catch (NumberFormatException e) {
-                throw new IllegalArgumentException("Excepted a number or a string starting by {, [ or tensor(...):, got '" +
-                                                   tensorString + "'");
-            }
         }
     }
 
@@ -105,7 +109,7 @@ class TensorParser {
             return builder.build();
         }
         catch (NumberFormatException e) {
-            throw new IllegalArgumentException("Excepted a number or a string starting by '{' or 'tensor('");
+            throw new IllegalArgumentException("Expected a number or a string starting by '{' or 'tensor('");
         }
     }
 
@@ -135,42 +139,9 @@ class TensorParser {
             return builder.build();
         }
         catch (NumberFormatException e) {
-            throw new IllegalArgumentException("Excepted a number or a string starting by '{' or 'tensor('");
+            throw new IllegalArgumentException("Expected a number or a string starting by '{' or 'tensor('");
         }
     }
-
-    private static boolean validHexString(TensorType type, String valueString) {
-        long sz = 1;
-        for (var d : type.dimensions()) {
-            sz *= d.size().orElse(0L);
-        }
-        int numHexDigits = (int)(sz * 2 * type.valueType().sizeOfCell());
-        if (sz == 0
-            || type.dimensions().isEmpty()
-            || valueString.length() != numHexDigits
-            || valueString.chars().anyMatch(ch -> (Character.digit(ch, 16) == -1)))
-        {
-            return false;
-        }
-        return true;
-    }
-
-    private static Optional<Tensor> maybeFromBinaryValueString(
-            String valueString,
-            Optional<TensorType> optType,
-            List<String> dimensionOrder)
-    {
-        if (optType.isEmpty()) {
-            return Optional.empty();
-        }
-        var type = optType.get();
-        if (validHexString(type, valueString)) {
-            var tensor = tensorFromDenseValueString(valueString, optType, dimensionOrder);
-            return Optional.of(tensor);
-        }
-        return Optional.empty();
-    }
-
     private static Tensor tensorFromDenseValueString(String valueString,
                                                      Optional<TensorType> type,
                                                      List<String> dimensionOrder) {
@@ -336,8 +307,8 @@ class TensorParser {
             if (string.charAt(position) != '[') {
                 int stopPos = stopCharIndex(position);
                 String hexToken = string.substring(position, stopPos);
-                if (validHexString(builder.type(), hexToken)) {
-                    double[] values = decodeHexString(hexToken, builder.type().valueType());
+                if (HexEncoding.validateHex(hexToken, builder.type()).isEmpty()) {
+                    double[] values = HexEncoding.decodeHex(hexToken, builder.type());
                     int i = 0;
                     while (indexes.hasNext()) {
                         indexes.next();

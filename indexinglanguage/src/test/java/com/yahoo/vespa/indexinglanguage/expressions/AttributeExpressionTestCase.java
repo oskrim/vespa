@@ -3,8 +3,6 @@ package com.yahoo.vespa.indexinglanguage.expressions;
 
 import org.junit.Test;
 
-import static com.yahoo.vespa.indexinglanguage.expressions.OutputAssert.assertExecute;
-import static com.yahoo.vespa.indexinglanguage.expressions.OutputAssert.assertVerify;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 
@@ -29,13 +27,4 @@ public class AttributeExpressionTestCase {
         assertEquals(exp.hashCode(), new AttributeExpression("foo").hashCode());
     }
 
-    @Test
-    public void requireThatExpressionCanBeVerified() {
-        assertVerify(new AttributeExpression("foo"));
-    }
-
-    @Test
-    public void requireThatExpressionCanBeExecuted() {
-        assertExecute(new AttributeExpression("foo"));
-    }
 }

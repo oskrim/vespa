@@ -22,6 +22,7 @@ import com.yahoo.schema.ApplicationBuilder;
 import com.yahoo.schema.Schema;
 import com.yahoo.schema.document.FieldSet;
 import com.yahoo.schema.parser.ParseException;
+import com.yahoo.text.Text;
 import org.apache.maven.plugin.AbstractMojo;
 import org.apache.maven.plugins.annotations.LifecyclePhase;
 import org.apache.maven.plugins.annotations.Mojo;
@@ -32,6 +33,8 @@ import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.io.Writer;
+import java.nio.charset.StandardCharsets;
+import java.util.Locale;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Date;
@@ -47,6 +50,7 @@ import java.util.Set;
  * @author Vegard Balgaard Havdal
  */
 @Mojo(name = "document-gen", defaultPhase = LifecyclePhase.GENERATE_SOURCES)
+@SuppressWarnings({"deprecation", "removal"})
 public class DocumentGenMojo extends AbstractMojo {
 
     private long newestModifiedTime = 0;
@@ -155,7 +159,7 @@ public class DocumentGenMojo extends AbstractMojo {
             getLog().debug("No changes, not updating "+target);
             return;
         }
-        try (Writer out = new FileWriter(target)) {
+        try (Writer out = new FileWriter(target, StandardCharsets.UTF_8)) {
                 out.write("@ExportPackage\n" +
                     "package "+packageName+";\n\n" +
                     "import com.yahoo.osgi.annotation.ExportPackage;\n");
@@ -191,7 +195,7 @@ public class DocumentGenMojo extends AbstractMojo {
             getLog().debug("No changes, not updating "+target);
             return;
         }
-        try (Writer out = new FileWriter(target)) {
+        try (Writer out = new FileWriter(target, StandardCharsets.UTF_8)) {
                 out.write("package "+packageName+";\n\n" +
                     "/**\n" +
                     " *  Registry of generated concrete document, struct and annotation types.\n" +
@@ -200,6 +204,7 @@ public class DocumentGenMojo extends AbstractMojo {
                     " *  Date: "+new Date()+"\n" +
                     " */\n");
             out.write("@com.yahoo.document.Generated\n");
+            out.write("@SuppressWarnings({\"deprecation\", \"removal\"})\n");
             out.write("public class ConcreteDocumentFactory extends com.yahoo.docproc.AbstractConcreteDocumentFactory {\n");
             out.write(ind()+"private static java.util.Map<java.lang.String, java.lang.Class<? extends com.yahoo.document.Document>> dTypes = new java.util.HashMap<java.lang.String, java.lang.Class<? extends com.yahoo.document.Document>>();\n");
             out.write(ind()+"private static java.util.Map<java.lang.String, com.yahoo.document.DocumentType> docTypes = new java.util.HashMap<>();\n");
@@ -303,7 +308,7 @@ public class DocumentGenMojo extends AbstractMojo {
             getLog().debug("No changes, not updating "+target);
             return;
         }
-        try (Writer out = new FileWriter(target)) {
+        try (Writer out = new FileWriter(target, StandardCharsets.UTF_8)) {
                 out.write("package "+packageName+".annotation;\n\n" +
                     "import "+packageName+".ConcreteDocumentFactory;\n" +
                     exportInnerImportsFromDocAndSuperTypes(docType, packageName) +
@@ -314,6 +319,7 @@ public class DocumentGenMojo extends AbstractMojo {
                     " *  Date: "+new Date()+"\n" +
                     " */\n" +
                     "@com.yahoo.document.Generated\n" +
+                    "@SuppressWarnings({\"unchecked\",\"deprecation\",\"removal\"})\n" +
                     "public "+annTypeModifier(annType)+"class "+className+" extends "+getParentAnnotationType(annType)+" {\n\n");
             if (annType.getDataType() instanceof StructDataType) {
                 out.write(ind() + "public "+className+"() {\n" +
@@ -410,7 +416,7 @@ public class DocumentGenMojo extends AbstractMojo {
             getLog().debug("No changes, not updating "+target);
             return;
         }
-        try (Writer doc = new FileWriter(target)) {
+        try (Writer doc = new FileWriter(target, StandardCharsets.UTF_8)) {
             exportDocumentClass(docType, doc, packageName);
         } catch (IOException e) {
             throw new RuntimeException("Could not export sources for document type '"+docType.getName()+"'", e);
@@ -424,7 +430,7 @@ public class DocumentGenMojo extends AbstractMojo {
         String className = className(docType.getName());
         Pair<String, Boolean> extendInfo = javaSuperType(docType);
         String superType = extendInfo.getFirst();
-        Boolean multiExtends = extendInfo.getSecond();
+        boolean multiExtends = extendInfo.getSecond();
         out.write(
                 "package "+packageName+";\n\n" +
                 exportInnerImportsFromSuperTypes(docType, packageName) +
@@ -434,7 +440,7 @@ public class DocumentGenMojo extends AbstractMojo {
                 " *  Date: "+new Date()+"\n" +
                 " */\n" +
                 "@com.yahoo.document.Generated\n" +
-                "@SuppressWarnings(\"unchecked\")\n" +
+                "@SuppressWarnings({\"unchecked\",\"deprecation\",\"removal\"})\n" +
                 "public class "+className+" extends "+superType+" {\n\n"+
                 ind(1)+"/** The doc type of this.*/\n" +
                 ind(1)+"public static final com.yahoo.document.DocumentType type = getDocumentType();\n\n");
@@ -497,24 +503,18 @@ public class DocumentGenMojo extends AbstractMojo {
         return false;
     }
 
-    private Collection<Field> getAllUniqueFields(Boolean multipleInheritance, Collection<Field> allFields) {
-        if (multipleInheritance) {
-            Map<String, Field> seen = new HashMap<>();
-            List<Field> unique = new ArrayList<>(allFields.size());
-            for (Field f : allFields) {
-                if (seen.containsKey(f.getName())) {
-                    if ( ! f.equals(seen.get(f.getName()))) {
-                        throw new IllegalArgumentException("Field '" + f.getName() + "' has conflicting definitions in multiple inheritance." +
-                                "First defined as '" + seen.get(f.getName()) + "', then as '" + f + "'.");
-                    }
-                } else {
-                    unique.add(f);
-                    seen.put(f.getName(), f);
+    private Collection<Field> getAllUniqueFields(boolean multipleInheritance, Collection<Field> allFields) {
+        Map<String, Field> seen = new HashMap<>();
+        for (Field f : allFields) {
+            if (seen.containsKey(f.getName())) {
+                if (multipleInheritance && ! f.equals(seen.get(f.getName()))) {
+                    throw new IllegalArgumentException("Field '" + f.getName() + "' has conflicting definitions in multiple inheritance." +
+                                                       "First defined as '" + seen.get(f.getName()) + "', then as '" + f + "'.");
                 }
             }
-            return unique;
+            seen.put(f.getName(), f);
         }
-        return allFields;
+        return seen.values();
     }
 
     /**
@@ -590,7 +590,9 @@ public class DocumentGenMojo extends AbstractMojo {
         out.write(ind(ind+2) + "public void set(com.yahoo.document.datatypes.StructuredFieldValue doc, Object value) { ((" + className + ")doc)." + setter(f.getName())+"((" + toJavaType(f.getDataType()) + ")value); }\n");
         out.write(ind(ind+1) + "},\n");
         out.write(ind(ind+1) + "new com.yahoo.document.ExtendedStringField.ExtractSpanTrees() {\n");
+        out.write(ind(ind+2) + "@SuppressWarnings({\"deprecation\", \"removal\"})\n");
         out.write(ind(ind+2) + "public java.util.Map<java.lang.String,com.yahoo.document.annotation.SpanTree> get(com.yahoo.document.datatypes.StructuredFieldValue doc) {return ((" + className + ")doc)." + spanTreeGetter(f.getName()) + "(); }\n");
+        out.write(ind(ind+2) + "@SuppressWarnings({\"deprecation\", \"removal\"})\n");
         out.write(ind(ind+2) + "public void set(com.yahoo.document.datatypes.StructuredFieldValue doc, java.util.Map<java.lang.String,com.yahoo.document.annotation.SpanTree> value) { ((" + className + ")doc)." + spanTreeSetter(f.getName()) + "(value); }\n");
         out.write(ind(ind+1) + "}\n");
         out.write(ind(ind) + "));\n");
@@ -640,7 +642,7 @@ public class DocumentGenMojo extends AbstractMojo {
         }
         for (NewDocumentType parentType : parentTypes) {
             if (!parentType.getName().equals("document")) {
-                out.write("%sret.inherit(%s.type);\n".formatted(bodyIndent, className(parentType.getName())));
+                out.write(Text.format("%sret.inherit(%s.type);\n", bodyIndent, className(parentType.getName())));
             }
         }
 
@@ -767,6 +769,7 @@ public class DocumentGenMojo extends AbstractMojo {
                 ind(ind)+" *  Date: "+new Date()+"\n" +
                 ind(ind)+" */\n" +
                 ind(ind)+"@com.yahoo.document.Generated\n" +
+                ind(ind)+"@SuppressWarnings({\"unchecked\",\"deprecation\",\"removal\"})\n" +
                 ind(ind) + "public static class "+structClassName+" extends com.yahoo.document.datatypes.Struct {\n\n" +
                 ind(ind+1)+"/** The type of this.*/\n" +
                 ind(ind+1)+"public static final com.yahoo.document.StructDataType type = getStructType();\n\n");
@@ -858,8 +861,11 @@ public class DocumentGenMojo extends AbstractMojo {
                     ind(ind+1) + "return this;\n" +
                     ind(ind) + "}\n");
             if (spanTrees && dt.equals(DataType.STRING)) {
-                out.write(ind(ind)+"public java.util.Map<java.lang.String,com.yahoo.document.annotation.SpanTree> "+spanTreeGetter(field.getName())+"() { return "+field.getName()+"SpanTrees; }\n" +
-                        ind(ind)+"public void "+spanTreeSetter(field.getName())+"(java.util.Map<java.lang.String,com.yahoo.document.annotation.SpanTree> spanTrees) { this."+field.getName()+"SpanTrees=spanTrees; }\n");
+                out.write(
+		    ind(ind)+"@Deprecated(forRemoval = true)\n" +
+		    ind(ind)+"public java.util.Map<java.lang.String,com.yahoo.document.annotation.SpanTree> "+spanTreeGetter(field.getName())+"() { return "+field.getName()+"SpanTrees; }\n" +
+		    ind(ind)+"@Deprecated(forRemoval = true)\n" +
+                    ind(ind)+"public void "+spanTreeSetter(field.getName())+"(java.util.Map<java.lang.String,com.yahoo.document.annotation.SpanTree> spanTrees) { this."+field.getName()+"SpanTrees=spanTrees; }\n");
             }
         }
         out.write("\n");
@@ -988,11 +994,11 @@ public class DocumentGenMojo extends AbstractMojo {
         if (dt instanceof AnnotationReferenceDataType adt) return "new com.yahoo.document.annotation.AnnotationReferenceDataType(new com.yahoo.document.annotation.AnnotationType(\""+adt.getAnnotationType().getName()+"\"))";
         if (dt instanceof NewDocumentReferenceDataType nrdt) {
             // All concrete document types have a public `type` constant with their DocumentType.
-            return String.format("new com.yahoo.document.ReferenceDataType(%s.type, %d)",
+            return Text.format("new com.yahoo.document.ReferenceDataType(%s.type, %d)",
                     className(nrdt.getTargetType().getName()), dt.getId());
         }
         if (dt instanceof TensorDataType tdt) {
-            return String.format("new com.yahoo.document.TensorDataType(com.yahoo.tensor.TensorType.fromSpec(\"%s\"))",
+            return Text.format("new com.yahoo.document.TensorDataType(com.yahoo.tensor.TensorType.fromSpec(\"%s\"))",
                     tdt.getTensorType().toString());
         }
         return "com.yahoo.document.DataType.RAW";
@@ -1007,8 +1013,16 @@ public class DocumentGenMojo extends AbstractMojo {
         return searches;
     }
 
+    private static boolean reservedFieldName(String name) {
+        return (name.equals("id") || name.equals("version"));
+    }
+
     private static String upperCaseFirstChar(String s) {
-        return s.substring(0, 1).toUpperCase()+s.substring(1);
+        if (reservedFieldName(s)) {
+            System.err.println("WARNING - field '"+s+"' has a reserved name; using 'My_"+s+"' instead");
+            return "My_" + s;
+        }
+        return s.substring(0, 1).toUpperCase(Locale.ROOT)+s.substring(1);
     }
 
 }

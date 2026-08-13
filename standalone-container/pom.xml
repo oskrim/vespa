@@ -12,6 +12,7 @@
   <artifactId>standalone-container</artifactId>
   <version>8-SNAPSHOT</version>
   <packaging>container-plugin</packaging>
+  <name>${project.artifactId}</name>
   <dependencies>
     <dependency>
       <groupId>com.yahoo.vespa</groupId>
@@ -78,7 +79,7 @@
       <scope>provided</scope>
     </dependency>
     <dependency>
-      <groupId>org.lz4</groupId>
+      <groupId>at.yawk.lz4</groupId>
       <artifactId>lz4-java</artifactId>
     </dependency>
   </dependencies>

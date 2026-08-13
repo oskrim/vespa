@@ -30,11 +30,13 @@ Testing
 /.cmake/
 /.mvn/
 /.ninja_deps
+/.ninja_lock
 /.ninja_log
 /build.ninja
 /rules.ninja
 *_benchmark_app
 *_test_app
+*_gtest_runner_app
 /cmake-build-debug/
 /mvnw
 /mvnw.cmd
@@ -50,3 +52,6 @@ install_manifest.txt
 !/.buildkite/Makefile
 .vscode
 .metadata
+/maven-wrapper
+/compile_commands.json
+/.cache

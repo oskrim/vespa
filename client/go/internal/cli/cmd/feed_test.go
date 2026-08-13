@@ -39,8 +39,8 @@ func TestFeed(t *testing.T) {
 }`)
 	jsonFile1 := filepath.Join(td, "docs1.jsonl")
 	jsonFile2 := filepath.Join(td, "docs2.jsonl")
-	require.Nil(t, os.WriteFile(jsonFile1, doc, 0644))
-	require.Nil(t, os.WriteFile(jsonFile2, doc, 0644))
+	require.Nil(t, os.WriteFile(jsonFile1, doc, 0o644))
+	require.Nil(t, os.WriteFile(jsonFile2, doc, 0o644))
 
 	httpClient.NextResponseString(200, `{"message":"OK"}`)
 	httpClient.NextResponseString(200, `{"message":"OK"}`)
@@ -100,6 +100,23 @@ func TestFeed(t *testing.T) {
 	assert.Equal(t, "feed: got status 400 ({\"message\": \"bad request\"}) for put id:ns:type::doc1: not retryable\n", stderr.String())
 }
 
+func TestFeedCloudMissingCertificate(t *testing.T) {
+	cli, _, stderr := newTestCLI(t)
+	cli.Environment["VESPA_CLI_ENDPOINTS"] = "{\"endpoints\":[{\"cluster\":\"container\",\"url\":\"https://example.vespa-app.cloud\"}]}"
+	require.Nil(t, cli.Run("config", "set", "application", "t1.a1.i1"))
+	require.Nil(t, cli.Run("config", "set", "target", "cloud"))
+	require.Nil(t, cli.Run("auth", "api-key"))
+
+	td := t.TempDir()
+	jsonFile := filepath.Join(td, "docs.jsonl")
+	require.Nil(t, os.WriteFile(jsonFile, []byte(`{"put":"id:ns:type::doc1","fields":{"foo":"123"}}`), 0o644))
+
+	stderr.Reset()
+	require.NotNil(t, cli.Run("feed", jsonFile))
+	assert.Contains(t, stderr.String(), "no data-plane certificate configured for t1.a1.i1")
+	assert.Contains(t, stderr.String(), "Run 'vespa auth cert'")
+}
+
 func TestFeedInvalid(t *testing.T) {
 	clock := &manualClock{tick: time.Second}
 	cli, stdout, stderr := newTestCLI(t)
@@ -118,7 +135,7 @@ func TestFeedInvalid(t *testing.T) {
   "fields": {"foo": "invalid json"
 }`)
 	jsonFile := filepath.Join(td, "docs.jsonl")
-	require.Nil(t, os.WriteFile(jsonFile, doc, 0644))
+	require.Nil(t, os.WriteFile(jsonFile, doc, 0o644))
 	httpClient.NextResponseString(200, `{"message":"OK"}`)
 	require.NotNil(t, cli.Run("feed", "-t", "http://127.0.0.1:8080", jsonFile))
 

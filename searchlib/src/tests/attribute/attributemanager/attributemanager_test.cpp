@@ -1,14 +1,12 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include <vespa/searchlib/attribute/attribute.h>
-#include <vespa/searchlib/attribute/attributeguard.h>
 #include <vespa/searchlib/attribute/attributefactory.h>
+#include <vespa/searchlib/attribute/attributeguard.h>
 #include <vespa/searchlib/attribute/attributemanager.h>
 #include <vespa/searchlib/attribute/configconverter.h>
 #include <vespa/searchlib/attribute/multinumericattribute.h>
-#include <vespa/searchlib/attribute/multinumericattribute.h>
-#include <vespa/vespalib/testkit/test_kit.h>
-#include <vespa/vespalib/testkit/test_master.hpp>
+#include <vespa/vespalib/gtest/gtest.h>
 
 #include <vespa/log/log.h>
 LOG_SETUP("attribute_test");
@@ -19,6 +17,7 @@ using namespace search;
 using namespace search::attribute;
 using std::shared_ptr;
 using std::string_view;
+using vespalib::Generation;
 
 using BT = BasicType;
 using CT = CollectionType;
@@ -26,108 +25,98 @@ using AVSP = AttributeVector::SP;
 
 namespace search {
 
-using TestAttributeBase = MultiValueNumericAttribute< IntegerAttributeTemplate<int32_t>, int32_t>;
+using TestAttributeBase = MultiValueNumericAttribute<IntegerAttributeTemplate<int32_t>, int32_t>;
 
-class TestAttribute : public TestAttributeBase
-{
+class TestAttribute : public TestAttributeBase {
 public:
-    explicit TestAttribute(const std::string &name)
-        : TestAttributeBase(name)
-    {}
+    explicit TestAttribute(const std::string& name) : TestAttributeBase(name) {}
 
-    generation_t getGen() const { return getCurrentGeneration(); }
-    uint32_t getRefCount(generation_t gen) const { return getGenerationRefCount(gen); }
+    Generation getGen() const { return getCurrentGeneration(); }
+    uint32_t getRefCount(Generation gen) const { return getGenerationRefCount(gen); }
     void incGen() { incGeneration(); }
-    generation_t oldest_used_gen() const { return get_oldest_used_generation(); }
+    Generation oldest_used_gen() const { return get_oldest_used_generation(); }
 };
 
-
-TEST("Test attribute guards")
-{
+TEST(AttributeManagerTest, Test_attribute_guards) {
     auto v = std::make_shared<TestAttribute>("mvint");
-    EXPECT_EQUAL(v->getGen(), unsigned(0));
-    EXPECT_EQUAL(v->getRefCount(0), unsigned(0));
-    EXPECT_EQUAL(v->oldest_used_gen(), unsigned(0));
+    EXPECT_EQ(v->getGen(), Generation(0));
+    EXPECT_EQ(v->getRefCount(Generation(0)), unsigned(0));
+    EXPECT_EQ(v->oldest_used_gen(), Generation(0));
     {
         AttributeGuard g0(v);
-        EXPECT_EQUAL(v->getGen(), unsigned(0));
-        EXPECT_EQUAL(v->getRefCount(0), unsigned(1));
-        EXPECT_EQUAL(v->oldest_used_gen(), unsigned(0));
+        EXPECT_EQ(v->getGen(), Generation(0));
+        EXPECT_EQ(v->getRefCount(Generation(0)), unsigned(1));
+        EXPECT_EQ(v->oldest_used_gen(), Generation(0));
         {
             AttributeGuard g1(v);
-            EXPECT_EQUAL(v->getGen(), unsigned(0));
-            EXPECT_EQUAL(v->getRefCount(0), unsigned(2));
-            EXPECT_EQUAL(v->oldest_used_gen(), unsigned(0));
+            EXPECT_EQ(v->getGen(), Generation(0));
+            EXPECT_EQ(v->getRefCount(Generation(0)), unsigned(2));
+            EXPECT_EQ(v->oldest_used_gen(), Generation(0));
         }
-        EXPECT_EQUAL(v->getRefCount(0), unsigned(1));
-        EXPECT_EQUAL(v->oldest_used_gen(), unsigned(0));
+        EXPECT_EQ(v->getRefCount(Generation(0)), unsigned(1));
+        EXPECT_EQ(v->oldest_used_gen(), Generation(0));
     }
-    EXPECT_EQUAL(v->getRefCount(0), unsigned(0));
-    EXPECT_EQUAL(v->oldest_used_gen(), unsigned(0));
+    EXPECT_EQ(v->getRefCount(Generation(0)), unsigned(0));
+    EXPECT_EQ(v->oldest_used_gen(), Generation(0));
 
     v->incGen();
-    EXPECT_EQUAL(v->getGen(), unsigned(1));
-    EXPECT_EQUAL(v->getRefCount(0), unsigned(0));
-    EXPECT_EQUAL(v->getRefCount(1), unsigned(0));
-    EXPECT_EQUAL(v->oldest_used_gen(), unsigned(1));
+    EXPECT_EQ(v->getGen(), Generation(1));
+    EXPECT_EQ(v->getRefCount(Generation(0)), unsigned(0));
+    EXPECT_EQ(v->getRefCount(Generation(1)), unsigned(0));
+    EXPECT_EQ(v->oldest_used_gen(), Generation(1));
     {
         AttributeGuard g0(v);
-        EXPECT_EQUAL(v->getGen(), unsigned(1));
-        EXPECT_EQUAL(v->getRefCount(0), unsigned(0));
-        EXPECT_EQUAL(v->getRefCount(1), unsigned(1));
-        EXPECT_EQUAL(v->oldest_used_gen(), unsigned(1));
+        EXPECT_EQ(v->getGen(), Generation(1));
+        EXPECT_EQ(v->getRefCount(Generation(0)), unsigned(0));
+        EXPECT_EQ(v->getRefCount(Generation(1)), unsigned(1));
+        EXPECT_EQ(v->oldest_used_gen(), Generation(1));
         {
             v->incGen();
             AttributeGuard g1(v);
-            EXPECT_EQUAL(v->getGen(), unsigned(2));
-            EXPECT_EQUAL(v->getRefCount(0), unsigned(0));
-            EXPECT_EQUAL(v->getRefCount(1), unsigned(1));
-            EXPECT_EQUAL(v->getRefCount(2), unsigned(1));
-            EXPECT_EQUAL(v->oldest_used_gen(), unsigned(1));
+            EXPECT_EQ(v->getGen(), Generation(2));
+            EXPECT_EQ(v->getRefCount(Generation(0)), unsigned(0));
+            EXPECT_EQ(v->getRefCount(Generation(1)), unsigned(1));
+            EXPECT_EQ(v->getRefCount(Generation(2)), unsigned(1));
+            EXPECT_EQ(v->oldest_used_gen(), Generation(1));
         }
-        EXPECT_EQUAL(v->getRefCount(0), unsigned(0));
-        EXPECT_EQUAL(v->getRefCount(1), unsigned(1));
-        EXPECT_EQUAL(v->getRefCount(2), unsigned(0));
-        EXPECT_EQUAL(v->oldest_used_gen(), unsigned(1));
+        EXPECT_EQ(v->getRefCount(Generation(0)), unsigned(0));
+        EXPECT_EQ(v->getRefCount(Generation(1)), unsigned(1));
+        EXPECT_EQ(v->getRefCount(Generation(2)), unsigned(0));
+        EXPECT_EQ(v->oldest_used_gen(), Generation(1));
     }
-    EXPECT_EQUAL(v->getRefCount(0), unsigned(0));
-    EXPECT_EQUAL(v->getRefCount(1), unsigned(0));
-    EXPECT_EQUAL(v->getRefCount(2), unsigned(0));
-    EXPECT_EQUAL(v->oldest_used_gen(), unsigned(1));
+    EXPECT_EQ(v->getRefCount(Generation(0)), unsigned(0));
+    EXPECT_EQ(v->getRefCount(Generation(1)), unsigned(0));
+    EXPECT_EQ(v->getRefCount(Generation(2)), unsigned(0));
+    EXPECT_EQ(v->oldest_used_gen(), Generation(1));
     v->update_oldest_used_generation();
-    EXPECT_EQUAL(v->oldest_used_gen(), unsigned(2));
-    EXPECT_EQUAL(v->getGen(), unsigned(2));
+    EXPECT_EQ(v->oldest_used_gen(), Generation(2));
+    EXPECT_EQ(v->getGen(), Generation(2));
 }
 
-
-void
-verifyLoad(AttributeVector & v)
-{
-    EXPECT_TRUE( !v.isLoaded() );
-    EXPECT_TRUE( v.load() );
-    EXPECT_TRUE( v.isLoaded() );
-    EXPECT_EQUAL( v.getNumDocs(), size_t(100) );
+void verifyLoad(AttributeVector& v) {
+    EXPECT_TRUE(!v.isLoaded());
+    EXPECT_TRUE(v.load());
+    EXPECT_TRUE(v.isLoaded());
+    EXPECT_EQ(v.getNumDocs(), size_t(100));
 }
 
-
-TEST("Test loading of attributes")
-{
+TEST(AttributeManagerTest, Test_loading_of_attributes) {
     {
         TestAttributeBase v("mvint");
         EXPECT_TRUE(!v.isLoaded());
-        for(size_t i(0); i < 100; i++) {
+        for (size_t i(0); i < 100; i++) {
             AttributeVector::DocId doc;
-            EXPECT_TRUE( v.addDoc(doc) );
-            EXPECT_TRUE( doc == i);
+            EXPECT_TRUE(v.addDoc(doc));
+            EXPECT_TRUE(doc == i);
         }
-        EXPECT_TRUE( v.getNumDocs() == 100);
-        for(size_t i(0); i < 100; i++) {
-            for(size_t j(0); j < i; j++) {
-                EXPECT_TRUE( v.append(i, j, 1) );
+        EXPECT_TRUE(v.getNumDocs() == 100);
+        for (size_t i(0); i < 100; i++) {
+            for (size_t j(0); j < i; j++) {
+                EXPECT_TRUE(v.append(i, j, 1));
             }
             v.commit();
             EXPECT_TRUE(size_t(v.getValueCount(i)) == i);
-            EXPECT_EQUAL(v.getMaxValueCount(), std::max(size_t(1), i));
+            EXPECT_EQ(v.getMaxValueCount(), std::max(size_t(1), i));
         }
         EXPECT_TRUE(v.isLoaded());
         EXPECT_TRUE(v.save());
@@ -138,62 +127,53 @@ TEST("Test loading of attributes")
         verifyLoad(v);
     }
     {
-        Config config(BT::INT32,
-                                       CollectionType::ARRAY);
+        Config            config(BT::INT32, CollectionType::ARRAY);
         TestAttributeBase v("mvint", config);
         verifyLoad(v);
     }
     {
         AttributeManager manager;
-        Config config(BT::INT32,
-                                       CollectionType::ARRAY);
+        Config           config(BT::INT32, CollectionType::ARRAY);
         EXPECT_TRUE(manager.addVector("mvint", config));
         AttributeManager::AttributeList list;
         manager.getAttributeList(list);
         EXPECT_TRUE(list.size() == 1);
-        EXPECT_TRUE( list[0]->isLoaded());
+        EXPECT_TRUE(list[0]->isLoaded());
         AttributeGuard::UP attrG(manager.getAttribute("mvint"));
-        EXPECT_TRUE( attrG->valid() );
+        EXPECT_TRUE(attrG->valid());
     }
 }
 
-
-bool
-assertDataType(BT::Type exp, AttributesConfig::Attribute::Datatype in)
-{
+bool assertDataType(BT::Type exp, AttributesConfig::Attribute::Datatype in) {
     AttributesConfig::Attribute a;
     a.datatype = in;
-    return EXPECT_EQUAL(exp, ConfigConverter::convert(a).basicType().type());
+    bool success = true;
+    EXPECT_EQ(exp, ConfigConverter::convert(a).basicType().type()) << (success = false, "");
+    return success;
 }
 
-
-bool
-assertCollectionType(CollectionType exp, AttributesConfig::Attribute::Collectiontype in,
-                     bool removeIfZ = false, bool createIfNe = false)
-{
+bool assertCollectionType(CollectionType exp, AttributesConfig::Attribute::Collectiontype in, bool removeIfZ = false,
+                          bool createIfNe = false) {
     AttributesConfig::Attribute a;
     a.collectiontype = in;
     a.removeifzero = removeIfZ;
     a.createifnonexistent = createIfNe;
     Config out = ConfigConverter::convert(a);
-    return EXPECT_EQUAL(exp.type(), out.collectionType().type()) &&
-        EXPECT_EQUAL(exp.removeIfZero(), out.collectionType().removeIfZero()) &&
-        EXPECT_EQUAL(exp.createIfNonExistant(), out.collectionType().createIfNonExistant());
+    bool   success = true;
+    EXPECT_EQ(exp.type(), out.collectionType().type()) << (success = false, "");
+    EXPECT_EQ(exp.removeIfZero(), out.collectionType().removeIfZero()) << (success = false, "");
+    EXPECT_EQ(exp.createIfNonExistant(), out.collectionType().createIfNonExistant()) << (success = false, "");
+    return success;
 }
 
-void
-expect_distance_metric(AttributesConfig::Attribute::Distancemetric in_metric,
-                       DistanceMetric out_metric)
-{
+void expect_distance_metric(AttributesConfig::Attribute::Distancemetric in_metric, DistanceMetric out_metric) {
     AttributesConfig::Attribute a;
     a.distancemetric = in_metric;
     auto out = ConfigConverter::convert(a);
     EXPECT_TRUE(out.distance_metric() == out_metric);
 }
 
-
-TEST("require that config can be converted")
-{
+TEST(AttributeManagerTest, require_that_config_can_be_converted) {
     using AVBT = BT;
     using AVCT = CollectionType;
     using CACA = AttributesConfig::Attribute;
@@ -217,10 +197,8 @@ TEST("require that config can be converted")
     EXPECT_TRUE(assertCollectionType(AVCT::SINGLE, CACAC::SINGLE));
     EXPECT_TRUE(assertCollectionType(AVCT::ARRAY, CACAC::ARRAY));
     EXPECT_TRUE(assertCollectionType(AVCT::WSET, CACAC::WEIGHTEDSET));
-    EXPECT_TRUE(assertCollectionType(AVCT(AVCT::SINGLE, true, false),
-                                    CACAC::SINGLE, true, false));
-    EXPECT_TRUE(assertCollectionType(AVCT(AVCT::SINGLE, false, true),
-                                    CACAC::SINGLE, false, true));
+    EXPECT_TRUE(assertCollectionType(AVCT(AVCT::SINGLE, true, false), CACAC::SINGLE, true, false));
+    EXPECT_TRUE(assertCollectionType(AVCT(AVCT::SINGLE, false, true), CACAC::SINGLE, false, true));
 
     { // fastsearch
         CACA a;
@@ -236,9 +214,9 @@ TEST("require that config can be converted")
     }
     {
         CACA a;
-        EXPECT_EQUAL(130000u, CC::convert(a).getMaxUnCommittedMemory());
+        EXPECT_EQ(130000u, CC::convert(a).getMaxUnCommittedMemory());
         a.maxuncommittedmemory = 23523;
-        EXPECT_EQUAL(23523u, CC::convert(a).getMaxUnCommittedMemory());
+        EXPECT_EQ(23523u, CC::convert(a).getMaxUnCommittedMemory());
     }
     {
         CACA a;
@@ -257,7 +235,7 @@ TEST("require that config can be converted")
         a.datatype = CACAD::TENSOR;
         a.tensortype = "tensor(x[5])";
         Config out = ConfigConverter::convert(a);
-        EXPECT_EQUAL("tensor(x[5])", out.tensorType().to_spec());
+        EXPECT_EQ("tensor(x[5])", out.tensorType().to_spec());
     }
     { // distance metric (default)
         CACA a;
@@ -269,8 +247,10 @@ TEST("require that config can be converted")
         expect_distance_metric(AttributesConfig::Attribute::Distancemetric::ANGULAR, DistanceMetric::Angular);
         expect_distance_metric(AttributesConfig::Attribute::Distancemetric::GEODEGREES, DistanceMetric::GeoDegrees);
         expect_distance_metric(AttributesConfig::Attribute::Distancemetric::HAMMING, DistanceMetric::Hamming);
-        expect_distance_metric(AttributesConfig::Attribute::Distancemetric::INNERPRODUCT, DistanceMetric::InnerProduct);
-        expect_distance_metric(AttributesConfig::Attribute::Distancemetric::PRENORMALIZED_ANGULAR, DistanceMetric::PrenormalizedAngular);
+        expect_distance_metric(AttributesConfig::Attribute::Distancemetric::INNERPRODUCT,
+                               DistanceMetric::InnerProduct);
+        expect_distance_metric(AttributesConfig::Attribute::Distancemetric::PRENORMALIZED_ANGULAR,
+                               DistanceMetric::PrenormalizedAngular);
         expect_distance_metric(AttributesConfig::Attribute::Distancemetric::DOTPRODUCT, DistanceMetric::Dotproduct);
     }
     { // hnsw index default params (enabled)
@@ -279,8 +259,8 @@ TEST("require that config can be converted")
         auto out = ConfigConverter::convert(a);
         EXPECT_TRUE(out.hnsw_index_params().has_value());
         const auto& params = out.hnsw_index_params().value();
-        EXPECT_EQUAL(16u, params.max_links_per_node());
-        EXPECT_EQUAL(200u, params.neighbors_to_explore_at_insert());
+        EXPECT_EQ(16u, params.max_links_per_node());
+        EXPECT_EQ(200u, params.neighbors_to_explore_at_insert());
         EXPECT_TRUE(params.multi_threaded_indexing());
     }
     { // hnsw index params (enabled)
@@ -295,8 +275,8 @@ TEST("require that config can be converted")
         auto out = ConfigConverter::convert(a);
         EXPECT_TRUE(out.hnsw_index_params().has_value());
         const auto& params = out.hnsw_index_params().value();
-        EXPECT_EQUAL(32u, params.max_links_per_node());
-        EXPECT_EQUAL(300u, params.neighbors_to_explore_at_insert());
+        EXPECT_EQ(32u, params.max_links_per_node());
+        EXPECT_EQ(300u, params.neighbors_to_explore_at_insert());
         EXPECT_TRUE(params.distance_metric() == dm_out);
         EXPECT_FALSE(params.multi_threaded_indexing());
     }
@@ -308,12 +288,11 @@ TEST("require that config can be converted")
     }
 }
 
-bool gt_attribute(const attribute::IAttributeVector * a, const attribute::IAttributeVector * b) {
+bool gt_attribute(const attribute::IAttributeVector* a, const attribute::IAttributeVector* b) {
     return a->getName() < b->getName();
 }
 
-TEST("test the attribute context")
-{
+TEST(AttributeManagerTest, test_the_attribute_context) {
     std::vector<AVSP> attrs;
     // create various attributes vectors
     attrs.push_back(AttributeFactory::createAttribute("sint32", Config(BT::INT32, CT::SINGLE)));
@@ -342,8 +321,8 @@ TEST("test the attribute context")
 
         // no generation guards taken yet
         for (uint32_t i = 0; i < attrs.size(); ++i) {
-            EXPECT_EQUAL(attrs[i]->getCurrentGeneration(), 1u);
-            EXPECT_EQUAL(attrs[i]->getGenerationRefCount(1u), 0u);
+            EXPECT_EQ(attrs[i]->getCurrentGeneration(), Generation(1u));
+            EXPECT_EQ(attrs[i]->getGenerationRefCount(Generation(1u)), 0u);
         }
 
         for (uint32_t i = 0; i < 2; ++i) {
@@ -357,9 +336,8 @@ TEST("test the attribute context")
 
         // one generation guard taken per attribute asked for
         for (uint32_t i = 0; i < attrs.size(); ++i) {
-            EXPECT_EQUAL(attrs[i]->getCurrentGeneration(), 1u);
-            EXPECT_EQUAL(attrs[i]->getGenerationRefCount(1u),
-                       (i < 3) ? (i == 2 ? 2u : 1u) : 0u);
+            EXPECT_EQ(attrs[i]->getCurrentGeneration(), Generation(1u));
+            EXPECT_EQ(attrs[i]->getGenerationRefCount(Generation(1u)), (i < 3) ? (i == 2 ? 2u : 1u) : 0u);
         }
 
         {
@@ -372,41 +350,38 @@ TEST("test the attribute context")
 
             // two generation guards taken per attribute asked for
             for (uint32_t i = 0; i < attrs.size(); ++i) {
-                EXPECT_EQUAL(attrs[i]->getCurrentGeneration(), 1u);
-                EXPECT_EQUAL(attrs[i]->getGenerationRefCount(1u),
-                           (i < 3) ? (i == 2 ? 4u : 2u) : 0u);
+                EXPECT_EQ(attrs[i]->getCurrentGeneration(), Generation(1u));
+                EXPECT_EQ(attrs[i]->getGenerationRefCount(Generation(1u)), (i < 3) ? (i == 2 ? 4u : 2u) : 0u);
             }
         }
 
         // one generation guard taken per attribute asked for
         for (uint32_t i = 0; i < attrs.size(); ++i) {
-            EXPECT_EQUAL(attrs[i]->getCurrentGeneration(), 1u);
-            EXPECT_EQUAL(attrs[i]->getGenerationRefCount(1u),
-                       (i < 3) ? (i == 2 ? 2u : 1u) : 0u);
+            EXPECT_EQ(attrs[i]->getCurrentGeneration(), Generation(1u));
+            EXPECT_EQ(attrs[i]->getGenerationRefCount(Generation(1u)), (i < 3) ? (i == 2 ? 2u : 1u) : 0u);
         }
     }
 
     // no generation guards taken
     for (uint32_t i = 0; i < attrs.size(); ++i) {
-        EXPECT_EQUAL(attrs[i]->getCurrentGeneration(), 1u);
-        EXPECT_EQUAL(attrs[i]->getGenerationRefCount(1u), 0u);
+        EXPECT_EQ(attrs[i]->getCurrentGeneration(), Generation(1u));
+        EXPECT_EQ(attrs[i]->getGenerationRefCount(Generation(1u)), 0u);
     }
 
     {
-        IAttributeContext::UP ctx = manager.createContext();
-        std::vector<const attribute::IAttributeVector *> all;
+        IAttributeContext::UP                           ctx = manager.createContext();
+        std::vector<const attribute::IAttributeVector*> all;
         ctx->getAttributeList(all);
-        EXPECT_EQUAL(4u, all.size());
+        EXPECT_EQ(4u, all.size());
         std::sort(all.begin(), all.end(), gt_attribute);
-        EXPECT_EQUAL("aint32",   all[0]->getName());
-        EXPECT_EQUAL("dontcare", all[1]->getName());
-        EXPECT_EQUAL("sint32",   all[2]->getName());
-        EXPECT_EQUAL("wsint32",  all[3]->getName());
+        EXPECT_EQ("aint32", all[0]->getName());
+        EXPECT_EQ("dontcare", all[1]->getName());
+        EXPECT_EQ("sint32", all[2]->getName());
+        EXPECT_EQ("wsint32", all[3]->getName());
     }
 }
 
-TEST("require that we can get readable attribute by name")
-{
+TEST(AttributeManagerTest, require_that_we_can_get_readable_attribute_by_name) {
     auto attr = AttributeFactory::createAttribute("cool_attr", Config(BT::INT32, CT::SINGLE));
     // Ensure there's something to actually load, or fetching the attribute will throw.
     attr->addDocs(64);
@@ -414,12 +389,11 @@ TEST("require that we can get readable attribute by name")
     AttributeManager manager;
     manager.add(attr);
     auto av = manager.readable_attribute_vector("cool_attr");
-    EXPECT_EQUAL(av.get(), static_cast<ReadableAttributeVector*>(attr.get()));
+    EXPECT_EQ(av.get(), static_cast<ReadableAttributeVector*>(attr.get()));
     av = manager.readable_attribute_vector("uncool_attr");
     EXPECT_TRUE(av.get() == nullptr);
 }
 
 } // namespace search
 
-
-TEST_MAIN() { TEST_RUN_ALL(); }
+GTEST_MAIN_RUN_ALL_TESTS()

@@ -17,7 +17,8 @@ import com.yahoo.search.searchchain.Execution;
 import com.yahoo.yolean.Exceptions;
 import org.junit.jupiter.api.Test;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.fail;
 
 /**
  * @author andreer
@@ -46,9 +47,10 @@ public class UniqueGroupingSearcherTestCase {
             fail("Above statement should throw");
         } catch (IllegalArgumentException e) {
             // As expected.
-            assertTrue(Exceptions.toMessageString(e).contains("Could not set 'ranking.sorting' to '-1': " +
-                    "Illegal attribute name '1' for sorting. " +
-                    "Requires '[\\[]*[a-zA-Z_][\\.a-zA-Z0-9_-]*[\\]]*'"));
+            assertEquals("Could not set 'ranking.sorting': " +
+                         "Illegal attribute name '1' for sorting. " +
+                         "Requires '[\\[]*[a-zA-Z_][\\.a-zA-Z0-9_-]*[\\]]*'",
+                         Exceptions.toMessageString(e));
         }
     }
 
@@ -154,7 +156,8 @@ public class UniqueGroupingSearcherTestCase {
     }
 
     private static Group makeHitGroup(String name) {
-        Group ein = new Group(new StringId(name), new Relevance(0));
+        Query query = new Query();
+        Group ein = new Group(new StringId(name), new Relevance(0), query);
         HitList hits = new HitList(UniqueGroupingSearcher.LABEL_HITS);
         hits.add(new Hit(name));
         ein.add(hits);
@@ -162,18 +165,19 @@ public class UniqueGroupingSearcherTestCase {
     }
 
     private static Group makeSortingHitGroup(String name) {
+        Query query = new Query();
         Hit hit = new Hit(name);
 
         HitList hits = new HitList(UniqueGroupingSearcher.LABEL_HITS);
         hits.add(hit);
 
-        Group dedupGroup = new Group(new StringId(name), new Relevance(0));
+        Group dedupGroup = new Group(new StringId(name), new Relevance(0), query);
         dedupGroup.add(hits);
 
         GroupList dedupedHits = new GroupList(UniqueGroupingSearcher.LABEL_GROUPS);
         dedupedHits.add(dedupGroup);
 
-        Group ein = new Group(new StringId(name), new Relevance(0));
+        Group ein = new Group(new StringId(name), new Relevance(0), query);
         ein.add(dedupedHits);
         return ein;
     }
@@ -191,7 +195,7 @@ public class UniqueGroupingSearcherTestCase {
 
         MockResultProvider(long totalHitCount, boolean addGroupingData) {
             this.addGroupingData = addGroupingData;
-            this.resultGroup = new RootGroup(0, null);
+            this.resultGroup = new RootGroup(0, null, new Query());
             this.totalHitCount = totalHitCount;
         }
 
@@ -204,6 +208,7 @@ public class UniqueGroupingSearcherTestCase {
         public Result search(Query query, Execution execution) {
             Result result = new Result(query);
             if (addGroupingData) {
+                resultGroup.setQuery(query);
                 result.hits().add(resultGroup);
                 result.setTotalHitCount(totalHitCount);
             }

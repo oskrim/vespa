@@ -44,7 +44,7 @@ Note that when overriding the developer key through environment variables,
 that key will always be used. It's not possible to specify a tenant-specific
 key through the environment.
 
-See https://cloud.vespa.ai/en/security/guide for more details about developer keys.`,
+See https://docs.vespa.ai/en/security/guide.html for more details about developer keys.`,
 		Example:           "$ vespa auth api-key -a my-tenant.my-app.my-instance",
 		DisableAutoGenTag: true,
 		SilenceUsage:      true,
@@ -82,7 +82,7 @@ func doApiKey(cli *CLI, overwriteKey bool, args []string) error {
 	if err != nil {
 		return fmt.Errorf("could not create api key: %w", err)
 	}
-	if err := os.WriteFile(apiKeyFile, apiKey, 0600); err == nil {
+	if err := os.WriteFile(apiKeyFile, apiKey, 0o600); err == nil {
 		cli.printSuccess("Developer private key for tenant ", color.CyanString(app.Tenant), " written to '", apiKeyFile, "'")
 		return printPublicKey(system, apiKeyFile, app.Tenant)
 	} else {

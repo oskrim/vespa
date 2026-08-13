@@ -16,7 +16,9 @@ import java.io.InputStream;
 import java.nio.file.Path;
 import java.util.HashMap;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * @author MariusArhaug
@@ -71,7 +73,7 @@ public class SignificanceModelGeneratorTest {
         String outputPath = "output.json";
         ClientParameters params = createParameters(inputPath, outputPath,  "text", "nb", "false").build();
         SignificanceModelGenerator generator = createSignificanceModelGenerator(params);
-        generator.generate();
+        generator.run();
 
         File outputFile = new File(tempDir.resolve(outputPath).toString());
         assertTrue(outputFile.exists());
@@ -90,14 +92,14 @@ public class SignificanceModelGeneratorTest {
         String inputPath = "no_1.jsonl";
         ClientParameters params1 = createParameters(inputPath, "output.json",  "text", "nb", "true").build();
 
-        // Throws exception when outputfile does not have .zst extension when using zst compression
-        assertThrows(IllegalArgumentException.class, () -> createSignificanceModelGenerator(params1));
+        // expected to fail when zstCompression is true but output path does not include .zst.
+        assertEquals(1, createSignificanceModelGenerator(params1).run());
 
         String outputPath = "output.json.zst";
         ClientParameters params = createParameters(inputPath, outputPath,  "text", "nb", "true").build();
 
         SignificanceModelGenerator generator = createSignificanceModelGenerator(params);
-        generator.generate();
+        generator.run();
 
         File outputFile = new File(tempDir.resolve(outputPath ).toString());
         assertTrue(outputFile.exists());
@@ -118,7 +120,7 @@ public class SignificanceModelGeneratorTest {
         String outputPath = "output.json";
         ClientParameters params1 = createParameters(inputPath, outputPath, "text", "nb",  "false").build();
         SignificanceModelGenerator generator = createSignificanceModelGenerator(params1);
-        generator.generate();
+        generator.run();
 
         File outputFile = new File(tempDir.resolve(outputPath).toString());
         assertTrue(outputFile.exists());
@@ -126,7 +128,7 @@ public class SignificanceModelGeneratorTest {
         String inputPath2 = "en.jsonl";
         ClientParameters params2 = createParameters(inputPath2,  outputPath, "text", "en",  "false").build();
         generator = createSignificanceModelGenerator(params2);
-        generator.generate();
+        generator.run();
 
         outputFile = new File(tempDir.resolve(outputPath).toString());
         assertTrue(outputFile.exists());
@@ -150,7 +152,7 @@ public class SignificanceModelGeneratorTest {
         String outputPath = "output.json";
         ClientParameters params1 = createParameters(inputPath, outputPath,  "text", "nb", "false").build();
         SignificanceModelGenerator generator = createSignificanceModelGenerator(params1);
-        generator.generate();
+        generator.run();
 
         File outputFile = new File(tempDir.resolve(outputPath).toString());
         assertTrue(outputFile.exists());
@@ -167,7 +169,7 @@ public class SignificanceModelGeneratorTest {
         String inputPath2 = "no_2.jsonl";
         ClientParameters params2 = createParameters(inputPath2, outputPath, "text", "nb", "false").build();
         SignificanceModelGenerator generator2 = createSignificanceModelGenerator(params2);
-        generator2.generate();
+        generator2.run();
 
         outputFile = new File(tempDir.resolve(outputPath).toString());
         assertTrue(outputFile.exists());
@@ -187,7 +189,7 @@ public class SignificanceModelGeneratorTest {
         String outputPath = "output.json";
         ClientParameters params = createParameters(inputPath, outputPath,  "text", "nb,un",  "false").build();
         SignificanceModelGenerator generator = createSignificanceModelGenerator(params);
-        generator.generate();
+        generator.run();
 
         File outputFile = new File(tempDir.resolve(outputPath).toString());
         assertTrue(outputFile.exists());

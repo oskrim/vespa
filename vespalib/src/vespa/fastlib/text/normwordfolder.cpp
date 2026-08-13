@@ -1,8 +1,9 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "normwordfolder.h"
-#include <mutex>
+
 #include <cstring>
+#include <mutex>
 
 bool Fast_NormalizeWordFolder::_isInitialized = false;
 
@@ -21,29 +22,24 @@ ucs4_t Fast_NormalizeWordFolder::_halfwidth_fullwidthMap[240];
 
 namespace {
 
-std::mutex G_initMutex;
+std::mutex               G_initMutex;
 Fast_NormalizeWordFolder G_forceWorldFolderInit;
-}
+} // namespace
 
-
-void
-Fast_NormalizeWordFolder::Setup(uint32_t flags)
-{
+void Fast_NormalizeWordFolder::Setup(uint32_t flags) {
     // Only allow setting these when not initialized or initializing...
     {
         std::lock_guard<std::mutex> initGuard(G_initMutex);
-        _doAccentRemoval         = (DO_ACCENT_REMOVAL           & flags) != 0;
-        _doSharpSSubstitution    = (DO_SHARP_S_SUBSTITUTION     & flags) != 0;
-        _doLigatureSubstitution  = (DO_LIGATURE_SUBSTITUTION    & flags) != 0;
-        _doMulticharExpansion    = (DO_MULTICHAR_EXPANSION      & flags) != 0;
+        _doAccentRemoval = (DO_ACCENT_REMOVAL & flags) != 0;
+        _doSharpSSubstitution = (DO_SHARP_S_SUBSTITUTION & flags) != 0;
+        _doLigatureSubstitution = (DO_LIGATURE_SUBSTITUTION & flags) != 0;
+        _doMulticharExpansion = (DO_MULTICHAR_EXPANSION & flags) != 0;
         _isInitialized = false;
     }
     Initialize();
 }
 
-void
-Fast_NormalizeWordFolder::Initialize()
-{
+void Fast_NormalizeWordFolder::Initialize() {
     unsigned int i;
     if (!_isInitialized) {
         std::lock_guard<std::mutex> initGuard(G_initMutex);
@@ -62,13 +58,13 @@ Fast_NormalizeWordFolder::Initialize()
                 _foldCase[0xc0] = 'a';
                 _foldCase[0xc1] = 'a';
                 _foldCase[0xc2] = 'a';
-                _foldCase[0xc3] = 'a';  // A tilde
+                _foldCase[0xc3] = 'a'; // A tilde
                 _foldCase[0xc7] = 'c';
                 _foldCase[0xc8] = 'e';
                 _foldCase[0xc9] = 'e';
                 _foldCase[0xca] = 'e';
                 _foldCase[0xcb] = 'e';
-                _foldCase[0xcc] = 'i';  // I grave
+                _foldCase[0xcc] = 'i'; // I grave
                 _foldCase[0xcd] = 'i';
                 _foldCase[0xce] = 'i';
                 _foldCase[0xcf] = 'i';
@@ -386,7 +382,6 @@ Fast_NormalizeWordFolder::Initialize()
             // 0xFFEF -> id
             _halfwidth_fullwidthMap[0xEF] = 0xFFEF;
 
-
             //
             // DONE
             //
@@ -395,206 +390,94 @@ Fast_NormalizeWordFolder::Initialize()
     }
 }
 
-Fast_NormalizeWordFolder::Fast_NormalizeWordFolder()
-{
+Fast_NormalizeWordFolder::Fast_NormalizeWordFolder() {
     Initialize();
 }
 
-
 Fast_NormalizeWordFolder::~Fast_NormalizeWordFolder() = default;
 
-const char*
-Fast_NormalizeWordFolder::UCS4Tokenize(const char *buf, const char *bufend, ucs4_t *dstbuf,
-                                       ucs4_t *dstbufend, const char*& origstart, size_t& tokenlen) const
-{
-
-    ucs4_t c;
-    const unsigned char *p, *ep;
-    ucs4_t *q, *eq;
-    p = reinterpret_cast<const unsigned char *>(buf);
-    ep = reinterpret_cast<const unsigned char *>(bufend);
+const char* Fast_NormalizeWordFolder::UCS4Tokenize(const char* buf, const char* bufend, ucs4_t* dstbuf,
+                                                   ucs4_t* dstbufend, const char*& origstart,
+                                                   size_t& tokenlen) const {
+    using vespalib::char_p_cast;
+    const char*          retval = bufend;
+    ucs4_t               c;
+    const unsigned char *p, *ep, *prev_p;
+    p = char_p_cast<unsigned char>(buf);
+    ep = char_p_cast<unsigned char>(bufend);
+    Ucs4Dest target(dstbuf, dstbufend);
 
     // Skip characters between words
-    for (;;) {
-        if (p >= ep) {		// End of input buffer, no more words
-            *dstbuf = 0;
-            return reinterpret_cast<const char *>(p);
-        }
-        if (*p < 128) {		// Common case, ASCII
+    prev_p = p;
+    while (p < ep) {
+        if (*p < 128) {
             c = *p++;
             if (_isWord[c])
-            {
-                origstart = reinterpret_cast<const char *>(p) - 1;
                 break;
-            }
         } else {
-            const unsigned char* prev_p = p;
             c = Fast_UnicodeUtil::GetUTF8Char(p);
             if (IsWordCharOrIA(c))
-            {
-                origstart = reinterpret_cast<const char *>(prev_p);
                 break;
-            }
         }
+        prev_p = p;
     }
-
+    if (prev_p >= ep) {
+        // End of input buffer, no more words
+        target.terminate();
+        return retval;
+    }
+    origstart = char_p_cast<char>(prev_p);
     // Start saving word.
-    q = dstbuf;
-    eq = dstbufend - 3;		// Make room for UCS4 char replacement string and NUL
-    // Doesn't check for space for the first char, assumes that
-    // word buffer is at least 13 characters
-    if (c < 128) {		// Common case, ASCII
-        *q++ = _foldCase[c];
-    } else {
-        const char *repl = ReplacementString(c);
-        if (repl != nullptr) {
-            size_t repllen = strlen(repl);
-            if (repllen > 0)
-                q = Fast_UnicodeUtil::ucs4copy(q,repl);
-        } else {
-            c = lowercase_and_fold(c);
-            *q++ = c;
-        }
-    }
+    target.fold(c);
 
     // Special case for interlinear annotation
     if (c == 0xFFF9) { // ANCHOR
         // Collect up to and including terminator
-        for(;;) {
-            if (p >= ep) {
-                c = 0;
-                break;
-            }
-            if (*p < 128) {  // Note, no exit on plain ASCII
-                c = *p++;
-                *q++ = c;
-                if (q >= eq) { // Junk rest of annotation block
-                    for (;;) {
-                        if (p >= ep) {	// End of input buffer
-                            c = 0;
-                            break;
-                        }
-                        if (*p < 128) {	// Common case, ASCII
-                            c = *p++;
-                        } else {
-                            c = Fast_UnicodeUtil::GetUTF8Char(p);
-                            if (c == 0xFFFB) {
-                                break; // out of junking loop
-                            }
-                        }
-                    }
-                    break; // out of annotation block processing
-                }
+        while (p < ep) {
+            if (*p < 128) { // Note, no exit on plain ASCII
+                target.copy(*p++);
             } else {
                 c = Fast_UnicodeUtil::GetUTF8Char(p);
-                *q++ = c;
-                if (c == 0xFFFB) { // TERMINATOR => Exit condition
-                    break;
-                }
-                if (q >= eq) {		// Junk rest of word
-                    for (;;) {
-                        if (p >= ep) {	// End of input buffer
-                            c = 0;
-                            break;
-                        }
-                        if (*p < 128) {	// Common case, ASCII
-                            c = *p++;
-                        } else {
-                            c = Fast_UnicodeUtil::GetUTF8Char(p);
-                            if (c == 0xFFFB) {
-                                break;
-                            }
-                        }
-                    }
+                target.copy(c);
+                if (c == 0xFFFA || c == 0xFFFB) {
                     break;
                 }
             }
         }
-    } else
-
-        for (;;) {
-            if (p >= ep) {		// End of input buffer
-                c = 0;
-                break;
-            }
-            if (*p < 128) {		// Common case, ASCII
-                c = *p++;
-                if (!_isWord[c])
-                {
-                    p--;
-                    break;
-                }
-                *q++ = _foldCase[c];
-                if (q >= eq) {		// Junk rest of word
-                    for (;;) {
-                        if (p >= ep) {	// End of input buffer
-                            c = 0;
-                            break;
-                        }
-                        if (*p < 128) {	// Common case, ASCII
-                            c = *p++;
-                            if (!_isWord[c])
-                            {
-                                p--;
-                                break;
-                            }
-                        } else {
-                            const unsigned char* prev_p = p;
-                            c = Fast_UnicodeUtil::GetUTF8Char(p);
-                            if (!Fast_UnicodeUtil::IsWordChar(c))
-                            {
-                                p = prev_p;
-                                break;
-                            }
-                        }
+        if (c == 0xFFFA) { // SEPARATOR => start folding again
+            while (p < ep) {
+                if (*p < 128) { // Common case, ASCII
+                    c = *p++;
+                    target.fold(c);
+                } else {
+                    c = Fast_UnicodeUtil::GetUTF8Char(p);
+                    target.fold(c);
+                    if (c == 0xFFFB) { // TERMINATOR => Exit condition
+                        break;
                     }
-                    break;
                 }
+            }
+        }
+    } else {
+        while (p < ep) {
+            if (*p < 128) { // Common case, ASCII
+                c = *p;
+                if (!_isWord[c])
+                    break;
+                p++;
             } else {
-                const unsigned char* prev_p = p;
+                prev_p = p;
                 c = Fast_UnicodeUtil::GetUTF8Char(p);
-                if (!Fast_UnicodeUtil::IsWordChar(c))
-                {
+                if (!Fast_UnicodeUtil::IsWordChar(c)) {
                     p = prev_p;
                     break;
                 }
-                const char *repl = ReplacementString(c);
-                if (repl != nullptr) {
-                    size_t repllen = strlen(repl);
-                    if (repllen > 0)
-                        q = Fast_UnicodeUtil::ucs4copy(q,repl);
-                } else {
-                    c = lowercase_and_fold(c);
-                    *q++ = c;
-                }
-                if (q >= eq) {		// Junk rest of word
-                    for (;;) {
-                        if (p >= ep) {	// End of input buffer
-                            c = 0;
-                            break;
-                        }
-                        if (*p < 128) {	// Common case, ASCII
-                            c = *p++;
-                            if (!_isWord[c])
-                            {
-                                p--;
-                                break;
-                            }
-                        } else {
-                            const unsigned char* xprev_p = p;
-                            c = Fast_UnicodeUtil::GetUTF8Char(p);
-                            if (!Fast_UnicodeUtil::IsWordChar(c))
-                            {
-                                p = xprev_p;
-                                break;
-                            }
-                        }
-                    }
-                    break;
-                }
             }
+            target.fold(c);
         }
-    *q = 0;
-    tokenlen = q - dstbuf;
-    return reinterpret_cast<const char *>(p);
+    }
+    retval = char_p_cast<char>(p);
+    tokenlen = target.length();
+    target.terminate();
+    return retval;
 }

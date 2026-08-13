@@ -6,9 +6,12 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.InputStreamReader;
 import java.io.FileReader;
 import java.io.IOException;
 import java.nio.file.Paths;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -54,6 +57,25 @@ public class ExportPackagesIT {
 
     private static final List<String> newPackagesInJava21 = List.of("java.lang.foreign");
     private static final List<String> removedPackagesInJava21 = List.of("com.sun.jarsigner");
+    private static final List<String> newPackagesInJava22 = List.of(
+            "java.lang.classfile",
+            "java.lang.classfile.attribute",
+            "java.lang.classfile.constantpool",
+            "java.lang.classfile.instruction",
+            "java.lang.classfile.components"
+    );
+    private static final List<String> removedPackagesInJava22 = List.of();
+    private static final List<String> newPackagesInJava23 = List.of();
+    private static final List<String> removedPackagesInJava23 = List.of();
+    private static final List<String> newPackagesInJava24 = List.of(
+            "jdk.management"
+    );
+    private static final List<String> removedPackagesInJava24 = List.of(
+            "java.lang.classfile.components"
+    );
+    private static final List<String> newPackagesInJava25 = List.of(
+            "javax.sound"
+    );
 
     private static final Pattern PACKAGE_PATTERN = Pattern.compile("([^;,]+);\\s*version=\"([^\"]*)\"(?:,\\s*([^;,]+);\\s*uses:=\"([^\"]*)\")?");
 
@@ -129,6 +151,20 @@ public class ExportPackagesIT {
             expectedPackages = expectedPackages.removePackages(removedPackagesInJava21)
                     .addPackages(newPackagesInJava21);
         }
+        if (Runtime.version().feature() >= 22) {
+            expectedPackages = expectedPackages.removePackages(removedPackagesInJava22)
+                    .addPackages(newPackagesInJava22);
+        }
+        if (Runtime.version().feature() >= 23) {
+            expectedPackages = expectedPackages.removePackages(removedPackagesInJava23)
+                    .addPackages(newPackagesInJava23);
+        }
+        if (Runtime.version().feature() >= 24) {
+            expectedPackages = expectedPackages.removePackages(removedPackagesInJava24).addPackages(newPackagesInJava24);
+        }
+        if (Runtime.version().feature() >= 25) {
+            expectedPackages = expectedPackages.addPackages(newPackagesInJava25);
+        }
         var actualPackages = parsePackages(actualValue).removeJavaVersion();
 
         if (!actualPackages.isEquivalentTo(expectedPackages)) {
@@ -185,7 +221,7 @@ public class ExportPackagesIT {
 
     private static Properties getPropertiesFromFile(File file) throws IOException {
         Properties properties = new Properties();
-        try (FileReader reader = new FileReader(file)) {
+        try (InputStreamReader reader = new InputStreamReader(new FileInputStream(file), StandardCharsets.UTF_8)) {
             properties.load(reader);
         }
         return properties;

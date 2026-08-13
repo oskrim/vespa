@@ -13,6 +13,7 @@ import org.apache.commons.cli.Options;
 import org.apache.commons.cli.ParseException;
 
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Scanner;
@@ -22,6 +23,7 @@ import java.util.Scanner;
  *
  * @author bjorncs
  */
+@SuppressWarnings("deprecation") // commons-cli 1.10+ deprecated Option.Builder.build() and HelpFormatter
 public class CommandLineOptions {
 
     public static final String HELP_OPTION = "help";
@@ -39,6 +41,7 @@ public class CommandLineOptions {
     public static final String XMLOUTPUT_OPTION = "xmloutput";
     public static final String SHORTTENSORS_OPTION = "shorttensors";
     public static final String DIRECTTENSORS_OPTION = "directtensors";
+    public static final String REPLICA_OPTION = "replica-override";
 
     private final Options options = createOptions();
     private final InputStream stdIn;
@@ -69,7 +72,7 @@ public class CommandLineOptions {
 
         options.addOption(Option.builder("f")
                 .hasArg(true)
-                .desc("Retrieve the specified fields only (see https://docs.vespa.ai/en/documents.html#fieldsets) (default '" + DocumentOnly.NAME + "')")
+                .desc("Retrieve the specified fields only (see https://docs.vespa.ai/en/schemas/documents.html#fieldsets) (default '" + DocumentOnly.NAME + "')")
                 .longOpt(FIELDSET_OPTION)
                 .argName("fieldset").build());
 
@@ -138,6 +141,14 @@ public class CommandLineOptions {
                 .hasArg(false)
                 .build());
 
+        options.addOption(Option.builder()
+            .hasArg(true)
+            .desc("Specify from which replica node to get the document")
+            .longOpt(REPLICA_OPTION)
+            .argName("nodeId")
+            .type(Integer.class)
+            .build());
+
         return options;
     }
 
@@ -169,6 +180,7 @@ public class CommandLineOptions {
             boolean shortTensors = cl.hasOption(SHORTTENSORS_OPTION);
             boolean directTensors = cl.hasOption(DIRECTTENSORS_OPTION);
             int trace = getTrace(cl);
+            Integer replica = getReplica(cl);
             DocumentProtocol.Priority priority = getPriority(cl);
             double timeout = getTimeout(cl);
             Iterator<String> documentIds = getDocumentIds(cl);
@@ -178,12 +190,12 @@ public class CommandLineOptions {
             }
 
             if (printIdsOnly && !fieldSet.isEmpty()) {
-                throw new IllegalArgumentException("Field set option can not be used in combination with print ids option.");
+                throw new IllegalArgumentException("Field set option cannot be used in combination with print ids option.");
             }
 
             if (printIdsOnly) {
                 fieldSet = DocIdOnly.NAME;
-            } else if (fieldSet.isEmpty()) { 
+            } else if (fieldSet.isEmpty()) {
                 fieldSet = DocumentOnly.NAME;
             }
 
@@ -220,6 +232,7 @@ public class CommandLineOptions {
                     .setJsonOutput(!xmlOutput)
                     .setTensorShortForm(shortTensors)
                     .setTensorDirectValues(directTensors)
+                    .setDebugReplicaNodeId(replica)
                     .build();
         } catch (ParseException pe) {
             throw new IllegalArgumentException(pe.getMessage());
@@ -232,7 +245,7 @@ public class CommandLineOptions {
         // WARNING: CommandLine.getArgs may return a single empty string as the only element
         if (documentIds.isEmpty() ||
                 documentIds.size() == 1 && documentIds.get(0).isEmpty()) {
-            return new Scanner(stdIn);
+            return new Scanner(stdIn, StandardCharsets.UTF_8);
         } else {
             return documentIds.iterator();
         }
@@ -246,6 +259,19 @@ public class CommandLineOptions {
     private static int getTrace(CommandLine cl) throws ParseException {
         Number traceObj = (Number) cl.getParsedOptionValue(TRACE_OPTION);
         return traceObj != null ? traceObj.intValue() : 0;
+    }
+
+    private static Integer getReplica(CommandLine cl) throws ParseException {
+        Integer node_id = (Integer) cl.getParsedOptionValue(REPLICA_OPTION);
+
+        if (node_id != null) {
+            // Check node id range
+            if (node_id < 0 || node_id >= 65535) {
+                throw new IllegalArgumentException("Invalid replica node ID: " + node_id.toString() + ". Valid node ID must be between 0 and 65534 (inclusive)");
+            }
+        }
+
+        return node_id;
     }
 
     private static DocumentProtocol.Priority getPriority(CommandLine cl) throws ParseException {

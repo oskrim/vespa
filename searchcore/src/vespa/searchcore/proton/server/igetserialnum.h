@@ -11,8 +11,8 @@ namespace proton {
  **/
 class IGetSerialNum {
 public:
-    virtual ~IGetSerialNum() { }
+    virtual ~IGetSerialNum() = default;
     virtual search::SerialNum getSerialNum() const = 0;
 };
 
-}
+} // namespace proton

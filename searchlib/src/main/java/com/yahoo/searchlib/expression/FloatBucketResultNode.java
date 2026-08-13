@@ -1,6 +1,7 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.searchlib.expression;
 
+import com.yahoo.text.Text;
 import com.yahoo.vespa.objects.Deserializer;
 import com.yahoo.vespa.objects.ObjectVisitor;
 import com.yahoo.vespa.objects.Serializer;
@@ -88,20 +89,34 @@ public class FloatBucketResultNode extends BucketResultNode {
         FloatBucketResultNode b = (FloatBucketResultNode)rhs;
         double f1 = from;
         double f2 = b.from;
-        if (f1 < f2) {
-            return -1;
-        } else if (f1 > f2) {
-            return 1;
-        } else {
-            double t1 = to;
-            double t2 = b.to;
-            if (t1 < t2) {
+        if (f1 < f2) return -1;
+        if (f1 > f2) return 1;
+        double t1 = to;
+        double t2 = b.to;
+        if (f1 == f2) {
+            if (t1 == t2) return 0;
+            if (t1 < t2) return -1;
+            if (t1 > t2) return 1;
+            if (Double.isNaN(t1)) {
+                if (Double.isNaN(t2)) {
+                    return 0;
+                }
                 return -1;
-            } else if (t1 > t2) {
+            }
+            if (Double.isNaN(t2)) {
                 return 1;
             }
+        } else if (Double.isNaN(f1)) {
+            if (Double.isNaN(f2)) {
+                return 0;
+            }
+            return -1;
+        } else if (Double.isNaN(f2)) {
+            return 1;
         }
-        return 0;
+        // should not be possible
+        throw new IllegalArgumentException(Text.format("bad comparison [%f,%f> versus [%f,%f>",
+                                                         f1, t1, f2, t2));
     }
 
     @Override

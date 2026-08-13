@@ -17,40 +17,32 @@ public final class ConstantExpression extends Expression {
     private final FieldValue value;
 
     public ConstantExpression(FieldValue value) {
-        super(null);
         this.value = Objects.requireNonNull(value);
     }
+
+    @Override
+    public boolean requiresInput() { return false; }
 
     public FieldValue getValue() { return value; }
 
     @Override
-    public DataType setInputType(DataType inputType, VerificationContext context) {
+    public DataType setInputType(DataType inputType, TypeContext context) {
         super.setInputType(inputType, context);
         return value.getDataType();
     }
 
     @Override
-    public DataType setOutputType(DataType outputType, VerificationContext context) {
-        // TODO:
-        //if (outputType != value.getDataType())
-        //    throw new IllegalArgumentException(this + " produces a " + value.getDataType() + ", but a " +
-        //                                       outputType + " is required");
-        return super.setOutputType(outputType, context);
-    }
-
-    @Override
-    protected void doVerify(VerificationContext context) {
-        context.setCurrentType(value.getDataType());
+    public DataType setOutputType(DataType outputType, TypeContext context) {
+        if (outputType != null && ! value.getDataType().isAssignableTo(outputType))
+            throw new VerificationException(this, "Produces type " + value.getDataType().getName() + ", but type " +
+                                            outputType.getName() + " is required");
+        super.setOutputType(outputType, context);
+        return AnyDataType.instance;
     }
 
     @Override
     protected void doExecute(ExecutionContext context) {
         context.setCurrentValue(value);
-    }
-
-    @Override
-    public DataType createdOutputType() {
-        return value.getDataType();
     }
 
     @Override

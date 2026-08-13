@@ -7,6 +7,7 @@ import com.yahoo.document.DocumentId;
 import com.yahoo.document.datatypes.BoolFieldValue;
 import com.yahoo.document.datatypes.FieldPathIteratorHandler;
 import com.yahoo.document.datatypes.NumericFieldValue;
+import com.yahoo.document.datatypes.TensorFieldValue;
 import com.yahoo.document.idstring.IdIdString;
 import com.yahoo.document.select.BucketSet;
 import com.yahoo.document.select.Context;
@@ -179,6 +180,9 @@ public class ComparisonNode implements ExpressionNode {
             if (!lhs.get(i).getVariables().equals(rhs.get(i).getVariables())) {
                 return new ResultList(Result.FALSE);
             }
+            if (lhs.get(i).getValue() instanceof TensorFieldValue || rhs.get(i).getValue() instanceof TensorFieldValue) {
+                return new ResultList(Result.INVALID);
+            }
 
             if (evaluateEquals(lhs.get(i).getValue(), rhs.get(i).getValue()) == Result.FALSE) {
                 return new ResultList(Result.FALSE);
@@ -199,6 +203,14 @@ public class ComparisonNode implements ExpressionNode {
         }
     }
 
+    private static Result collapseOR(EnumSet<Result> observedResults) {
+        // Same logic as in ResultList.combineOR
+        if (observedResults.contains(Result.TRUE)) {
+            return Result.TRUE;
+        }
+        return observedResults.contains(Result.INVALID) ? Result.INVALID : Result.FALSE;
+    }
+
     private ResultList evaluateLhsListAndRhsSingle(AttributeNode.VariableValueList lhs, Object rhs) {
         return evaluateOneSideListOnly(lhs, rhs, (val) -> evaluateBool(val, rhs));
     }
@@ -215,6 +227,9 @@ public class ComparisonNode implements ExpressionNode {
         if (list == null || other == null) {
             return new ResultList(Result.FALSE);
         }
+        if (other instanceof TensorFieldValue) {
+            return new ResultList(Result.INVALID);
+        }
 
         var results = new ResultList();
         var observedNoVarResults = EnumSet.noneOf(Result.class);
@@ -229,10 +244,10 @@ public class ComparisonNode implements ExpressionNode {
                 results.add((FieldPathIteratorHandler.VariableMap) value.getVariables().clone(), result);
             }
         }
-        for (var mergedResult : observedNoVarResults) {
-            results.add(new FieldPathIteratorHandler.VariableMap(), mergedResult); // TODO sentinel empty var map
+        // Collapse results for the common case where there are no variables as all.
+        if (!observedNoVarResults.isEmpty()) {
+            results.add(new FieldPathIteratorHandler.VariableMap(), collapseOR(observedNoVarResults)); // TODO sentinel empty var map
         }
-
         return results;
     }
 
@@ -267,6 +282,10 @@ public class ComparisonNode implements ExpressionNode {
     private Result evaluateEquals(Object lhs, Object rhs) {
         if (lhs == null || rhs == null) {
             return Result.toResult(lhs == rhs);
+        }
+        // If either side is a tensor field, the result is Invalid (no peeking inside tensors)
+        if (lhs instanceof TensorFieldValue || rhs instanceof TensorFieldValue) {
+            return Result.INVALID;
         }
 
         double a = getAsNumber(lhs);

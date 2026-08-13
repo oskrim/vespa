@@ -156,13 +156,13 @@ public class VespaDomBuilder extends VespaModelBuilder {
         /**
          * Allocates a host to the service using host file or create service spec for provisioner to use later
          * Pre-condition: producerSpec is non-null
-         * 
+         *
          * @param service the service to allocate a host for
          * @param hostSystem a {@link HostSystem}
          * @param producerSpec xml element for the service
          */
         private void allocateHost(AbstractService service, HostSystem hostSystem, Element producerSpec) {
-            // TODO store service on something else than HostSystem, to not make that overloaded
+            // TODO: Store service on something else than HostSystem, to not make that overloaded
             service.setHostResource(hostSystem.getHost(producerSpec.getAttribute("hostalias")));
         }
     }
@@ -223,9 +223,10 @@ public class VespaDomBuilder extends VespaModelBuilder {
             if (minimumRequiredVespaVersion.isEmpty()) return;
             if (Version.fromString(minimumRequiredVespaVersion).compareTo(thisVersion) > 0)
                 throw new IllegalArgumentException(
-                        ("Cannot deploy application, minimum required Vespa version is specified as %s in services.xml" +
-                        ", this Vespa version is %s.")
-                        .formatted(minimumRequiredVespaVersion, thisVersion.toFullString()));
+                        String.format(java.util.Locale.ROOT,
+                                "Cannot deploy application, minimum required Vespa version is specified as %s in services.xml" +
+                                ", this Vespa version is %s.",
+                                minimumRequiredVespaVersion, thisVersion.toFullString()));
         }
 
     }

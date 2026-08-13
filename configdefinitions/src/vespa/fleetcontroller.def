@@ -199,10 +199,12 @@ cluster_feed_block_limit{} double
 # node must reach a lower resource usage than the limit for feed to be unblocked.
 # This is in absolute numbers, so 0.01 implies that a block limit of 0.8 effectively
 # becomes 0.79 for an already blocked node.
-cluster_feed_block_noise_level double default=0.0
+cluster_feed_block_noise_level double default=0.01
 
 # For apps that have several groups this controls how many groups are allowed to
-# be down simultaneously in this cluster.
+# be down simultaneously in this cluster. The default value of -1 means that
+# 1 group at a time is allowed to be down, 0 means one node at a time (for the whole
+# cluster, not per group).
 max_number_of_groups_allowed_to_be_down int default=-1
 
 ## Iff true, cluster state bundles sent from the cluster controller to distributors
@@ -210,4 +212,11 @@ max_number_of_groups_allowed_to_be_down int default=-1
 ## distribution config takes precedence over the node-local config. When enabled,
 ## a given versioned state corresponds directly to a particular bucket ownership
 ## and replica placement mapping for the ideal state algorithm.
-include_distribution_config_in_cluster_state_bundle bool default=false
+include_distribution_config_in_cluster_state_bundle bool default=true
+
+## Iff true, the cluster controller will aggregate error reports for content nodes
+## reported by the distributors in the cluster. Setting this to false will clear
+## any existing error aggregates on the cluster controller. It does not affect whether
+## the distributors actually report back error information, only the controller-side
+## aggregation of this information.
+aggregate_content_node_error_reports_from_distributors bool default=true

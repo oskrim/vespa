@@ -3,8 +3,9 @@ vespa_add_executable(searchlib_filter_search_test_app TEST
     SOURCES
     filter_search_test.cpp
     DEPENDS
+    searchlib_queryeval_test
     vespa_searchlib
     searchlib_test
-    GTest::GTest
+    GTest::gtest
 )
 vespa_add_test(NAME searchlib_filter_search_test_app COMMAND searchlib_filter_search_test_app)

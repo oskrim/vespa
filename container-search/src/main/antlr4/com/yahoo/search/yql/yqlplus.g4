@@ -2,7 +2,7 @@
 grammar yqlplus;
 
 options {
-  superClass = ParserBase;
+  superClass = Parser;
   language = Java;
 }
 
@@ -142,7 +142,7 @@ WS  :   ( ' '
     ;
 
 COMMENT
-    :  ( ('//') ~('\n'|'\r')* '\r'? '\n'? 
+    :  ( ('//' | '#') ~('\n'|'\r')* '\r'? '\n'?
     | '/*' .*? '*/'
     )
     -> channel(HIDDEN)
@@ -477,9 +477,9 @@ scalar_literal
 	;
 	
 array_parameter
-    : AT i=ident {isArrayParameter($i.ctx)}?
+    : AT i=ident {false}?
     ;
-    
+
 literal_list
 	: LPAREN literal_element (COMMA literal_element)* RPAREN
 	;

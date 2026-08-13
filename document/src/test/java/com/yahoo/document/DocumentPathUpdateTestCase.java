@@ -1,11 +1,19 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.document;
 
-import com.yahoo.document.datatypes.*;
+import com.yahoo.document.datatypes.Array;
+import com.yahoo.document.datatypes.FloatFieldValue;
+import com.yahoo.document.datatypes.IntegerFieldValue;
+import com.yahoo.document.datatypes.MapFieldValue;
+import com.yahoo.document.datatypes.StringFieldValue;
+import com.yahoo.document.datatypes.Struct;
+import com.yahoo.document.datatypes.WeightedSet;
 import com.yahoo.document.fieldpathupdate.AddFieldPathUpdate;
 import com.yahoo.document.fieldpathupdate.AssignFieldPathUpdate;
 import com.yahoo.document.fieldpathupdate.RemoveFieldPathUpdate;
-import com.yahoo.document.serialization.*;
+import com.yahoo.document.serialization.DocumentDeserializer;
+import com.yahoo.document.serialization.DocumentDeserializerFactory;
+import com.yahoo.document.serialization.DocumentSerializerFactory;
 import com.yahoo.io.GrowableByteBuffer;
 import org.junit.Before;
 import org.junit.Test;
@@ -118,6 +126,24 @@ public class DocumentPathUpdateTestCase {
         assertEquals(1, ((List) doc.getFieldValue("strarray")).size());
         List docList = (List) doc.getFieldValue("strarray");
         assertEquals(new StringFieldValue("hello hello"), docList.get(0));
+    }
+
+    @Test
+    public void can_remove_array_element_by_index() {
+        Document doc = new Document(docMan.getDocumentType("foobar"), new DocumentId("id:ns:foobar::foooo"));
+        Array<StringFieldValue> strArray = new Array<>(doc.getField("strarray").getDataType());
+        strArray.add(new StringFieldValue("one"));
+        strArray.add(new StringFieldValue("two"));
+        strArray.add(new StringFieldValue("three"));
+        doc.setFieldValue("strarray", strArray);
+
+        DocumentUpdate docUp = new DocumentUpdate(docType, new DocumentId("id:ns:foobar::foooo"));
+        docUp.addFieldPathUpdate(new RemoveFieldPathUpdate(doc.getDataType(), "strarray[1]"));
+        docUp.applyTo(doc);
+        var docList = (List)doc.getFieldValue("strarray");
+        assertEquals(2, docList.size());
+        assertEquals(new StringFieldValue("one"), docList.get(0));
+        assertEquals(new StringFieldValue("three"), docList.get(1));
     }
 
     @Test
@@ -581,9 +607,9 @@ public class DocumentPathUpdateTestCase {
         docUp.addFieldPathUpdate(ass);
 
         GrowableByteBuffer buffer = new GrowableByteBuffer();
-        docUp.serialize(DocumentSerializerFactory.create6(buffer));
+        docUp.serialize(DocumentSerializerFactory.createHead(buffer));
         buffer.flip();
-        DocumentUpdate docUp2 = new DocumentUpdate(DocumentDeserializerFactory.create6(docMan, buffer));
+        DocumentUpdate docUp2 = new DocumentUpdate(DocumentDeserializerFactory.createHead(docMan, buffer));
 
         assertEquals(docUp, docUp2);
     }
@@ -599,9 +625,9 @@ public class DocumentPathUpdateTestCase {
         docUp.addFieldPathUpdate(add);
 
         GrowableByteBuffer buffer = new GrowableByteBuffer();
-        docUp.serialize(DocumentSerializerFactory.create6(buffer));
+        docUp.serialize(DocumentSerializerFactory.createHead(buffer));
         buffer.flip();
-        DocumentUpdate docUp2 = new DocumentUpdate(DocumentDeserializerFactory.create6(docMan, buffer));
+        DocumentUpdate docUp2 = new DocumentUpdate(DocumentDeserializerFactory.createHead(docMan, buffer));
 
         assertEquals(docUp, docUp2);
     }
@@ -613,9 +639,9 @@ public class DocumentPathUpdateTestCase {
         docUp.addFieldPathUpdate(remove);
 
         GrowableByteBuffer buffer = new GrowableByteBuffer();
-        docUp.serialize(DocumentSerializerFactory.create6(buffer));
+        docUp.serialize(DocumentSerializerFactory.createHead(buffer));
         buffer.flip();
-        DocumentUpdate docUp2 = new DocumentUpdate(DocumentDeserializerFactory.create6(docMan, buffer));
+        DocumentUpdate docUp2 = new DocumentUpdate(DocumentDeserializerFactory.createHead(docMan, buffer));
 
         assertEquals(docUp, docUp2);
     }
@@ -658,7 +684,7 @@ public class DocumentPathUpdateTestCase {
         DocumentUpdate docUp = createDocumentUpdateForSerialization();
 
         GrowableByteBuffer buffer = new GrowableByteBuffer();
-        docUp.serialize(DocumentSerializerFactory.create6(buffer));
+        docUp.serialize(DocumentSerializerFactory.createHead(buffer));
 
         int size = buffer.position();
         buffer.position(0);
@@ -672,7 +698,7 @@ public class DocumentPathUpdateTestCase {
     public void testReadSerializedFile() throws IOException {
         docMan = DocumentTestCase.setUpCppDocType();
         byte[] data = DocumentTestCase.readFile("src/tests/data/serialize-fieldpathupdate-cpp.dat");
-        DocumentDeserializer buf = DocumentDeserializerFactory.create6(docMan, GrowableByteBuffer.wrap(data));
+        DocumentDeserializer buf = DocumentDeserializerFactory.createHead(docMan, GrowableByteBuffer.wrap(data));
 
         DocumentUpdate upd = new DocumentUpdate(buf);
 

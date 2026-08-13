@@ -9,6 +9,8 @@ import com.yahoo.config.provision.Environment;
 import com.yahoo.vespa.config.content.StorDistributionConfig;
 import com.yahoo.vespa.model.HostResource;
 import com.yahoo.vespa.model.HostSystem;
+import com.yahoo.vespa.model.builder.xml.dom.DomDistributorBuilder;
+import com.yahoo.vespa.model.builder.xml.dom.DomStorageNodeBuilder;
 import com.yahoo.vespa.model.builder.xml.dom.ModelElement;
 import com.yahoo.vespa.model.builder.xml.dom.NodesSpecification;
 import com.yahoo.vespa.model.builder.xml.dom.VespaDomBuilder;
@@ -181,15 +183,14 @@ public class StorageGroup {
         return java.util.Objects.hash(index, name, partitions);
     }
 
-    public static Map<HostResource, ClusterMembership> provisionHosts(NodesSpecification nodesSpecification, 
-                                                                      String clusterIdString, 
+    public static Map<HostResource, ClusterMembership> provisionHosts(NodesSpecification nodesSpecification,
+                                                                      ClusterSpec.Id clusterId,
                                                                       HostSystem hostSystem,
                                                                       ConfigModelContext context) {
-        ClusterSpec.Id clusterId = ClusterSpec.Id.from(clusterIdString);
         return nodesSpecification.provision(hostSystem,
                                             ClusterSpec.Type.content,
                                             clusterId,
-                                            context.getDeployLogger(),
+                                            context.getDeployState(),
                                             true,
                                             context.clusterInfo().build());
     }
@@ -246,8 +247,8 @@ public class StorageGroup {
             if (nodesElement == null) return;
             var nodesSpec = NodesSpecification.from(nodesElement, context);
 
-            // Allow dev deployment of self-hosted app (w/o count attribute): absent count => 1 node
-            if (!nodesSpec.hasCountAttribute() && environment == Environment.dev) return;
+            // Allow dev deployment of self-hosted apps which do not specify node count by defaulting to 1 node
+            if (!nodesSpec.specifiesNodeCount() && environment == Environment.dev) return;
 
             int minNodesPerGroup = (int) Math.ceil((double) nodesSpec.minResources().nodes() / nodesSpec.minResources().groups());
 
@@ -318,17 +319,19 @@ public class StorageGroup {
             private StorageNode buildSingleNode(DeployState deployState, ContentCluster parent) {
                 int distributionKey = 0;
 
-                StorageNode searchNode = new StorageNode(deployState.getProperties(), parent.getStorageCluster(), 1.0, distributionKey , false);
-                searchNode.setHostResource(parent.hostSystem().getHost(Container.SINGLENODE_CONTAINER_SERVICESPEC));
-                PersistenceEngine provider = parent.getPersistence().create(deployState, searchNode, storageGroup, null);
-                searchNode.initService(deployState);
+                StorageNode storageNode = new StorageNode(deployState.getProperties(), parent.getStorageCluster(), 1.0, distributionKey , false);
+                storageNode.setHostResource(parent.hostSystem().getHost(Container.SINGLENODE_CONTAINER_SERVICESPEC));
 
-                Distributor distributor = new Distributor(deployState.getProperties(), parent.getDistributorNodes(), distributionKey, null, provider);
-                distributor.setHostResource(searchNode.getHostResource());
+                parent.getSearch().addSearchNode(deployState, storageNode, storageGroup);
+                PersistenceEngine provider = parent.getPersistence().create(storageNode);
+                storageNode.initService(deployState);
+
+                Distributor distributor = new Distributor(deployState.getProperties(), parent.getDistributorNodes(), distributionKey, provider);
+                distributor.setHostResource(storageNode.getHostResource());
                 distributor.initService(deployState);
-                return searchNode;
+                return storageNode;
             }
-            
+
             /**
              * Builds a storage group for a hosted environment
              *
@@ -345,19 +348,19 @@ public class StorageGroup {
                 Map<HostResource, ClusterMembership> hostMapping =
                         nodeRequirement.isPresent() ?
                         provisionHosts(nodeRequirement.get(),
-                                       owner.getStorageCluster().getClusterName(),
+                                       ClusterSpec.Id.from(owner.getStorageCluster().getClusterName()),
                                        owner.getRoot().hostSystem(),
                                        context) :
                         Map.of();
 
-                Map<Optional<ClusterSpec.Group>, Map<HostResource, ClusterMembership>> hostGroups = collectAllocatedSubgroups(hostMapping);
+                Map<Integer, Map<HostResource, ClusterMembership>> hostGroups = collectAllocatedSubgroups(hostMapping);
                 if (hostGroups.size() > 1) {
                     if (parent.isPresent())
                         throw new IllegalArgumentException("Cannot specify groups using the groups attribute in nested content groups");
 
                     // create subgroups as returned from allocation
-                    for (Map.Entry<Optional<ClusterSpec.Group>, Map<HostResource, ClusterMembership>> hostGroup : hostGroups.entrySet()) {
-                        String groupIndex = String.valueOf(hostGroup.getKey().get().index());
+                    for (Map.Entry<Integer, Map<HostResource, ClusterMembership>> hostGroup : hostGroups.entrySet()) {
+                        String groupIndex = String.valueOf(hostGroup.getKey());
                         StorageGroup subgroup = new StorageGroup(true, groupIndex, groupIndex);
                         for (Map.Entry<HostResource, ClusterMembership> host : hostGroup.getValue().entrySet()) {
                             subgroup.nodes.add(createStorageNode(deployState, owner, host.getKey(), subgroup, host.getValue()));
@@ -377,10 +380,10 @@ public class StorageGroup {
             }
 
             /** Collect hosts per group */
-            private Map<Optional<ClusterSpec.Group>, Map<HostResource, ClusterMembership>> collectAllocatedSubgroups(Map<HostResource, ClusterMembership> hostMapping) {
-                Map<Optional<ClusterSpec.Group>, Map<HostResource, ClusterMembership>> hostsPerGroup = new LinkedHashMap<>();
+            private Map<Integer, Map<HostResource, ClusterMembership>> collectAllocatedSubgroups(Map<HostResource, ClusterMembership> hostMapping) {
+                Map<Integer, Map<HostResource, ClusterMembership>> hostsPerGroup = new LinkedHashMap<>();
                 for (Map.Entry<HostResource, ClusterMembership> entry : hostMapping.entrySet()) {
-                    Optional<ClusterSpec.Group> group = entry.getValue().cluster().group();
+                    Integer group = entry.getValue().group();
                     Map<HostResource, ClusterMembership> hostsInGroup = hostsPerGroup.computeIfAbsent(group, k -> new LinkedHashMap<>());
                     hostsInGroup.put(entry.getKey(), entry.getValue());
                 }
@@ -392,12 +395,14 @@ public class StorageGroup {
         private record XmlNodeBuilder(ModelElement clusterElement, ModelElement element) {
 
             public StorageNode build(DeployState deployState, ContentCluster parent, StorageGroup storageGroup) {
-                        StorageNode sNode = new StorageNode.Builder().build(deployState, parent.getStorageCluster(), element.getXml());
-                        PersistenceEngine provider = parent.getPersistence().create(deployState, sNode, storageGroup, element);
-                        new Distributor.Builder(clusterElement, provider).build(deployState, parent.getDistributorNodes(), element.getXml());
-                        return sNode;
-                    }
-                }
+                StorageNode sNode = new DomStorageNodeBuilder().build(deployState, parent.getStorageCluster(), element.getXml());
+                parent.getSearch().addSearchNode(deployState, sNode, storageGroup, element);
+                PersistenceEngine provider = parent.getPersistence().create(sNode);
+                new DomDistributorBuilder(provider).build(deployState, parent.getDistributorNodes(), element.getXml());
+                return sNode;
+            }
+
+        }
 
         /**
          * Creates a content group builder from a group and/or nodes element.
@@ -435,27 +440,68 @@ public class StorageGroup {
             if (!subGroups.isEmpty() && nodesElement.isPresent())
                 throw new IllegalArgumentException("A group can contain either explicit subgroups or a nodes specification, but not both.");
 
-            Optional<NodesSpecification> nodeRequirement;
-            if (nodesElement.isPresent() && nodesElement.get().stringAttribute("count") != null ) // request these nodes
-                nodeRequirement = Optional.of(NodesSpecification.from(nodesElement.get(), context));
-            else if (nodesElement.isPresent() && context.getDeployState().isHosted() && context.getDeployState().zone().environment().isManuallyDeployed() ) // default to 1 node
-                nodeRequirement = Optional.of(NodesSpecification.from(nodesElement.get(), context));
-            else if (nodesElement.isEmpty() && subGroups.isEmpty() && context.getDeployState().isHosted()) // request one node
-                nodeRequirement = Optional.of(NodesSpecification.nonDedicated(1, context));
-            else if (nodesElement.isPresent() && nodesElement.get().stringAttribute("count") == null && context.getDeployState().isHosted())
-                throw new IllegalArgumentException("""
-                                                           Clusters in hosted environments must have a <nodes count='N'> tag
-                                                           matching all zones, and having no <node> subtags,
-                                                           see https://cloud.vespa.ai/en/reference/services""");
-            else // Nodes or groups explicitly listed - resolve in GroupBuilder
-                nodeRequirement = Optional.empty();
+            Optional<NodesSpecification> nodeRequirement = getNodesSpecification(nodesElement, subGroups);
 
             return new GroupBuilder(group, subGroups, explicitNodes, nodeRequirement);
         }
 
+        private Optional<NodesSpecification> getNodesSpecification(Optional<ModelElement> nodesElement, List<GroupBuilder> subGroups) {
+            if (nodesElement.isEmpty()) {
+                return handleMissingNodesElement(subGroups);
+            }
+
+            ModelElement nodes = nodesElement.get();
+            boolean isHosted = context.getDeployState().isHosted();
+            boolean hasCountAttribute = hasCountAttribute(nodes);
+            boolean hasGroupAttributes = hasGroupAttributes(nodes);
+
+            if (hasCountAttribute || hasGroupAttributes) {
+                return Optional.of(NodesSpecification.from(nodes, context));
+            }
+
+            if (isHosted) {
+                return handleHostedEnvironment(nodes);
+            }
+
+            // Nodes explicitly listed - resolve in GroupBuilder
+            return Optional.empty();
+        }
+
+        private Optional<NodesSpecification> handleMissingNodesElement(List<GroupBuilder> subGroups) {
+            boolean isHosted = context.getDeployState().isHosted();
+            if (subGroups.isEmpty() && isHosted) {
+                return Optional.of(NodesSpecification.nonDedicated(1, context));
+            }
+            return Optional.empty();
+        }
+
+        private Optional<NodesSpecification> handleHostedEnvironment(ModelElement nodes) {
+            boolean isManuallyDeployed = context.getDeployState().zone().environment().isManuallyDeployed();
+            if (isManuallyDeployed) {
+                return Optional.of(NodesSpecification.from(nodes, context));
+            }
+
+            if (!hasCountAttribute(nodes) && !hasGroupAttributes(nodes)) {
+                throw new IllegalArgumentException("""
+                        Clusters in hosted environments must have a <nodes count='N'> tag
+                        matching all zones, and having no <node> subtags,
+                        or <nodes groups='N' and group-size='N'> tags
+                        see https://docs.vespa.ai/en/reference/applications/services/services.html#nodes""");
+            }
+
+            return Optional.empty();
+        }
+
+        private boolean hasCountAttribute(ModelElement nodes) {
+            return nodes.stringAttribute("count") != null;
+        }
+
+        private boolean hasGroupAttributes(ModelElement nodes) {
+            return nodes.stringAttribute("groups") != null && nodes.stringAttribute("group-size") != null;
+        }
+
         private Optional<String> childAsString(Optional<ModelElement> element, String childTagName) {
-            if (element.isEmpty()) return Optional.empty();
-            return Optional.ofNullable(element.get().childAsString(childTagName));
+            return element.map(modelElement -> modelElement.childAsString(childTagName));
         }
         private Optional<Long> childAsLong(Optional<ModelElement> element, String childTagName) {
             return element.map(modelElement -> modelElement.childAsLong(childTagName));
@@ -503,9 +549,9 @@ public class StorageGroup {
             sNode.setHostResource(hostResource);
             sNode.initService(deployState);
 
-            // TODO: Supplying null as XML is not very nice
-            PersistenceEngine provider = parent.getPersistence().create(deployState, sNode, parentGroup, null);
-            Distributor d = new Distributor(deployState.getProperties(), parent.getDistributorNodes(), clusterMembership.index(), null, provider);
+            parent.getSearch().addSearchNode(deployState, sNode, parentGroup);
+            PersistenceEngine provider = parent.getPersistence().create(sNode);
+            Distributor d = new Distributor(deployState.getProperties(), parent.getDistributorNodes(), clusterMembership.index(), provider);
             d.setHostResource(sNode.getHostResource());
             d.initService(deployState);
             return sNode;

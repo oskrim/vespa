@@ -1,11 +1,13 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "testdiskindex.h"
+
 #include <vespa/searchlib/diskindex/indexbuilder.h>
 #include <vespa/searchlib/diskindex/posting_list_cache.h>
 #include <vespa/searchlib/index/dummyfileheadercontext.h>
 #include <vespa/searchlib/index/i_field_length_inspector.h>
 #include <vespa/vespalib/io/fileutil.h>
+
 #include <cassert>
 
 namespace search::diskindex {
@@ -23,38 +25,36 @@ namespace {
 class MockFieldLengthInspector : public IFieldLengthInspector {
     FieldLengthInfo get_field_length_info(const std::string& field_name) const override {
         if (field_name == "f1") {
-            return {3.5, 21};
+            return {3.5, 3.5, 21};
         } else if (field_name == "f2") {
-            return {4.0, 23};
+            return {4.0, 4.0, 23};
         } else {
             return {};
         }
     }
 };
 
-}
+} // namespace
 
-struct Builder
-{
+struct Builder {
     MockFieldLengthInspector        _mock_field_length_inspector;
     TuneFileIndexing                _tuneFileIndexing;
     DummyFileHeaderContext          _fileHeaderContext;
     search::diskindex::IndexBuilder _ib;
     DocIdAndFeatures                _features;
 
-    Builder(const std::string &dir, const Schema &s, uint32_t docIdLimit, uint64_t numWordIds, bool directio)
+    Builder(const std::string& dir, const Schema& s, uint32_t docIdLimit, uint64_t numWordIds, bool directio)
         : _tuneFileIndexing(),
           _fileHeaderContext(),
-          _ib(s, dir, docIdLimit,numWordIds, _mock_field_length_inspector, _tuneFileIndexing, _fileHeaderContext),
-          _features()
-    {
+          _ib(s, dir, docIdLimit, numWordIds, _mock_field_length_inspector, _tuneFileIndexing, _fileHeaderContext),
+          _features() {
         if (directio) {
             _tuneFileIndexing._read.setWantDirectIO();
             _tuneFileIndexing._write.setWantDirectIO();
         }
     }
 
-    void addDoc(index::FieldIndexBuilder & fb, uint32_t docId) {
+    void addDoc(index::FieldIndexBuilder& fb, uint32_t docId) {
         _features.clear(docId);
         _features.elements().emplace_back(0, 1, 1);
         _features.elements().back().setNumOccs(1);
@@ -63,21 +63,14 @@ struct Builder
     }
 };
 
-
-void
-TestDiskIndex::buildSchema()
-{
+void TestDiskIndex::buildSchema() {
     _schema.addIndexField(Schema::IndexField("f1", DataType::STRING));
     _schema.addIndexField(Schema::IndexField("f2", DataType::STRING));
-    _schema.addFieldSet(Schema::FieldSet("c2").
-                        addField("f1").
-                        addField("f2"));
+    _schema.addFieldSet(Schema::FieldSet("c2").addField("f1").addField("f2"));
 }
 
-void
-TestDiskIndex::buildIndex(const std::string & dir, bool directio,
-                          bool fieldEmpty, bool docEmpty, bool wordEmpty)
-{
+void TestDiskIndex::buildIndex(const std::string& dir, bool directio, bool fieldEmpty, bool docEmpty,
+                               bool wordEmpty) {
     Builder b(dir, _schema, docEmpty ? 1 : 32, wordEmpty ? 0 : 2, directio);
 
     if (!fieldEmpty) {
@@ -106,12 +99,10 @@ TestDiskIndex::buildIndex(const std::string & dir, bool directio,
     }
 }
 
-void
-TestDiskIndex::openIndex(const std::string &dir, bool directio, bool readmmap, bool use_posting_list_cache,
-                         bool fieldEmpty, bool docEmpty, bool wordEmpty)
-{
+void TestDiskIndex::openIndex(const std::string& dir, bool directio, bool readmmap, bool use_posting_list_cache,
+                              bool fieldEmpty, bool docEmpty, bool wordEmpty) {
     buildIndex(dir, directio, fieldEmpty, docEmpty, wordEmpty);
-    TuneFileRandRead    tuneFileRead;
+    TuneFileRandRead tuneFileRead;
     if (directio) {
         tuneFileRead.setWantDirectIO();
     }
@@ -120,16 +111,16 @@ TestDiskIndex::openIndex(const std::string &dir, bool directio, bool readmmap, b
     }
     std::shared_ptr<IPostingListCache> posting_list_cache;
     if (use_posting_list_cache) {
-        posting_list_cache = std::make_shared<PostingListCache>(256_Ki);
+        posting_list_cache = std::make_shared<PostingListCache>(256_Ki, 256_Ki);
     }
     _index = std::make_unique<DiskIndex>(dir, posting_list_cache);
     bool ok(_index->setup(tuneFileRead));
     assert(ok);
-    (void) ok;
+    (void)ok;
 }
 
 TestDiskIndex::TestDiskIndex() = default;
 
 TestDiskIndex::~TestDiskIndex() = default;
 
-}
+} // namespace search::diskindex

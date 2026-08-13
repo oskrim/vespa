@@ -2,7 +2,9 @@
 
 #pragma once
 
-namespace search { class BufferWriter; }
+namespace search {
+class BufferWriter;
+}
 
 namespace search::tensor {
 
@@ -20,7 +22,7 @@ namespace search::tensor {
  */
 class NearestNeighborIndexSaver {
 public:
-    virtual ~NearestNeighborIndexSaver() {}
+    virtual ~NearestNeighborIndexSaver() = default;
 
     /**
      * Saves the index in binary form using the given writer.
@@ -30,4 +32,4 @@ public:
     virtual void save(BufferWriter& writer) const = 0;
 };
 
-}
+} // namespace search::tensor

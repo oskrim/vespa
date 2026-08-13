@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 # Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 unset VESPA_LOG_TARGET
 unset LD_PRELOAD
@@ -19,4 +19,4 @@ if [ $# -lt 1 ]; then
 fi
 CLASS=$1
 shift
-exec java -cp $CLASSPATH $CLASS "$@"
+exec java -Djava.io.tmpdir=@CMAKE_CURRENT_BINARY_DIR@ -cp $CLASSPATH $CLASS "$@"

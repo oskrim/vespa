@@ -1,14 +1,14 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
-#include <vespa/vespalib/testkit/test_kit.h>
+#include <vespa/vespalib/gtest/gtest.h>
 #include <vespa/vespalib/util/guard.h>
+
 #include <fcntl.h>
 #include <unistd.h>
 
 using namespace vespalib;
 
-TEST("testFilePointer")
-{
+TEST(GuardTest, testFilePointer) {
     {
         FilePointer file(fopen("bogus", "r"));
         EXPECT_TRUE(!file.valid());
@@ -21,21 +21,21 @@ TEST("testFilePointer")
     {
         FilePointer file(fopen("filept.txt", "r"));
         EXPECT_TRUE(file.valid());
-        char tmp[128];
-        char *fgetsres = fgets(tmp, sizeof(tmp), file);
-        ASSERT_EQUAL(tmp, fgetsres);
+        char  tmp[128];
+        char* fgetsres = fgets(tmp, sizeof(tmp), file);
+        ASSERT_EQ(tmp, fgetsres);
         EXPECT_TRUE(strcmp(tmp, "Hello") == 0);
     }
     {
-        FILE *pt = NULL;
+        FILE* pt = nullptr;
         {
             FilePointer file(fopen("filept.txt", "r"));
             EXPECT_TRUE(file.valid());
             pt = file;
         }
-        EXPECT_TRUE(pt != NULL);
+        EXPECT_TRUE(pt != nullptr);
         // char tmp[128];
-        // EXPECT_TRUE(fgets(tmp, sizeof(tmp), pt) == NULL);
+        // EXPECT_TRUE(fgets(tmp, sizeof(tmp), pt) == nullptr);
     }
     {
         FilePointer file(fopen("filept.txt", "w"));
@@ -44,23 +44,22 @@ TEST("testFilePointer")
 
         file.reset(fopen("filept.txt", "r"));
         EXPECT_TRUE(file.valid());
-        char tmp[128];
-        char *fgetsres = fgets(tmp, sizeof(tmp), file.fp());
-        ASSERT_EQUAL(tmp, fgetsres);
+        char  tmp[128];
+        char* fgetsres = fgets(tmp, sizeof(tmp), file.fp());
+        ASSERT_EQ(tmp, fgetsres);
         EXPECT_TRUE(strcmp(tmp, "World") == 0);
 
-        FILE *ref = file.fp();
-        FILE *fp = file.release();
-        EXPECT_TRUE(fp != NULL);
+        FILE* ref = file.fp();
+        FILE* fp = file.release();
+        EXPECT_TRUE(fp != nullptr);
         EXPECT_TRUE(fp == ref);
         EXPECT_TRUE(!file.valid());
-        EXPECT_TRUE(file.fp() == NULL);
+        EXPECT_TRUE(file.fp() == nullptr);
         fclose(fp);
     }
 }
 
-TEST("testFileDescriptor")
-{
+TEST(GuardTest, testFileDescriptor) {
     {
         FileDescriptor file(open("bogus", O_RDONLY));
         EXPECT_TRUE(!file.valid());
@@ -73,7 +72,7 @@ TEST("testFileDescriptor")
     {
         FileDescriptor file(open("filedesc.txt", O_RDONLY));
         EXPECT_TRUE(file.valid());
-        char tmp[128];
+        char   tmp[128];
         size_t res = read(file.fd(), tmp, sizeof(tmp));
         EXPECT_TRUE(res == strlen("Hello"));
         tmp[res] = '\0';
@@ -96,7 +95,7 @@ TEST("testFileDescriptor")
 
         file.reset(open("filedesc.txt", O_RDONLY));
         EXPECT_TRUE(file.valid());
-        char tmp[128];
+        char   tmp[128];
         size_t res = read(file.fd(), tmp, sizeof(tmp));
         EXPECT_TRUE(res == strlen("World"));
         tmp[res] = '\0';
@@ -112,8 +111,7 @@ TEST("testFileDescriptor")
     }
 }
 
-TEST("testCounterGuard")
-{
+TEST(GuardTest, testCounterGuard) {
     int cnt = 10;
     {
         EXPECT_TRUE(cnt == 10);
@@ -123,4 +121,4 @@ TEST("testCounterGuard")
     EXPECT_TRUE(cnt == 10);
 }
 
-TEST_MAIN() { TEST_RUN_ALL(); }
+GTEST_MAIN_RUN_ALL_TESTS()

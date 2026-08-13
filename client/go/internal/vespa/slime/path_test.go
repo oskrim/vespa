@@ -3,8 +3,9 @@
 package slime
 
 import (
-	"github.com/stretchr/testify/assert"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func createComplexValue(t *testing.T) Value {
@@ -104,4 +105,29 @@ func TestFindMultipleFields(t *testing.T) {
 	}
 	verifyArray([]verifyValue{verifyLong(9), verifyLong(10)})(t, arr2)
 	verifyArray([]verifyValue{verifyLong(3), verifyLong(4), verifyLong(5)})(t, arr3)
+}
+
+func TestSelectProcessing(t *testing.T) {
+	pred := func(p *Path, v Value) bool { return p.At(-1).WouldSelectField("y") }
+	handle := func(p *Path, v Value) {
+		assert.True(t, p.At(-1).WouldSelectField("y"))
+		if v.NumEntries() == 2 {
+			verifyArray([]verifyValue{verifyLong(9), verifyLong(10)})(t, v)
+		} else {
+			assert.Equal(t, 3, v.NumEntries())
+			verifyArray([]verifyValue{verifyLong(3), verifyLong(4), verifyLong(5)})(t, v)
+		}
+	}
+	Select(createComplexValue(t), pred, handle)
+}
+
+func TestPathStringConversion(t *testing.T) {
+	path := NewPath().Field("a").Entry(1).Field("y").Entry(0)
+	assert.Equal(t, "/a/1/y/0", path.String())
+
+	path2 := NewPath().Field("b").Field("x").Entry(2)
+	assert.Equal(t, "/b/x/2", path2.String())
+
+	emptyPath := NewPath()
+	assert.Equal(t, "", emptyPath.String())
 }

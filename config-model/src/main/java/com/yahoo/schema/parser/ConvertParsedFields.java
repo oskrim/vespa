@@ -16,6 +16,7 @@ import com.yahoo.schema.document.SDDocumentType;
 import com.yahoo.schema.document.SDField;
 import com.yahoo.schema.document.Sorting;
 import com.yahoo.schema.document.annotation.SDAnnotationType;
+import com.yahoo.vespa.documentmodel.SummaryElementsSelector;
 import com.yahoo.vespa.documentmodel.SummaryField;
 import com.yahoo.vespa.documentmodel.SummaryTransform;
 
@@ -24,15 +25,15 @@ import java.util.Map;
 import java.util.logging.Level;
 
 /**
- * Helper for converting ParsedField etc to SDField with settings
+ * Helper for converting ParsedField etc. to SDField with settings
  *
  * @author arnej27959
- **/
+ */
 public class ConvertParsedFields {
 
     private final TypeResolver context;
     private final Map<String, SDDocumentType> structProxies;
-    
+
     ConvertParsedFields(TypeResolver context, Map<String, SDDocumentType> structProxies) {
         this.context = context;
         this.structProxies = structProxies;
@@ -77,6 +78,10 @@ public class ConvertParsedFields {
     }
 
     void convertAttribute(Schema schema, SDField field, ParsedAttribute parsed) {
+        if (GeoPos.isAnyPos(field.getDataType())) {
+            convertPositionAttribute(schema, field, parsed);
+            return;
+        }
         String name = parsed.name();
         String fieldName = field.getName();
         Attribute attribute = null;
@@ -114,6 +119,45 @@ public class ConvertParsedFields {
         if (sorting.isPresent()) {
             convertSorting(schema, field, sorting.get(), name);
         }
+    }
+
+    private void convertPositionAttribute(Schema schema, SDField field, ParsedAttribute parsed) {
+        String fieldName = field.getName();
+
+        // Attribute settings on a position field only make sense if the field actually does attributing
+        if (!field.doesAttributing()) {
+            throw new IllegalArgumentException("For schema '" + schema.getName() +
+                "', field '" + fieldName + "': attribute properties require 'attribute' in the indexing statement");
+        }
+
+        // Reject renamed attributes — position fields only support the default attribute block
+        if (!parsed.name().equals(fieldName)) {
+            throw new IllegalArgumentException("For schema '" + schema.getName() +
+                "', field '" + fieldName + "': position fields do not support named attribute '" + parsed.name() + "'");
+        }
+
+        // Reject settings that are nonsensical or unsupported for position fields
+        if (parsed.getFastRank() || parsed.getMutable() || parsed.getEnableOnlyBitVector()
+                || parsed.getDistanceMetric().isPresent() || parsed.getSorting().isPresent()
+                || !parsed.getAliases().isEmpty()) {
+            throw new IllegalArgumentException("For schema '" + schema.getName() +
+                "', field '" + fieldName + "': position fields only support 'fast-search', 'fast-access', and 'paged' attribute settings");
+        }
+
+        // If only fast-search or empty: no-op. CreatePositionZCurve already sets fast-search on the zcurve attribute.
+        // Avoid creating an Attribute here so AttributesImplicitWord (which runs before CreatePositionZCurve) does not
+        // see a non-empty attributes map and flip this field to WORD matching.
+        if (!parsed.getFastAccess() && !parsed.getPaged()) {
+            return;
+        }
+
+        // Create a temporary Attribute to carry fast-access/paged to CreatePositionZCurve
+        boolean isArray = GeoPos.isPosArray(field.getDataType());
+        Attribute attribute = new Attribute(fieldName, Attribute.Type.LONG,
+            isArray ? Attribute.CollectionType.ARRAY : Attribute.CollectionType.SINGLE);
+        attribute.setFastAccess(parsed.getFastAccess());
+        attribute.setPaged(parsed.getPaged());
+        field.addAttribute(attribute);
     }
 
     private void convertRankType(SDField field, String indexName, String rankType) {
@@ -165,6 +209,8 @@ public class ConvertParsedFields {
         parsed.getWeight().ifPresent(value -> field.setWeight(value));
         parsed.getStemming().ifPresent(value -> field.setStemming(value));
         parsed.getNormalizing().ifPresent(value -> convertNormalizing(field, value));
+        parsed.getIndexLinguisticsProfile().ifPresent(value -> field.setIndexLinguisticsProfile(value));
+        parsed.getSearchLinguisticsProfile().ifPresent(value -> field.setSearchLinguisticsProfile(value));
         for (var attribute : parsed.getAttributes()) {
             convertAttribute(schema, field, attribute);
         }
@@ -179,7 +225,7 @@ public class ConvertParsedFields {
                         " Remove the type specification to silence this warning.");
                 dataType = context.resolveType(otherType);
             }
-            convertSummaryField(field, summaryField, dataType);
+            convertSummaryField(schema, field, summaryField, dataType);
         }
         for (String command : parsed.getQueryCommands()) {
             field.addQueryCommand(command);
@@ -239,11 +285,21 @@ public class ConvertParsedFields {
         }
     }
 
-    static void convertSummaryFieldSettings(SummaryField summary, ParsedSummaryField parsed) {
+    static void convertSummaryFieldSettings(Schema schema, SummaryField summary, ParsedSummaryField parsed,
+                                            String documentSummaryName) {
         var transform = SummaryTransform.NONE;
-        if (parsed.getMatchedElementsOnly()) {
-            transform = SummaryTransform.MATCHED_ELEMENTS_FILTER;
-        } else if (parsed.getDynamic()) {
+        var selectElementsBySummaryFeature = parsed.getSelectElementsBySummaryFeature();
+        if (selectElementsBySummaryFeature.isPresent()) {
+            if (parsed.getMatchedElementsOnly()) {
+                throw new IllegalArgumentException("For schema '" + schema.getName() + "' document-summary '" +
+                    documentSummaryName + "' summary field '" + summary.getName() + "': " +
+                    "Both matched-elements-only and select-elements-by specified, this is not supported");
+            }
+            summary.setElementsSelector(SummaryElementsSelector.selectBySummaryFeature(selectElementsBySummaryFeature.get()));
+        } else if (parsed.getMatchedElementsOnly()) {
+            summary.setElementsSelector(SummaryElementsSelector.selectByMatch());
+        }
+        if (parsed.getDynamic()) {
             transform = SummaryTransform.DYNAMICTEASER;
         } else if (parsed.getTokens()) {
             transform = SummaryTransform.TOKENS;
@@ -261,9 +317,9 @@ public class ConvertParsedFields {
         summary.setImplicit(false);
     }
 
-    private void convertSummaryField(SDField field, ParsedSummaryField parsed, DataType type) {
-        var summary = new SummaryField(parsed.name(), type);
-        convertSummaryFieldSettings(summary, parsed);
+    private void convertSummaryField(Schema schema, SDField field, ParsedSummaryField parsed, DataType type) {
+        var summary = new SummaryField(parsed.name(), type, field);
+        convertSummaryFieldSettings(schema, summary, parsed, "default");
         summary.addDestination("default");
         if (parsed.getSources().isEmpty()) {
             summary.addSource(field.getName());
@@ -291,7 +347,7 @@ public class ConvertParsedFields {
         var lowerBound = parsed.getLowerBound();
         var upperBound = parsed.getUpperBound();
         var densePostingListThreshold = parsed.getDensePostingListThreshold();
-        if (arity.isPresent() || 
+        if (arity.isPresent() ||
             lowerBound.isPresent() ||
             upperBound.isPresent() ||
             densePostingListThreshold.isPresent())
@@ -359,5 +415,9 @@ public class ConvertParsedFields {
             annType.setSdDocType(structProxy);
         }
         document.addAnnotation(annType);
+        schema.getDeployLogger()
+                .log(Level.WARNING, "For schema '" + parsed.getOwnerName() +
+                     "', annotation '" + parsed.name() +
+                     "': Creating new annotations is deprecated and will be removed in the near future");
     }
 }

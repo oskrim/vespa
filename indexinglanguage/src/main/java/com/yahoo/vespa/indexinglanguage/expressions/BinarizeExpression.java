@@ -18,34 +18,23 @@ public class BinarizeExpression extends Expression  {
 
     private final double threshold;
 
-    /** The type this consumes and produces. */
-    private DataType type;
-
     /**
      * Creates a binarize expression.
      *
      * @param threshold the value which the tensor cell value must be larger than to be set to 1 and not 0.
      */
     public BinarizeExpression(double threshold) {
-        super(TensorDataType.any());
         this.threshold = threshold;
     }
 
     @Override
-    public DataType setInputType(DataType inputType, VerificationContext context) {
+    public DataType setInputType(DataType inputType, TypeContext context) {
         return super.setInputType(inputType, TensorDataType.any(), context);
     }
 
     @Override
-    public DataType setOutputType(DataType outputType, VerificationContext context) {
-        return super.setOutputType(outputType, TensorDataType.any(), context);
-    }
-
-    @Override
-    protected void doVerify(VerificationContext context) {
-        type = context.getCurrentType();
-        if (! (type instanceof TensorDataType))
-            throw new IllegalArgumentException("The 'binarize' function requires a tensor, but got " + type);
+    public DataType setOutputType(DataType outputType, TypeContext context) {
+        return super.setOutputType(null, outputType, TensorDataType.any(), context);
     }
 
     @Override
@@ -54,9 +43,6 @@ public class BinarizeExpression extends Expression  {
         if (tensor.isEmpty()) return;
         context.setCurrentValue(new TensorFieldValue(tensor.get().map(v -> v > threshold ? 1 : 0)));
     }
-
-    @Override
-    public DataType createdOutputType() { return type; }
 
     @Override
     public String toString() {

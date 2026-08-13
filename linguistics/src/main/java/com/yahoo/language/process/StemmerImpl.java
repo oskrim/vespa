@@ -1,10 +1,9 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.language.process;
 
-import com.yahoo.language.Language;
-
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * @author Simon Thoresen Hult
@@ -18,24 +17,18 @@ public class StemmerImpl implements Stemmer {
     }
 
     @Override
-    public List<StemList> stem(String input, Language language, StemMode stemMode, boolean removeAccents) {
+    public List<StemList> stem(String input, LinguisticsParameters parameters) {
         List<StemList> stems = new ArrayList<>();
-        for (Token token : tokenizer.tokenize(input, language, stemMode, removeAccents)) {
+        for (Token token : tokenizer.tokenize(input, parameters))
             findStems(token, stems);
-        }
         return stems;
-    }
-
-    @Override
-    public List<StemList> stem(String input, StemMode stemMode, Language language) {
-        return stem(input, language, stemMode, false);
     }
 
     private void findStems(Token token, List<StemList> out) {
         int len;
         if (token.isSpecialToken() || (len = token.getNumComponents()) == 0) {
             if (token.isIndexable()) {
-                StemList word = new StemList();
+                StemList word = new StemList(Optional.of(token.getOrig()));
                 word.add(token.getTokenString()); // takes care of getStem(0)
                 for (int i = 1; i < token.getNumStems(); i++) {
                     word.add(token.getStem(i));
@@ -47,6 +40,11 @@ public class StemmerImpl implements Stemmer {
                 findStems(token.getComponent(i), out);
             }
         }
+    }
+
+    @Override
+    public String toString() {
+        return this.getClass().getName() + " using " + tokenizer;
     }
 
 }

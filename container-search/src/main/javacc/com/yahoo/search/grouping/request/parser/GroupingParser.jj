@@ -12,6 +12,7 @@ options {
     USER_TOKEN_MANAGER = false;
     USER_CHAR_STREAM   = true;
     ERROR_REPORTING    = true;
+    UNICODE_INPUT      = true;
 }
 
 // --------------------------------------------------------------------------------
@@ -23,6 +24,8 @@ PARSER_BEGIN(GroupingParser)
 
 package com.yahoo.search.grouping.request.parser;
 
+import java.util.ArrayList;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.LinkedList;
 import com.yahoo.javacc.UnicodeUtilities;
@@ -46,14 +49,14 @@ public class GroupingParser {
 }
 
 PARSER_END(GroupingParser)
-        
+
 TOKEN :
 {
     <INTEGER: <DECIMAL> (["l","L"])? | <HEX> (["l","L"])? | <OCTAL> (["l","L"])?> |
         <#DECIMAL: ["1"-"9"] (["0"-"9"])*> |
         <#HEX: "0" ["x","X"] (["0"-"9","a"-"f","A"-"F"])+> |
         <#OCTAL: "0" (["0"-"7"])*> |
-    <FLOAT: (["0"-"9"])+ ("." (["0"-"9"])*)? (<EXPONENT>)? (["f","F","d","D"])?> |  
+    <FLOAT: (["0"-"9"])+ ("." (["0"-"9"])*)? (<EXPONENT>)? (["f","F","d","D"])?> |
         <#EXPONENT: ["e","E"] (["+","-"])? (["0"-"9"])+>
 }
 
@@ -85,7 +88,7 @@ TOKEN :
     <RBRACKET: "]"> |
     <INF: "inf"> |
     <NEGINF: "-inf"> |
-    <STRING: ("\"" (~["\""] | "\\\"")* "\"") | 
+    <STRING: ("\"" (~["\""] | "\\\"")* "\"") |
              ("'" (~["'"] | "\\'")* "'")> |
     <ACOS: "acos"> |
     <ACOSH: "acosh"> |
@@ -114,11 +117,15 @@ TOKEN :
     <DOCIDNSSPECIFIC: "docidnsspecific"> |
     <EACH: "each"> |
     <EXP: "exp"> |
+    <FILTER: "filter"> |
     <FIXEDWIDTH: "fixedwidth"> |
     <FLOOR: "floor"> |
+    <GEO_DISTANCE: "geo_distance"> |
     <GROUP: "group"> |
     <HINT: "hint"> |
     <HYPOT: "hypot"> |
+    <ISTRUE: "istrue"> |
+    <KEEP: "keep"> |
     <LOG: "log"> |
     <LOG1P: "log1p"> |
     <LOG10: "log10"> |
@@ -129,6 +136,7 @@ TOKEN :
     <MOD: "mod"> |
     <MUL: "mul"> |
     <NEG: "neg"> |
+    <NOT: "not"> |
     <NORMALIZESUBJECT: "normalizesubject"> |
     <NOW: "now"> |
     <OR: "or"> |
@@ -137,6 +145,9 @@ TOKEN :
     <POW: "pow"> |
     <PRECISION: "precision"> |
     <PREDEFINED: "predefined"> |
+    <QUANTILES: "quantiles"> |
+    <RANGE: "range"> |
+    <REGEX: "regex"> |
     <RELEVANCE: "relevance"> |
     <REVERSE: "reverse"> |
     <SIN: "sin"> |
@@ -174,9 +185,18 @@ TOKEN :
     <X: "x"> |
     <XOR: "xor"> |
     <XORBIT: "xorbit"> |
+    <KM: "km"> |
+    <MILES: "miles"> |
     <Y: "y"> |
     <ZCURVE: "zcurve"> |
     <IDENTIFIER: ["A"-"Z","a"-"z"](["A"-"Z","a"-"z","0"-"9","_","@"])*>
+}
+
+// Declare a special skip token for comments.
+SPECIAL_TOKEN :
+{
+  <SINGLE_LINE_COMMENT: ("//"|"#") (~["\n","\r"])* > |
+  <MULTI_LINE_COMMENT: "/*" (~["*"])* "*" (~["*", "/"] (~["*"])* "*" | "*")* "/" >
 }
 
 // --------------------------------------------------------------------------------
@@ -251,6 +271,7 @@ GroupingOperation eachOperation(GroupingOperation parent) :
 
 void operationBody(GroupingOperation parent) :
 {
+    FilterExpression filterExp = null;
     ConstantValue<?> maxOperand = null;
     String str;
     Number num;
@@ -262,6 +283,8 @@ void operationBody(GroupingOperation parent) :
     ( ( <ACCURACY>  lbrace() num = number()                               rbrace() { parent.setAccuracy(num.doubleValue()); } ) |
       ( <ALIAS>     lbrace() str = identifier() comma() exp = exp(parent) rbrace() { parent.putAlias(str, exp); }             ) |
       ( <HINT>      lbrace() str = identifier()                           rbrace() { parent.addHint(str); }                   ) |
+      ( <FILTER>    lbrace() filterExp = filterExp(parent)                rbrace() { parent.setFilterBy(filterExp); }         ) |
+      ( <KEEP>      lbrace() filterExp = filterExp(parent)                rbrace() { parent.setFilterBy(filterExp); }         ) |
       ( <MAX>       lbrace() ( maxOperand = infinitePositiveValue() | maxOperand = constantValue() ) rbrace()
       {
             if (maxOperand instanceof InfiniteValue) {
@@ -310,6 +333,15 @@ GroupingExpression exp(GroupingOperation grp) :
     { return exp; }
 }
 
+FilterExpression filterExp(GroupingOperation grp) :
+{
+    FilterExpression exp;
+}
+{
+    ( (exp = orPredicate(grp)))
+    { return exp; }
+}
+
 GroupingExpression expAlias(GroupingOperation grp) :
 {
     String str;
@@ -355,6 +387,7 @@ GroupingExpression value(GroupingOperation grp) :
                    exp = divFunction(grp)              |
                    exp = docIdNsSpecificValue()        |
                    exp = fixedWidthFunction(grp)       |
+                   exp = geoDistanceFunction(grp)      |
                    exp = mathFunction(grp)             |
                    exp = maxExpression(grp)            |
                    exp = md5Function(grp)              |
@@ -372,6 +405,7 @@ GroupingExpression value(GroupingOperation grp) :
                    exp = sortFunction(grp)             |
                    exp = arrayAtLookup(grp)            |
                    exp = interpolatedLookup(grp)       |
+                   exp = quantilesExpression(grp)       |
                    exp = stddevAggregator(grp)         |
                    exp = stringValue()                 |
                    exp = strCatFunction(grp)           |
@@ -573,6 +607,20 @@ FixedWidthFunction fixedWidthFunction(GroupingOperation grp) :
     { return new FixedWidthFunction(exp, num); }
 }
 
+GeoDistanceFunction geoDistanceFunction(GroupingOperation grp) :
+{
+    AttributeFunction pos;
+    GroupingExpression lat, lon;
+    String unit;
+}
+{
+    ( <GEO_DISTANCE> lbrace() pos = attributeFunction() comma()
+                              lat = exp(grp) comma()
+                              lon = exp(grp) rbrace()
+      <DOT> ( <KM> { unit = "km"; } | <MILES> { unit = "miles"; } ) )
+    { return new GeoDistanceFunction(pos, lat, lon, unit); }
+}
+
 GroupingExpression maxExpression(GroupingOperation grp) :
 {
     List<GroupingExpression> argN = null;
@@ -593,6 +641,26 @@ GroupingExpression md5Function(GroupingOperation grp) :
 {
     ( <MD5> lbrace() exp = exp(grp) comma() num = number() rbrace() )
     { return new Md5Function(exp, num.intValue()); }
+}
+
+GroupingExpression quantilesExpression(GroupingOperation grp) :
+{
+    GroupingExpression input;
+    List<Number> qs = new ArrayList<Number>();
+    Number q;
+}
+{
+    <QUANTILES> lbrace() lbracket()
+        q = number() { qs.add(q); }
+        (
+            comma()
+            q = number() { qs.add(q); }
+        )*
+        rbracket()
+        comma()
+        input = exp(grp)
+    rbrace()
+    { return new QuantileAggregator(qs, input); }
 }
 
 GroupingExpression minExpression(GroupingOperation grp) :
@@ -924,6 +992,87 @@ XorBitFunction xorBitFunction(GroupingOperation grp) :
     { return new XorBitFunction(exp, num.intValue()); }
 }
 
+FilterExpression filterPrimary(GroupingOperation grp) :
+{
+    FilterExpression f;
+}
+{
+    (( lbrace() f = filterExp(grp) rbrace() ) |
+    ( f = regexPredicate(grp) )              |
+    ( f = rangePredicate(grp) )              |
+    ( f = istruePredicate(grp) ))
+    { return f; }
+}
+
+RegexPredicate regexPredicate(GroupingOperation grp) :
+{
+    String pattern;
+    GroupingExpression exp;
+}
+{
+    <REGEX> lbrace() pattern = string() comma() exp = exp(grp) rbrace()
+    { return new RegexPredicate(pattern, exp); }
+}
+
+RangePredicate rangePredicate(GroupingOperation grp) :
+{
+    Number lower;
+    Number upper;
+    GroupingExpression exp;
+    BooleanValue lowerInclusive = new BooleanValue(true);
+    BooleanValue upperInclusive = new BooleanValue(false);
+}
+{
+    <RANGE> lbrace() lower = number() comma() upper = number() comma() exp = exp(grp) [ comma()  lowerInclusive = booleanValue() comma() upperInclusive = booleanValue() ] rbrace()
+    { return new RangePredicate(lower, upper, exp, lowerInclusive.getValue(), upperInclusive.getValue()); }
+}
+
+IsTruePredicate istruePredicate(GroupingOperation grp) :
+{
+    GroupingExpression exp;
+}
+{
+    <ISTRUE> lbrace() exp = exp(grp) rbrace()
+    { return new IsTruePredicate(exp); }
+}
+
+FilterExpression orPredicate(GroupingOperation grp) :
+{
+    FilterExpression left, right;
+    java.util.List<FilterExpression> args = new java.util.ArrayList<FilterExpression>();
+}
+{
+    ( left = andPredicate(grp) ( <OR> space() right = andPredicate(grp) { args.add(right); } )* )
+    {
+        if (args.isEmpty()) return left;
+        args.add(0, left);
+        return new OrPredicate(args);
+    }
+}
+
+FilterExpression andPredicate(GroupingOperation grp) :
+{
+    FilterExpression left, right;
+    java.util.List<FilterExpression> args = new java.util.ArrayList<FilterExpression>();
+}
+{
+    ( left = notPredicate(grp) ( <AND> space() right = notPredicate(grp) { args.add(right); } )* )
+    {
+        if (args.isEmpty()) return left;
+        args.add(0, left);
+        return new AndPredicate(args);
+    }
+}
+
+FilterExpression notPredicate(GroupingOperation grp) :
+{
+    FilterExpression inner;
+}
+{
+    ( <NOT> space() inner = notPredicate(grp) ) { return new NotPredicate(inner); }
+  | ( inner = filterPrimary(grp) )               { return inner; }
+}
+
 void bucket(GroupingOperation grp, BucketResolver resolver) :
 {
     ConstantValue from, to = null;
@@ -975,7 +1124,7 @@ BooleanValue booleanValue() :
 void byteValue(RawBuffer buffer) : { }
 {
     ( ( <INTEGER> { buffer.put(Byte.parseByte(token.image)); } ) |
-      ( <STRING> { buffer.put(token.image.getBytes()); } )
+      ( <STRING> { buffer.put(token.image.getBytes(StandardCharsets.UTF_8)); } )
     )
 }
 
@@ -988,7 +1137,7 @@ String string() :
     { return ret; }
 }
 
-String identifier() : 
+String identifier() :
 {
     String ret;
 }
@@ -1020,22 +1169,29 @@ String identifier() :
         <DOCIDNSSPECIFIC> |
         <EACH> |
         <EXP> |
+        <FILTER> |
         <FIXEDWIDTH> |
         <FLOOR> |
+        <GEO_DISTANCE> |
         <GROUP> |
         <HINT> |
         <HYPOT> |
         <IDENTIFIER> |
+        <ISTRUE> |
+        <KEEP> |
+        <KM> |
         <LOG> |
         <LOG1P> |
         <LOG10> |
         <MATH> |
         <MAX> |
         <MD5> |
+        <MILES> |
         <MIN> |
         <MOD> |
         <MUL> |
         <NEG> |
+        <NOT> |
         <NORMALIZESUBJECT> |
         <NOW> |
         <OR> |
@@ -1044,6 +1200,9 @@ String identifier() :
         <POW> |
         <PRECISION> |
         <PREDEFINED> |
+        <QUANTILES> |
+        <RANGE> |
+        <REGEX> |
         <RELEVANCE> |
         <REVERSE> |
         <SIN> |
@@ -1177,6 +1336,6 @@ void scolon() : { }
 }
 
 void space() : { }
-{ 
+{
     ( <SPACE> )*
 }

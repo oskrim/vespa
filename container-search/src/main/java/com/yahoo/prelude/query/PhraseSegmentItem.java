@@ -1,6 +1,7 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.prelude.query;
 
+import ai.vespa.searchlib.searchprotocol.protobuf.SearchProtocol;
 import com.yahoo.prelude.query.textualrepresentation.Discloser;
 
 import java.nio.ByteBuffer;
@@ -24,11 +25,11 @@ public class PhraseSegmentItem extends IndexedSegmentItem {
     public PhraseSegmentItem(AndSegmentItem andSegment) {
         super(andSegment.getRawWord(), andSegment.stringValue(), andSegment.isFromQuery(), andSegment.isStemmed(), andSegment.getOrigin());
         if (andSegment.getItemCount() > 0) {
-            WordItem w = (WordItem) andSegment.getItem(0);
+            TermItem w = (TermItem) andSegment.getItem(0);
             setIndexName(w.getIndexName());
             for (Iterator<Item> i = andSegment.getItemIterator(); i.hasNext();) {
-                WordItem word = (WordItem) i.next();
-                addWordItem(word);
+                TermItem word = (TermItem) i.next();
+                addIndexedItem(word);
             }
         }
     }
@@ -68,7 +69,7 @@ public class PhraseSegmentItem extends IndexedSegmentItem {
     public void setIndexName(String index) {
         super.setIndexName(index);
         for (Iterator<Item> i = getItemIterator(); i.hasNext();) {
-            WordItem word = (WordItem) i.next();
+            TermItem word = (TermItem) i.next();
             word.setIndexName(index);
         }
     }
@@ -82,19 +83,51 @@ public class PhraseSegmentItem extends IndexedSegmentItem {
         }
     }
 
+    @Override
+    public boolean acceptsItemsOfType(ItemType itemType) {
+        return itemType == ItemType.WORD ||
+               itemType == ItemType.WORD_ALTERNATIVES ||
+               itemType == ItemType.INT ||
+               itemType == ItemType.EXACT;
+    }
+
     /**
      * Adds subitem. The word will have its index name set to the index name
      * of this phrase. If the item is a word, it will simply be added,
      * if the item is a phrase, each of the words of the phrase will be added.
      *
-     * @throws IllegalArgumentException if the given item is not a WordItem or PhraseItem
+     * @throws IllegalArgumentException if the given item is not a TermItem or PhraseItem
      */
     @Override
     public void addItem(Item item) {
-        if (item instanceof WordItem) {
-            addWordItem((WordItem) item);
+        if (item instanceof WordItem || item instanceof PhraseSegmentItem || item instanceof WordAlternativesItem) {
+            addIndexedItem((IndexedItem) item);
+        } else if (item instanceof IntItem intItem) {
+            addIndexedItem(intItem.asWord());
         } else {
             throw new IllegalArgumentException("Can not add " + item + " to a segment phrase");
+        }
+    }
+
+    @Override
+    public void addItem(int index, Item item) {
+        if (item instanceof WordItem || item instanceof PhraseSegmentItem || item instanceof WordAlternativesItem) {
+            addIndexedItem(index, (IndexedItem) item);
+        } else if (item instanceof IntItem intItem) {
+            addIndexedItem(index, intItem.asWord());
+        } else {
+            throw new IllegalArgumentException("Can not add " + item + " to a phrase");
+        }
+    }
+
+    @Override
+    public Item setItem(int index, Item item) {
+        if (item instanceof WordItem || item instanceof PhraseSegmentItem || item instanceof WordAlternativesItem) {
+            return setIndexedItem(index, (IndexedItem) item);
+        } else if (item instanceof IntItem intItem) {
+            return setIndexedItem(index, intItem.asWord());
+        } else {
+            throw new IllegalArgumentException("Can not add " + item + " to a phrase");
         }
     }
 
@@ -105,42 +138,57 @@ public class PhraseSegmentItem extends IndexedSegmentItem {
         return extracted;
     }
 
-    private void addWordItem(WordItem word) {
+
+    private void addIndexedItem(IndexedItem word) {
         word.setIndexName(this.getIndexName());
-        super.addItem(word);
+        super.addItem((Item) word);
     }
 
-    // TODO: Override addItem(index,item), setItem(index,item)
+    private void addIndexedItem(int index, IndexedItem word) {
+        word.setIndexName(this.getIndexName());
+        if (word instanceof Item item) {
+            item.setWeight(this.getWeight());
+        }
+        super.addItem(index, (Item) word);
+    }
+
+    private Item setIndexedItem(int index, IndexedItem word) {
+        word.setIndexName(this.getIndexName());
+        if (word instanceof Item item) {
+            item.setWeight(this.getWeight());
+        }
+        return super.setItem(index, (Item) word);
+    }
 
     /**
-     * Returns a subitem as a word item
+     * Returns a subitem as a term item
      *
      * @param index the (0-base) index of the item to return
      * @throws IndexOutOfBoundsException if there is no subitem at index
      */
-    public WordItem getWordItem(int index) {
-        return (WordItem) getItem(index);
+    public TermItem getTermItem(int index) {
+        return (TermItem) getItem(index);
     }
 
     @Override
-    protected void encodeThis(ByteBuffer buffer) {
-        super.encodeThis(buffer); // takes care of index bytes
+    protected void encodeThis(ByteBuffer buffer, SerializationContext context) {
+        super.encodeThis(buffer, context); // takes care of index bytes
     }
 
     @Override
-    public int encode(ByteBuffer buffer) {
-        encodeThis(buffer);
-        return encodeContent(buffer, 1);
+    public int encode(ByteBuffer buffer, SerializationContext context) {
+        encodeThis(buffer, context);
+        return encodeContent(buffer, 1, context);
     }
 
-    public int encodeContent(ByteBuffer buffer) {
-        return encodeContent(buffer, 0);
+    public int encodeContent(ByteBuffer buffer, SerializationContext context) {
+        return encodeContent(buffer, 0, context);
     }
 
-    private int encodeContent(ByteBuffer buffer, int itemCount) {
+    private int encodeContent(ByteBuffer buffer, int itemCount, SerializationContext context) {
         for (Iterator<Item> i = getItemIterator(); i.hasNext();) {
             Item subitem = i.next();
-            itemCount += subitem.encode(buffer);
+            itemCount += subitem.encode(buffer, context);
         }
         return itemCount;
     }
@@ -165,9 +213,13 @@ public class PhraseSegmentItem extends IndexedSegmentItem {
     void appendContentsString(StringBuilder buffer) {
         buffer.append("'");
         for (Iterator<Item> i = getItemIterator(); i.hasNext();) {
-            WordItem wordItem = (WordItem) i.next();
-
-            buffer.append(wordItem.getWord());
+            var item = i.next();
+            if (item instanceof WordItem wordItem) {
+                buffer.append(wordItem.getWord());
+            } else {
+                item.appendHeadingString(buffer);
+                item.appendBodyString(buffer);
+            }
             if (i.hasNext()) {
                 buffer.append(" ");
             }
@@ -213,6 +265,19 @@ public class PhraseSegmentItem extends IndexedSegmentItem {
     @Override
     public int hashCode() {
         return Objects.hash(super.hashCode(), explicit);
+    }
+
+    @Override
+    SearchProtocol.QueryTreeItem toProtobuf(SerializationContext context) {
+        // PhraseSegmentItem should be converted to a phrase
+        var builder = SearchProtocol.ItemPhrase.newBuilder();
+        builder.setProperties(ToProtobuf.buildTermProperties(this, getIndexName()));
+        for (var child : items()) {
+            builder.addChildren(child.toProtobuf(context));
+        }
+        return SearchProtocol.QueryTreeItem.newBuilder()
+                .setItemPhrase(builder.build())
+                .build();
     }
 
 }

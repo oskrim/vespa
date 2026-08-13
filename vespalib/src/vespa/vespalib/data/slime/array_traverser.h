@@ -10,8 +10,8 @@ namespace vespalib::slime {
  * Interface used when traversing all the entries of an array value.
  **/
 struct ArrayTraverser {
-    virtual void entry(size_t idx, const Inspector &inspector) = 0;
-    virtual ~ArrayTraverser() {}
+    virtual void entry(size_t idx, const Inspector& inspector) = 0;
+    virtual ~ArrayTraverser() = default;
 };
 
 } // namespace vespalib::slime

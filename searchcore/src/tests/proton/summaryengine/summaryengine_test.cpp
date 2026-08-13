@@ -1,12 +1,12 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
-#include <vespa/vespalib/data/slime/slime.h>
+
 #include <vespa/searchcore/proton/summaryengine/summaryengine.h>
 #include <vespa/searchlib/engine/searchreply.h>
 #include <vespa/vespalib/data/databuffer.h>
 #include <vespa/vespalib/data/simple_buffer.h>
+#include <vespa/vespalib/data/slime/slime.h>
+#include <vespa/vespalib/gtest/gtest.h>
 #include <vespa/vespalib/util/compressor.h>
-#include <vespa/vespalib/testkit/test_kit.h>
-#include <vespa/vespalib/testkit/test_master.hpp>
 
 #include <vespa/log/log.h>
 
@@ -20,8 +20,7 @@ using vespalib::DataBuffer;
 using vespalib::Memory;
 using vespalib::compression::CompressionConfig;
 
-std::string
-getAnswer(size_t num, const char * reply = "myreply") {
+std::string getAnswer(size_t num, const char* reply = "myreply") {
     std::string s;
     s += "{";
     s += "  docsums: [";
@@ -30,10 +29,10 @@ getAnswer(size_t num, const char * reply = "myreply") {
             s += ",";
         }
         s += "{docsum:{long:";
-        s += vespalib::make_string("%zu", 982+i);
+        s += vespalib::make_string("%zu", 982 + i);
         s += ",str:'";
-        s+= reply;
-        s+= "'}}";
+        s += reply;
+        s += "'}}";
     }
     s += "  ]";
     s += "}";
@@ -44,38 +43,38 @@ namespace proton {
 
 namespace {
 std::string_view MYREPLY("myreply");
-Memory DOCSUMS("docsums");
-Memory DOCSUM("docsum");
-}
+Memory           DOCSUMS("docsums");
+Memory           DOCSUM("docsum");
+} // namespace
 
 class MySearchHandler : public ISearchHandler {
-    std::string _name;
+    std::string      _name;
     std::string_view _reply;
+
 public:
     explicit MySearchHandler(std::string name = "my", std::string_view reply = MYREPLY) noexcept
-        : _name(std::move(name)), _reply(reply)
-    {}
+        : _name(std::move(name)), _reply(reply) {}
 
-    DocsumReply::UP getDocsums(const DocsumRequest &request) override {
+    DocsumReply::UP getDocsums(const DocsumRequest& request) override {
         return std::make_unique<DocsumReply>(createSlimeReply(request.hits.size()));
     }
 
     vespalib::Slime::UP createSlimeReply(size_t count) {
         vespalib::Slime::UP response(std::make_unique<vespalib::Slime>());
-        Cursor &root = response->setObject();
-        Cursor &array = root.setArray(DOCSUMS);
-        const Symbol docsumSym = response->insert(DOCSUM);
+        Cursor&             root = response->setObject();
+        Cursor&             array = root.setArray(DOCSUMS);
+        const Symbol        docsumSym = response->insert(DOCSUM);
         for (size_t i = 0; i < count; i++) {
-            Cursor &docSumC = array.addObject();
+            Cursor&              docSumC = array.addObject();
             ObjectSymbolInserter inserter(docSumC, docsumSym);
-            Cursor &obj = inserter.insertObject();
-            obj.setLong("long", 982+i);
+            Cursor&              obj = inserter.insertObject();
+            obj.setLong("long", 982 + i);
             obj.setString("str", _reply);
         }
         return response;
     }
 
-    SearchReply::UP match(const SearchRequest &, vespalib::ThreadBundle &) const override {
+    SearchReply::UP match(const SearchRequest&, vespalib::ThreadBundle&) const override {
         return std::make_unique<SearchReply>();
     }
 };
@@ -98,7 +97,7 @@ public:
 
     DocsumReply::UP getReply(uint32_t millis) {
         std::unique_lock<std::mutex> guard(_lock);
-        auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(millis);
+        auto                         deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(millis);
         while (!_reply) {
             if (_cond.wait_until(guard, deadline) == std::cv_status::timeout) {
                 break;
@@ -112,8 +111,7 @@ MyDocsumClient::MyDocsumClient() = default;
 
 MyDocsumClient::~MyDocsumClient() = default;
 
-DocsumRequest::UP
-createRequest(size_t num = 1) {
+DocsumRequest::UP createRequest(size_t num = 1) {
     auto r = std::make_unique<DocsumRequest>();
     if (num == 1) {
         r->hits.emplace_back(GlobalId("aaaaaaaaaaaa"));
@@ -126,25 +124,25 @@ createRequest(size_t num = 1) {
     return r;
 }
 
-void assertSlime(const std::string_view &exp, const DocsumReply &reply) {
+void assertSlime(const std::string_view& exp, const DocsumReply& reply) {
     vespalib::Slime expSlime;
-    size_t used = JsonFormat::decode(exp, expSlime);
+    size_t          used = JsonFormat::decode(exp, expSlime);
     EXPECT_TRUE(used > 0);
     ASSERT_TRUE(reply.hasResult());
-    EXPECT_EQUAL(expSlime, reply.slime());
+    EXPECT_EQ(expSlime, reply.slime());
 }
 
-TEST("requireThatGetDocsumsExecute") {
-    int numSummaryThreads = 2;
+TEST(SummaryEngineTest, requireThatGetDocsumsExecute) {
+    int           numSummaryThreads = 2;
     SummaryEngine engine(numSummaryThreads);
-    auto handler = std::make_shared<MySearchHandler>();
-    DocTypeName dtnvfoo("foo");
+    auto          handler = std::make_shared<MySearchHandler>();
+    DocTypeName   dtnvfoo("foo");
     engine.putSearchHandler(dtnvfoo, handler);
 
     MyDocsumClient client;
     { // async call when engine running
         DocsumRequest::Source request(createRequest());
-        DocsumReply::UP reply = engine.getDocsums(std::move(request), client);
+        DocsumReply::UP       reply = engine.getDocsums(std::move(request), client);
         EXPECT_FALSE(reply);
         reply = client.getReply(10000);
         EXPECT_TRUE(reply);
@@ -153,38 +151,37 @@ TEST("requireThatGetDocsumsExecute") {
     engine.close();
     { // sync call when engine closed
         DocsumRequest::Source request(createRequest());
-        DocsumReply::UP reply = engine.getDocsums(std::move(request), client);
+        DocsumReply::UP       reply = engine.getDocsums(std::move(request), client);
         EXPECT_TRUE(reply);
         EXPECT_FALSE(reply->hasResult());
     }
 }
 
-TEST("requireThatHandlersAreStored") {
-    DocTypeName dtnvfoo("foo");
-    DocTypeName dtnvbar("bar");
-    int numSummaryThreads = 2;
+TEST(SummaryEngineTest, requireThatHandlersAreStored) {
+    DocTypeName   dtnvfoo("foo");
+    DocTypeName   dtnvbar("bar");
+    int           numSummaryThreads = 2;
     SummaryEngine engine(numSummaryThreads);
-    auto h1 = std::make_shared<MySearchHandler>("foo");
-    auto h2 = std::make_shared<MySearchHandler>("bar");
-    auto h3 = std::make_shared<MySearchHandler>("baz");
+    auto          h1 = std::make_shared<MySearchHandler>("foo");
+    auto          h2 = std::make_shared<MySearchHandler>("bar");
+    auto          h3 = std::make_shared<MySearchHandler>("baz");
     // not found
     EXPECT_FALSE(engine.getSearchHandler(dtnvfoo));
     EXPECT_FALSE(engine.removeSearchHandler(dtnvfoo));
     // put & get
     EXPECT_FALSE(engine.putSearchHandler(dtnvfoo, h1));
-    EXPECT_EQUAL(engine.getSearchHandler(dtnvfoo).get(), h1.get());
+    EXPECT_EQ(engine.getSearchHandler(dtnvfoo).get(), h1.get());
     EXPECT_FALSE(engine.putSearchHandler(dtnvbar, h2));
-    EXPECT_EQUAL(engine.getSearchHandler(dtnvbar).get(), h2.get());
+    EXPECT_EQ(engine.getSearchHandler(dtnvbar).get(), h2.get());
     // replace
     EXPECT_TRUE(engine.putSearchHandler(dtnvfoo, h3).get() == h1.get());
-    EXPECT_EQUAL(engine.getSearchHandler(dtnvfoo).get(), h3.get());
+    EXPECT_EQ(engine.getSearchHandler(dtnvfoo).get(), h3.get());
     // remove
-    EXPECT_EQUAL(engine.removeSearchHandler(dtnvfoo).get(), h3.get());
+    EXPECT_EQ(engine.removeSearchHandler(dtnvfoo).get(), h3.get());
     EXPECT_FALSE(engine.getSearchHandler(dtnvfoo));
 }
 
-bool
-assertDocsumReply(SummaryEngine &engine, const std::string &searchDocType, std::string_view expReply) {
+bool assertDocsumReply(SummaryEngine& engine, const std::string& searchDocType, std::string_view expReply) {
     DocsumRequest::UP request(createRequest());
     request->propertiesMap.lookupCreate(search::MapNames::MATCH).add("documentdb.searchdoctype", searchDocType);
     MyDocsumClient client;
@@ -194,14 +191,14 @@ assertDocsumReply(SummaryEngine &engine, const std::string &searchDocType, std::
     return true;
 }
 
-TEST("requireThatCorrectHandlerIsUsed") {
-    DocTypeName dtnvfoo("foo");
-    DocTypeName dtnvbar("bar");
-    DocTypeName dtnvbaz("baz");
+TEST(SummaryEngineTest, requireThatCorrectHandlerIsUsed) {
+    DocTypeName   dtnvfoo("foo");
+    DocTypeName   dtnvbar("bar");
+    DocTypeName   dtnvbaz("baz");
     SummaryEngine engine(1);
-    auto h1 = std::make_shared<MySearchHandler>("foo", "foo reply");
-    auto h2 = std::make_shared<MySearchHandler>("bar", "bar reply");
-    auto h3 = std::make_shared<MySearchHandler>("baz", "baz reply");
+    auto          h1 = std::make_shared<MySearchHandler>("foo", "foo reply");
+    auto          h2 = std::make_shared<MySearchHandler>("bar", "bar reply");
+    auto          h3 = std::make_shared<MySearchHandler>("baz", "baz reply");
     engine.putSearchHandler(dtnvfoo, h1);
     engine.putSearchHandler(dtnvbar, h2);
     engine.putSearchHandler(dtnvbaz, h3);
@@ -210,11 +207,12 @@ TEST("requireThatCorrectHandlerIsUsed") {
     EXPECT_TRUE(assertDocsumReply(engine, "bar", getAnswer(1, "bar reply")));
     EXPECT_TRUE(assertDocsumReply(engine, "baz", getAnswer(1, "baz reply")));
     EXPECT_TRUE(assertDocsumReply(engine, "not", getAnswer(1, "bar reply"))); // uses the first (sorted on name)
-    EXPECT_EQUAL(4ul, static_cast<metrics::LongCountMetric *>(engine.getMetrics().getMetric("count"))->getValue());
-    EXPECT_EQUAL(4ul, static_cast<metrics::LongCountMetric *>(engine.getMetrics().getMetric("docs"))->getValue());
-    EXPECT_LESS(0.0, static_cast<metrics::DoubleAverageMetric *>(engine.getMetrics().getMetric("latency"))->getAverage());
+    EXPECT_EQ(4ul, static_cast<metrics::LongCountMetric*>(engine.getMetrics().getMetric("count"))->getValue());
+    EXPECT_EQ(4ul, static_cast<metrics::LongCountMetric*>(engine.getMetrics().getMetric("docs"))->getValue());
+    EXPECT_LT(0.0,
+              static_cast<metrics::DoubleAverageMetric*>(engine.getMetrics().getMetric("latency"))->getAverage());
 }
 
-}
+} // namespace proton
 
-TEST_MAIN() { TEST_RUN_ALL(); }
+GTEST_MAIN_RUN_ALL_TESTS()

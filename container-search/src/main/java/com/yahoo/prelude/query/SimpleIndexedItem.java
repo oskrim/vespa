@@ -24,13 +24,23 @@ public abstract class SimpleIndexedItem extends SimpleTaggableItem implements In
     private String index = "";
 
     /** The name of the index this belongs to, or "" (never null) if not specified */
-    public String getIndexName() {
-        return index;
+    public String getIndexName() { return index; }
+
+    /**
+     * The *full* name of the field searched by this,
+     * which is prefixed by the parent name and a dot if this is inside a SameElement,
+     * and the same as getIndexName otherwise.
+     */
+    public String getFieldName() {
+        if (getParent() != null && getParent() instanceof SameElementItem sameElementParent)
+            return sameElementParent.getFieldName() + "." + getIndexName();
+        else
+            return getIndexName();
     }
 
     // encode index bytes
-    protected void encodeThis(ByteBuffer buffer) {
-        super.encodeThis(buffer);
+    protected void encodeThis(ByteBuffer buffer, SerializationContext context) {
+        super.encodeThis(buffer, context);
         putString(index, buffer);
     }
 

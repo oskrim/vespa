@@ -10,8 +10,6 @@ import org.junit.jupiter.api.Test;
 
 import static com.yahoo.config.model.test.TestUtil.joinLines;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class FleetControllerClusterTest {
 
@@ -100,27 +98,27 @@ public class FleetControllerClusterTest {
 
     @Test
     void default_cluster_feed_block_limits_are_set() {
-        assertLimits(0.75, 0.8, getConfigForBasicCluster());
+        assertLimits(0.75, 0.8, 0.80, getConfigForBasicCluster());
     }
 
     @Test
     void resource_limits_can_be_set_in_tuning() {
-        assertLimits(0.6, 0.7, getConfigForResourceLimitsTuning(0.6, 0.7));
-        assertLimits(0.6, 0.8, getConfigForResourceLimitsTuning(0.6, null));
-        assertLimits(0.75, 0.7, getConfigForResourceLimitsTuning(null, 0.7));
+        assertLimits(0.6, 0.7, 0.89, getConfigForResourceLimitsTuning(0.6, 0.7, 0.89));
+        assertLimits(0.6, 0.8, 0.83, getConfigForResourceLimitsTuning(0.6, null, 0.83));
+        assertLimits(0.75, 0.7, 0.79, getConfigForResourceLimitsTuning(null, 0.7, 0.79));
     }
 
     private static final double DELTA = 0.00001;
 
-    private void assertLimits(double expDisk, double expMemory, FleetcontrollerConfig config) {
+    private void assertLimits(double expDisk, double expMemory, double expAddressSpace, FleetcontrollerConfig config) {
         var limits = config.cluster_feed_block_limit();
         assertEquals(3, limits.size());
         assertEquals(expDisk, limits.get("disk"), DELTA);
         assertEquals(expMemory, limits.get("memory"), DELTA);
-        assertEquals(0.9, limits.get("attribute-address-space"), DELTA);
+        assertEquals(expAddressSpace, limits.get("attribute-address-space"), DELTA);
     }
 
-    private FleetcontrollerConfig getConfigForResourceLimitsTuning(Double diskLimit, Double memoryLimit) {
+    private FleetcontrollerConfig getConfigForResourceLimitsTuning(Double diskLimit, Double memoryLimit, Double addressSpaceLimit) {
         return parse(joinLines("<content id='storage' version='1.0'>" +
                                        "<documents>" +
                                        "<document type='type1' mode='index'/>" +
@@ -132,29 +130,8 @@ public class FleetControllerClusterTest {
                                (memoryLimit != null ? ("    <memory>" + memoryLimit + "</memory>") : ""),
                                "  </resource-limits>",
                                "</tuning>" +
-                                       "</content>"));
-    }
-
-    @Test
-    void feature_flag_controls_distribution_config_from_cluster_controller() {
-        // TODO change default
-        assertFalse(getConfigForBasicCluster(new TestProperties()).include_distribution_config_in_cluster_state_bundle());
-        assertFalse(getConfigForBasicCluster(new TestProperties().setDistributionConfigFromClusterController(false))
-                .include_distribution_config_in_cluster_state_bundle());
-        assertTrue(getConfigForBasicCluster(new TestProperties().setDistributionConfigFromClusterController(true))
-                .include_distribution_config_in_cluster_state_bundle());
-    }
-
-    @Test
-    void feature_flag_controls_min_node_ratio_per_group() {
-        verifyFeatureFlagControlsMinNodeRatioPerGroup(0.0, new TestProperties());
-        verifyFeatureFlagControlsMinNodeRatioPerGroup(0.3,
-                new TestProperties().setMinNodeRatioPerGroup(0.3));
-    }
-
-    private void verifyFeatureFlagControlsMinNodeRatioPerGroup(double expRatio, TestProperties props) {
-        var config = getConfigForBasicCluster(props);
-        assertEquals(expRatio, config.min_node_ratio_per_group(), DELTA);
+                                       "</content>"),
+                     new TestProperties().setResourceLimitAddressSpace(addressSpaceLimit));
     }
 
     private FleetcontrollerConfig getConfigForBasicCluster(TestProperties props) {

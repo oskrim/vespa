@@ -6,6 +6,8 @@ import java.io.File;
 import java.io.IOException;
 import java.io.StringWriter;
 import java.io.Writer;
+import java.nio.charset.StandardCharsets;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Arrays;
 import java.util.StringTokenizer;
@@ -58,7 +60,7 @@ public class CppClassBuilder implements ClassBuilder {
     }
 
     void writeFile(File f, String content) throws IOException {
-        FileWriter fw = new FileWriter(f);
+        FileWriter fw = new FileWriter(f, StandardCharsets.UTF_8);
         fw.write(content);
         fw.close();
     }
@@ -96,18 +98,13 @@ public class CppClassBuilder implements ClassBuilder {
         String [] parts = source.split("[-_]");
         StringBuilder sb = new StringBuilder();
         for (String s : parts) {
-            sb.append(s.substring(0, 1).toUpperCase()).append(s.substring(1));
+            sb.append(s.substring(0, 1).toUpperCase(Locale.ROOT)).append(s.substring(1));
         }
         String result = sb.toString();
         if (!capitalizeFirst) {
-            result = result.substring(0,1).toLowerCase() + result.substring(1);
+            result = result.substring(0,1).toLowerCase(Locale.ROOT) + result.substring(1);
         }
         return result;
-    }
-
-    /** Convert name of type to the name we want to use in macro ifdefs in file. */
-    String getDefineName(String name) {
-        return name.toUpperCase().replace("-", "");
     }
 
     /** Convert name of type to the name we want to use as type name in the generated code. */
@@ -201,16 +198,6 @@ public class CppClassBuilder implements ClassBuilder {
         return str.toString();
     }
 
-    String generateCppNameSpaceDefine(String[] namespaceList) {
-        StringBuilder str = new StringBuilder();
-        for (int i = 0; i < namespaceList.length - 1; i++) {
-            str.append(namespaceList[i].toUpperCase());
-            str.append("_");
-        }
-        str.append(namespaceList[namespaceList.length - 1].toUpperCase());
-        return str.toString();
-    }
-
     void writeNameSpaceBegin(Writer w, String [] namespaceList) throws IOException {
         w.write("namespace ");
         w.write(getNestedNameSpace(namespaceList));
@@ -230,10 +217,11 @@ public class CppClassBuilder implements ClassBuilder {
     void writeHeaderHeader(Writer w, CNode root) throws IOException {
         String [] namespaceList = generateCppNameSpace(root);
         String namespacePrint = generateCppNameSpaceString(namespaceList);
-        String namespaceDefine = generateCppNameSpaceDefine(namespaceList);
         String className = getTypeName(root, false);
-        String defineName = namespaceDefine + "_" + getDefineName(className);
         w.write(""
+                + "// ------------   D O   N O T   E D I T !   ------------\n"
+                + "// This file is generated from a config definition file.\n"
+                + "\n"
                 + "/**\n"
                 + " * @class " + namespacePrint + "::" + className + "\n"
                 + " * @ingroup config\n"
@@ -253,8 +241,7 @@ public class CppClassBuilder implements ClassBuilder {
         }
         w.write(""
                 + " */\n"
-                + "#ifndef CLOUD_CONFIG_" + defineName + "_H\n"
-                + "#define CLOUD_CONFIG_" + defineName + "_H\n"
+                + "#pragma once\n"
                 + "\n"
                 + "#include <vespa/config/configgen/configinstance.h>\n"
                 + "#include <vespa/config/common/types.h>\n"
@@ -562,10 +549,7 @@ public class CppClassBuilder implements ClassBuilder {
 
     void writeHeaderFooter(Writer w, CNode root) throws IOException {
         String [] namespaceList = generateCppNameSpace(root);
-        String namespaceDefine = generateCppNameSpaceDefine(namespaceList);
-
         String className = getTypeName(root, false);
-        String defineName = namespaceDefine + "_" + getDefineName(className);
 
         w.write(""
                 + "};\n"
@@ -576,7 +560,6 @@ public class CppClassBuilder implements ClassBuilder {
         w.write("typedef const internal::" + getInternalClassName(root) + " " + className + "Config;\n");
         w.write("\n");
         writeNameSpaceEnd(w, namespaceList);
-        w.write("#endif // VESPA_config_" + defineName + "_H\n");
     }
 
     void writeBodyFile(Writer w, CNode root, String subdir, NormalizedDefinition nd) throws IOException {
@@ -587,6 +570,9 @@ public class CppClassBuilder implements ClassBuilder {
     }
 
     void writeBodyHeader(Writer w, CNode root, String subdir) throws IOException {
+        w.write("// ------------   D O   N O T   E D I T !   ------------\n");
+        w.write("// This file is generated from a config definition file.\n");
+        w.write("\n");
         if (subdir == null) {
             w.write("#include \"" + getFileName(root, "h") + "\"");
         } else {

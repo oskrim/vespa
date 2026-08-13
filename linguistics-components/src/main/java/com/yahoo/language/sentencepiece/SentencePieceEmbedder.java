@@ -3,6 +3,7 @@ package com.yahoo.language.sentencepiece;
 
 import com.yahoo.api.annotations.Beta;
 import com.yahoo.component.annotation.Inject;
+import com.yahoo.language.process.LinguisticsParameters;
 import com.yahoo.language.tools.Embed;
 import com.yahoo.language.Language;
 import com.yahoo.language.process.Embedder;
@@ -53,18 +54,18 @@ public class SentencePieceEmbedder implements Segmenter, Embedder {
      * Segments the given text into token segments using the SentencePiece algorithm
      *
      * @param rawInput the text to segment. Any sequence of BMP (Unicode-16 the True Unicode) is supported.
-     * @param language the model to use, or Language.UNKNOWN to use the default model if any
+     * @param parameters the Language of these choose the model to use. Language.UNKNOWN chooses the default model if any
      * @return the list of zero or more tokens resulting from segmenting the input text
      */
     @Override
-    public List<String> segment(String rawInput, Language language) {
+    public List<String> segment(String rawInput, LinguisticsParameters parameters) {
         String input = normalize(rawInput);
         var resultBuilder = new ResultBuilder<List<String>>(new ArrayList<>()) {
             public void add(int segmentStart, int segmentEnd, SentencePieceAlgorithm.SegmentEnd[] segmentEnds) {
                 result().add(input.substring(segmentStart, segmentEnd));
             }
         };
-        segment(input, language, resultBuilder);
+        segment(input, parameters.language(), resultBuilder);
         Collections.reverse(resultBuilder.result());
         return resultBuilder.result();
     }
@@ -77,7 +78,7 @@ public class SentencePieceEmbedder implements Segmenter, Embedder {
      * @return the list of zero or more token ids resulting from segmenting the input text
      */
     @Override
-    public List<Integer> embed(String rawInput, Embedder.Context context) {
+    public List<Integer> embed(String rawInput, Context context) {
         var resultBuilder = new ResultBuilder<List<Integer>>(new ArrayList<>()) {
             public void add(int segmentStart, int segmentEnd, SentencePieceAlgorithm.SegmentEnd[] segmentEnds) {
                 result().add(segmentEnds[segmentEnd].id);
@@ -96,11 +97,11 @@ public class SentencePieceEmbedder implements Segmenter, Embedder {
      * @return the string formed by decoding the tokens back to their string representation
      */
     @Override
-    public String decode(List<Integer> tokens, Embedder.Context context) {
+    public String decode(List<Integer> tokens, Context context) {
         return decode(tokens, context, false);
     }
 
-    public String decode(List<Integer> tokens, Embedder.Context context, boolean skipControl) {
+    public String decode(List<Integer> tokens, Context context, boolean skipControl) {
         Model model = resolveModelFrom(context.getLanguage());
         StringBuilder sb = new StringBuilder();
         for (var tokenId : tokens) {
@@ -127,7 +128,7 @@ public class SentencePieceEmbedder implements Segmenter, Embedder {
      * @return the list of zero or more token ids resulting from segmenting the input text
      */
     @Override
-    public Tensor embed(String rawInput, Embedder.Context context, TensorType type) {
+    public Tensor embed(String rawInput, Context context, TensorType type) {
         return Embed.asTensor(rawInput, this, context, type);
     }
 

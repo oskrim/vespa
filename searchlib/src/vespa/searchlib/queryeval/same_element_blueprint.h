@@ -3,49 +3,56 @@
 #pragma once
 
 #include "blueprint.h"
+
 #include <vespa/searchlib/fef/matchdatalayout.h>
 
-namespace search::fef { class TermFieldMatchData; }
+namespace search::fef {
+class TermFieldMatchData;
+}
 
 namespace search::queryeval {
 
 class SameElementSearch;
 
-class SameElementBlueprint : public ComplexLeafBlueprint
-{
+class SameElementBlueprint : public IntermediateBlueprint {
 private:
-    HitEstimate                _estimate;
-    fef::MatchDataLayout       _layout;
-    std::vector<Blueprint::UP> _terms;
-    std::string           _field_name;
+    FieldSpec                                 _field;
+    std::vector<search::fef::TermFieldHandle> _descendants_index_handles; // handles with early unpack
+    bool                                      _expensive;
+    bool                                      _expose_match_data_for_same_element;
+    std::vector<uint32_t>                     _element_filter;
+    AnyFlow my_flow(InFlow in_flow) const override;
+    FlowStats self_flow_stats(double est, size_t num_children) const override;
 
 public:
-    SameElementBlueprint(const FieldSpec &field, bool expensive);
-    SameElementBlueprint(const SameElementBlueprint &) = delete;
-    SameElementBlueprint &operator=(const SameElementBlueprint &) = delete;
+    SameElementBlueprint(const FieldSpec&                                 field,
+                         const std::vector<search::fef::TermFieldHandle>& descendants_index_handles, bool expensive,
+                         bool                  expose_match_data_for_same_element,
+                         std::vector<uint32_t> element_filter = std::vector<uint32_t>());
+    SameElementBlueprint(const SameElementBlueprint&) = delete;
+    SameElementBlueprint& operator=(const SameElementBlueprint&) = delete;
     ~SameElementBlueprint() override;
 
-    // no match data
-    bool isWhiteList() const noexcept final { return true; }
+    uint8_t calculate_cost_tier() const override;
+    SearchIteratorUP createSearchImpl(search::fef::MatchData& md) const override;
+    HitEstimate combine(const std::vector<HitEstimate>& data) const override;
+    FieldSpecBaseList exposeFields() const override;
+    void sort(Children& children, InFlow in_flow) const override;
 
-    // used by create visitor
-    FieldSpec getNextChildField(const std::string &field_name, uint32_t field_id);
-
-    // used by create visitor
-    void addTerm(Blueprint::UP term);
-
-    void sort(InFlow in_flow) override;
     FlowStats calculate_flow_stats(uint32_t docid_limit) const override;
-    
-    void optimize_self(OptimizePass pass) override;
-    void fetchPostings(const ExecuteInfo &execInfo) override;
+    bool always_needs_unpack() const override;
 
-    std::unique_ptr<SameElementSearch> create_same_element_search(search::fef::TermFieldMatchData& tfmd) const;
-    SearchIteratorUP createLeafSearch(const search::fef::TermFieldMatchDataArray &tfmda) const override;
-    SearchIteratorUP createFilterSearch(FilterConstraint constraint) const override;
-    void visitMembers(vespalib::ObjectVisitor &visitor) const override;
-    const std::vector<Blueprint::UP> &terms() const { return _terms; }
-    const std::string &field_name() const { return _field_name; }
+    std::unique_ptr<SameElementSearch> create_same_element_search(search::fef::MatchData&          md,
+                                                                  search::fef::TermFieldMatchData& tfmd) const;
+    std::unique_ptr<SearchIterator> createIntermediateSearch(MultiSearch::Children sub_searches,
+                                                             fef::MatchData&       md) const override;
+
+    SearchIteratorUP createFilterSearchImpl(FilterConstraint constraint) const override;
+    void visitMembers(vespalib::ObjectVisitor& visitor) const override;
+    const std::string& field_name() const noexcept { return _field.getName(); }
+    const FieldSpec& get_field() const noexcept { return _field; }
+
+    Blueprint::UP get_replacement() override;
 };
 
-}
+} // namespace search::queryeval

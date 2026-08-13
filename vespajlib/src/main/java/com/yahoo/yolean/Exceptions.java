@@ -14,7 +14,7 @@ import java.util.function.Function;
 public class Exceptions {
 
     /**
-     * <p>Returns a user friendly error message string which includes information from all nested exceptions.</p>
+     * <p>Returns a user-friendly error message string which includes information from all nested exceptions.</p>
      *
      * <p>The form of this string is
      * <code>e.getMessage(): e.getCause().getMessage(): e.getCause().getCause().getMessage()...</code>
@@ -54,11 +54,35 @@ public class Exceptions {
      * Returns the first cause or the given throwable that is an instance of {@code clazz}
      */
     public static <T extends Throwable> Optional<T> findCause(Throwable t, Class<T> clazz) {
+        return findCause(t, clazz, false);
+    }
+
+    /**
+    * Returns the root/innermost cause or the given throwable that is an instance of {@code clazz}
+    */
+    public static <T extends Throwable> Optional<T> findRootCause(Throwable t, Class<T> clazz) {
+        return findCause(t, clazz, true);
+    }
+
+    /**
+     * Returns the cause of a given throwable that is an instance of {@code clazz}.
+     * When {@code findRootCause} is false, the first cause found is returned. Otherwise, the root/innermost cause found is returned.
+     */
+    private static <T extends Throwable> Optional<T> findCause(Throwable t, Class<T> clazz, boolean findRootCause) {
+        T found = null;
         for (; t != null; t = t.getCause()) {
-            if (clazz.isInstance(t))
-                return Optional.of(clazz.cast(t));
+            if (clazz.isInstance(t)) {
+                found = clazz.cast(t);
+                if (!findRootCause) break;
+            }
         }
-        return Optional.empty();
+        return Optional.ofNullable(found);
+    }
+
+
+    @FunctionalInterface
+    public interface RunnableThrowingIOException {
+        void run() throws IOException;
     }
 
     /**
@@ -72,22 +96,6 @@ public class Exceptions {
         }
     }
 
-    public static void uncheckInterrupted(RunnableThrowingInterruptedException runnable) {
-        try {
-            runnable.run();
-        } catch (InterruptedException e) {
-            throw new UncheckedInterruptedException(e, false);
-        }
-    }
-
-    public static void uncheckInterruptedAndRestoreFlag(RunnableThrowingInterruptedException runnable) {
-        try {
-            runnable.run();
-        } catch (InterruptedException e) {
-            throw new UncheckedInterruptedException(e, true);
-        }
-    }
-
     /**
      * Wraps any IOException thrown from a runnable in an UncheckedIOException w/message.
      */
@@ -95,7 +103,7 @@ public class Exceptions {
         try {
             runnable.run();
         } catch (IOException e) {
-            String message = String.format(format, (Object[]) args);
+            String message = String.format(java.util.Locale.ROOT, format, (Object[]) args);
             throw new UncheckedIOException(message, e);
         }
     }
@@ -124,23 +132,21 @@ public class Exceptions {
     }
 
     @FunctionalInterface
-    public interface RunnableThrowingIOException {
-        void run() throws IOException;
+    public interface FunctionThrowingIOException<T, R> {
+        R map(T t) throws IOException;
     }
 
-    @FunctionalInterface public interface RunnableThrowingInterruptedException { void run() throws InterruptedException; }
-
-    /**
-     * Wraps any IOException thrown from a function in an UncheckedIOException.
-     */
+    /** Wraps any IOException thrown from a function in an UncheckedIOException. */
     public static <T, R> Function<T, R> uncheck(FunctionThrowingIOException<T, R> function) {
         return t -> uncheck(() -> function.map(t));
     }
-    @FunctionalInterface public interface FunctionThrowingIOException<T, R> { R map(T t) throws IOException; }
 
-    /**
-     * Wraps any IOException thrown from a supplier in an UncheckedIOException.
-     */
+    @FunctionalInterface
+    public interface SupplierThrowingIOException<T> {
+        T get() throws IOException;
+    }
+
+    /** Wraps any IOException thrown from a supplier in an UncheckedIOException. */
     public static <T> T uncheck(SupplierThrowingIOException<T> supplier) {
         try {
             return supplier.get();
@@ -149,14 +155,12 @@ public class Exceptions {
         }
     }
 
-    /**
-     * Wraps any IOException thrown from a supplier in an UncheckedIOException w/message.
-     */
+    /** Wraps any IOException thrown from a supplier in an UncheckedIOException w/message. */
     public static <T> T uncheck(SupplierThrowingIOException<T> supplier, String format, String... args) {
         try {
             return supplier.get();
         } catch (IOException e) {
-            String message = String.format(format, (Object[]) args);
+            String message = String.format(java.util.Locale.ROOT, format, (Object[]) args);
             throw new UncheckedIOException(message, e);
         }
     }
@@ -185,8 +189,38 @@ public class Exceptions {
     }
 
     @FunctionalInterface
-    public interface SupplierThrowingIOException<T> {
-        T get() throws IOException;
+    public interface RunnableThrowingInterruptedException {
+        void run() throws InterruptedException;
+    }
+
+    @FunctionalInterface
+    public interface SupplierThrowingInterruptedException<T> {
+        T get() throws InterruptedException;
+    }
+
+    public static void uncheckInterrupted(RunnableThrowingInterruptedException runnable) {
+        try {
+            runnable.run();
+        } catch (InterruptedException e) {
+            throw new UncheckedInterruptedException(e, false);
+        }
+    }
+
+    public static void uncheckInterruptedAndRestoreFlag(RunnableThrowingInterruptedException runnable) {
+        try {
+            runnable.run();
+        } catch (InterruptedException e) {
+            throw new UncheckedInterruptedException(e, true);
+        }
+    }
+
+    /** Wraps an InterruptedException in an UncheckedInterruptedException. */
+    public static <T> T uncheckInterrupted(SupplierThrowingInterruptedException<T> supplier) {
+        try {
+            return supplier.get();
+        } catch (InterruptedException e) {
+            throw new UncheckedInterruptedException(e);
+        }
     }
 
     /**

@@ -3,8 +3,9 @@
 package slime
 
 import (
-	"github.com/stretchr/testify/assert"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 type expectLeaf struct {
@@ -73,4 +74,15 @@ func TestData(t *testing.T) {
 	checkLeaf(t, Data(emptyBytes), expectLeaf{mytype: DATA})
 	checkLeaf(t, Data([]byte{1, 2, 3}), expectLeaf{mytype: DATA, dataVal: []byte{1, 2, 3}})
 	checkLeaf(t, Data([]byte{5, 6}), expectLeaf{mytype: DATA, dataVal: []byte{5, 6}})
+}
+
+func TestValidMultiPredicate(t *testing.T) {
+	a := Invalid
+	b := Bool(true)
+	c := Long(42)
+	assert.False(t, Valid(a, b, c))
+	assert.False(t, Valid(b, a, c))
+	assert.True(t, Valid(b, c))
+	assert.True(t, Valid(c))
+	assert.True(t, Valid())
 }

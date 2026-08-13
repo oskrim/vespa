@@ -4,12 +4,13 @@ package com.yahoo.config.model;
 import com.yahoo.component.Version;
 import com.yahoo.config.model.application.provider.ApplicationPackageXmlFilesValidator;
 import com.yahoo.config.model.application.provider.FilesApplicationPackage;
-import com.yahoo.config.model.deploy.DeployState;
+import com.yahoo.config.model.deploy.TestDeployState;
 import com.yahoo.schema.Schema;
 
 import java.io.File;
 import java.io.IOException;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Helper for tests using a file application package
@@ -23,7 +24,7 @@ public class ApplicationPackageTester {
     private ApplicationPackageTester(String applicationPackageDir, boolean validate) {
         try {
             FilesApplicationPackage applicationPackage =
-                    FilesApplicationPackage.fromFile(new File(applicationPackageDir));
+                    FilesApplicationPackage.fromDir(new File(applicationPackageDir), Map.of());
             if (validate) {
                 ApplicationPackageXmlFilesValidator validator =
                         ApplicationPackageXmlFilesValidator.create(new File(applicationPackageDir), new Version(6));
@@ -40,7 +41,7 @@ public class ApplicationPackageTester {
     public FilesApplicationPackage app() { return applicationPackage; }
 
     public List<Schema> getSchemas() {
-        return new DeployState.Builder().applicationPackage(app()).build().getSchemas();
+        return TestDeployState.create(app()).getSchemas();
     }
 
     public static ApplicationPackageTester create(String applicationPackageDir) {

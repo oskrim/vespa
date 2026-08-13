@@ -22,54 +22,31 @@ namespace vespalib {
 class BFloat16 {
 private:
     uint16_t _bits;
-    struct TwoU16 {
-        uint16_t u1;
-        uint16_t u2;
-    };
 
-    template<std::endian native_endian = std::endian::native>
     static constexpr uint16_t float_to_bits(float value) noexcept {
-        TwoU16 both{0,0};
-        static_assert(sizeof(TwoU16) == sizeof(float));
-        memcpy(&both, &value, sizeof(float));
-        if constexpr (native_endian == std::endian::big) {
-            return both.u1;
-        } else {
-            static_assert(native_endian == std::endian::little,
-                          "Unknown endian, cannot handle");
-            return both.u2;
-        }
+        const uint32_t as_u32 = std::bit_cast<uint32_t>(value);
+        return as_u32 >> 16;
     }
 
-    template<std::endian native_endian = std::endian::native>
     static constexpr float bits_to_float(uint16_t bits) noexcept {
-        TwoU16 both{0,0};
-        if constexpr (native_endian == std::endian::big) {
-            both.u1 = bits;
-        } else {
-            static_assert(native_endian == std::endian::little,
-                          "Unknown endian, cannot handle");
-            both.u2 = bits;
-        }
-        float result = 0.0;
-        static_assert(sizeof(TwoU16) == sizeof(float));
-        memcpy(&result, &both, sizeof(float));
-        return result;
+        const uint32_t as_u32 = static_cast<uint32_t>(bits) << 16;
+        return std::bit_cast<float>(as_u32);
     }
+
 public:
     constexpr BFloat16(float value) noexcept : _bits(float_to_bits(value)) {}
     BFloat16() noexcept = default;
     ~BFloat16() noexcept = default;
-    constexpr BFloat16(const BFloat16 &other) noexcept = default;
-    constexpr BFloat16(BFloat16 &&other) noexcept = default;
-    constexpr BFloat16& operator=(const BFloat16 &other) noexcept = default;
-    constexpr BFloat16& operator=(BFloat16 &&other) noexcept = default;
+    constexpr BFloat16(const BFloat16& other) noexcept = default;
+    constexpr BFloat16(BFloat16&& other) noexcept = default;
+    constexpr BFloat16& operator=(const BFloat16& other) noexcept = default;
+    constexpr BFloat16& operator=(BFloat16&& other) noexcept = default;
     constexpr BFloat16& operator=(float value) noexcept {
         _bits = float_to_bits(value);
         return *this;
     }
 
-    constexpr operator float () const noexcept { return bits_to_float(_bits); }
+    constexpr operator float() const noexcept { return bits_to_float(_bits); }
 
     constexpr float to_float() const noexcept { return bits_to_float(_bits); }
     constexpr void assign(float value) noexcept { _bits = float_to_bits(value); }
@@ -78,16 +55,16 @@ public:
     constexpr void assign_bits(uint16_t value) noexcept { _bits = value; }
 };
 
-}
+} // namespace vespalib
 
 namespace std {
-template<> class numeric_limits<vespalib::BFloat16> {
+template <> class numeric_limits<vespalib::BFloat16> {
 public:
     static constexpr bool is_specialized = true;
     static constexpr bool is_signed = true;
     static constexpr bool is_integer = false;
     static constexpr bool is_exact = false;
-    static constexpr bool has_infinity = false;
+    static constexpr bool has_infinity = true;
     static constexpr bool has_quiet_NaN = true;
     static constexpr bool has_signaling_NaN = true;
     static constexpr bool has_denorm = true;
@@ -99,7 +76,7 @@ public:
     static constexpr bool tinyness_before = false;
 
     static constexpr std::float_round_style round_style = std::round_toward_zero;
-    static constexpr int radix = 2;
+    static constexpr int                    radix = 2;
 
     static constexpr int digits = 8;
     static constexpr int digits10 = 2;
@@ -117,15 +94,11 @@ public:
     static constexpr vespalib::BFloat16 max() noexcept { return 0x1.FEp127; }
     static constexpr vespalib::BFloat16 min() noexcept { return 0x1.0p-126; }
     static constexpr vespalib::BFloat16 round_error() noexcept { return 1.0; }
-    static constexpr vespalib::BFloat16 infinity() noexcept {
-        return std::numeric_limits<float>::infinity();
-    }
-    static constexpr vespalib::BFloat16 quiet_NaN() noexcept {
-        return std::numeric_limits<float>::quiet_NaN();
-    }
+    static constexpr vespalib::BFloat16 infinity() noexcept { return std::numeric_limits<float>::infinity(); }
+    static constexpr vespalib::BFloat16 quiet_NaN() noexcept { return std::numeric_limits<float>::quiet_NaN(); }
     static constexpr vespalib::BFloat16 signaling_NaN() noexcept {
         return std::numeric_limits<float>::signaling_NaN();
     }
 };
 
-}
+} // namespace std

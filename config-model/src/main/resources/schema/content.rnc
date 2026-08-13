@@ -13,14 +13,23 @@ MinRedundancy = element min-redundancy {
     xsd:integer { minInclusive = "1" maxInclusive = "65534" }
 }
 
+PseudoRowColumnMode = element pseudo-row-column-mode {
+    xsd:boolean
+}
+
 DistributionType = element distribution {
-    attribute type { string "strict" | string "loose" | string "legacy" }
+    attribute type { string "strict" | string "loose" | string "legacy" }? &
+    PseudoRowColumnMode?
 }
 
 BucketSplitting = element bucket-splitting {
     attribute max-documents { xsd:nonNegativeInteger }? &
     attribute max-size { xsd:nonNegativeInteger }? &
     attribute minimum-bits { xsd:nonNegativeInteger }?
+}
+
+MaxDocumentSize = element max-document-size {
+    xsd:string
 }
 
 MergeTuning = element merges {
@@ -41,6 +50,7 @@ VisitorTuning = element visitors {
     VisitorMaxConcurrent?
 }
 
+# TODO: Unused, remove in Vespa 9
 Maintenance = element maintenance {
     attribute start { xsd:string { pattern = "[0-9]{2}:[0-9]{2}" } },
     attribute stop { xsd:string { pattern = "[0-9]{2}:[0-9]{2}" } },
@@ -88,6 +98,7 @@ ClusterControllerTuning = element cluster-controller {
 DispatchTuning = element dispatch {
     element max-hits-per-partition { xsd:nonNegativeInteger }? &
     element dispatch-policy { string "round-robin" | string "adaptive" | string "random" | "best-of-random-2" | "latency-amortized-over-requests" | "latency-amortized-over-time"}? &
+    element prioritize-availability { xsd:boolean }? &
     element min-active-docs-coverage { xsd:double }? &
     element top-k-probability { xsd:double }?
 }
@@ -96,6 +107,7 @@ ClusterTuning = element tuning {
    DispatchTuning? &
    DistributionType? &
    BucketSplitting? &
+   MaxDocumentSize? &
    MergeTuning? &
    VisitorTuning? &
    ClusterControllerTuning? &
@@ -122,15 +134,19 @@ Content = element content {
     Documents? &
     ContentNodes? &
     TopGroup? &
-    Controllers?
+    Controllers? &
+    CoveragePolicy?
     # Contains experimental feature switches
     #Experimental?
 }
 
-Controllers =
-  element controllers {
+Controllers = element controllers {
     OptionalDedicatedNodes
-  }
+}
+
+CoveragePolicy = element coverage-policy {
+    xsd:string "group" | xsd:string "node"
+}
 
 ContentSearch = element search {
     element query-timeout { xsd:double { minInclusive = "0" } }? &
@@ -229,7 +245,8 @@ ContentNodes = element nodes {
     attribute vespamalloc-debug-stacktrace { xsd:NMTOKENS }? &
     (
       (
-        attribute count { xsd:positiveInteger | xsd:string } &
+        attribute count { xsd:positiveInteger | xsd:string }? &
+        attribute profile { xsd:string }? &
         attribute flavor { xsd:string }? &
         attribute required { xsd:boolean }? &
         attribute exclusive { xsd:boolean }? &

@@ -23,8 +23,8 @@ A new release of Vespa is made from this repository's master branch every mornin
 
 - Home page: [https://vespa.ai](https://vespa.ai)
 - Documentation: [https://docs.vespa.ai](https://docs.vespa.ai)
-- Continuous build: [https://factory.vespa.oath.cloud](https://factory.vespa.oath.cloud)
-- Run applications in the cloud for free: [https://cloud.vespa.ai](https://cloud.vespa.ai)
+- Continuous build: [https://factory.vespa.ai](https://factory.vespa.ai)
+- Run applications in the cloud for free: [vespa.ai/free-trial](https://vespa.ai/free-trial/)
 
 ## Table of contents
 
@@ -48,7 +48,7 @@ hundreds of thousands of queries from Vespa per second.
 
 ## Install
 
-Deploy your Vespa applications to the cloud service: [https://cloud.vespa.ai](https://cloud.vespa.ai),
+Deploy your Vespa applications to the cloud service: [console.vespa-cloud.com](https://console.vespa-cloud.com/),
 or run your own Vespa instance: [https://docs.vespa.ai/en/getting-started.html](https://docs.vespa.ai/en/getting-started.html)
 
 ## Usage
@@ -58,6 +58,7 @@ or run your own Vespa instance: [https://docs.vespa.ai/en/getting-started.html](
 - [Vespa APIs](https://docs.vespa.ai/en/api.html) is useful to understand how to interface with Vespa
 - Explore the [sample applications](https://github.com/vespa-engine/sample-apps/tree/master)
 - Follow the [Vespa Blog](https://blog.vespa.ai/) for feature updates / use cases
+- Join the [Vespa Slack community](https://slack.vespa.ai/) to ask questions and share feedback
 
 Full documentation is at [https://docs.vespa.ai](https://docs.vespa.ai).
 
@@ -122,6 +123,29 @@ mvn -v
     mvn install --threads 1C
 
 Use this if you only need to build the Java modules, otherwise follow the complete development guide above.
+
+### Run tests for shell scripts (on Mac)
+Shell scripts are tested with [BATS](https://bats-core.readthedocs.io/en/stable/).
+To run the tests locally, install the testing framework and its plugins.:
+```bash
+brew install node
+sudo npm install -g bats bats-assert bats-support bats-mock
+```
+Export the `BATS_PLUGIN_PATH` environment variable to point to the global npm modules directory, which contains the BATS plugins:
+```bash
+export BATS_PLUGIN_PATH="$(npm root -g)"
+```
+Then run all tests with the following command (from the root of the repository):
+```bash
+bats -r .
+```
+To run a specific test, use:
+```bash
+bats test_dir/test_name.bats
+```
+Tests can also be run in IntelliJ IDEA with the [BashSupport Pro](https://plugins.jetbrains.com/plugin/13841-bashsupport-pro)
+plugin. Ensure the `BATS_PLUGIN_PATH` environment variable is exported before launching the IDE
+to avoid setting it in each run configuration.
 
 ## License
 

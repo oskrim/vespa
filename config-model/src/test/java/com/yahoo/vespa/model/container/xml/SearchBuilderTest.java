@@ -20,7 +20,6 @@ import static com.yahoo.vespa.model.container.search.ContainerSearch.QUERY_PROFI
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
@@ -76,6 +75,7 @@ public class SearchBuilderTest extends ContainerModelBuilderTestBase {
                 "  <search />",
                 "  <handler id='" + myHandler + "'>",
                 "    <binding>" + SearchHandler.DEFAULT_BINDING.patternString() + "</binding>",
+                "    <binding>" + SearchHandler.DEFAULT_BINDING_NO_SLASH.patternString() + "</binding>",
                 "  </handler>",
                 nodesXml,
                 "</container>");
@@ -84,7 +84,7 @@ public class SearchBuilderTest extends ContainerModelBuilderTestBase {
 
         var discBindingsConfig = root.getConfig(JdiscBindingsConfig.class, "default");
         assertEquals(SearchHandler.DEFAULT_BINDING.patternString(), discBindingsConfig.handlers(myHandler).serverBindings(0));
-        assertNull(discBindingsConfig.handlers(SearchHandler.HANDLER_CLASSNAME));
+        assertEquals(SearchHandler.DEFAULT_BINDING_NO_SLASH.patternString(), discBindingsConfig.handlers(myHandler).serverBindings(1));
     }
 
     @Test
@@ -193,9 +193,9 @@ public class SearchBuilderTest extends ContainerModelBuilderTestBase {
 
         ContainerThreadpoolConfig config = root.getConfig(
                 ContainerThreadpoolConfig.class, "default/component/" + SearchHandler.HANDLER_CLASSNAME + "/threadpool@search-handler");
-        assertEquals(-2, config.maxThreads());
-        assertEquals(-2, config.minThreads());
-        assertEquals(-40, config.queueSize());
+        assertEquals(10, config.relativeMaxThreads());
+        assertEquals(10, config.relativeMinThreads());
+        assertEquals(40, config.relativeQueueSize());
     }
 
     @Test
@@ -225,7 +225,7 @@ public class SearchBuilderTest extends ContainerModelBuilderTestBase {
                 "<container id='default' version='1.0'>",
                 "  <search>",
                 "    <threadpool>",
-                "      <threads boost=\"10.2\">0.4</threads>",
+                "      <threads max=\"10.2\">0.4</threads>",
                 "      <queue>50</queue>",
                 "    </threadpool>",
                 "  </search>",
@@ -234,9 +234,9 @@ public class SearchBuilderTest extends ContainerModelBuilderTestBase {
         createModel(root, clusterElem);
         ContainerThreadpoolConfig config = root.getConfig(
                 ContainerThreadpoolConfig.class, "default/component/" + SearchHandler.HANDLER_CLASSNAME + "/threadpool@search-handler");
-        assertEquals(-10, config.maxThreads());
-        assertEquals(-1, config.minThreads());
-        assertEquals(-50, config.queueSize());
+        assertEquals(10.2, config.relativeMaxThreads());
+        assertEquals(0.4, config.relativeMinThreads());
+        assertEquals(50, config.relativeQueueSize());
     }
 
     @Test

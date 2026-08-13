@@ -9,14 +9,19 @@ import com.yahoo.config.application.api.ApplicationPackage;
 import com.yahoo.config.model.api.ConfigDefinitionRepo;
 import com.yahoo.config.model.api.Quota;
 import com.yahoo.config.model.api.TenantSecretStore;
+import com.yahoo.config.model.api.TenantVault;
 import com.yahoo.config.provision.AllocatedHosts;
 import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.AthenzDomain;
 import com.yahoo.config.provision.CloudAccount;
+import com.yahoo.config.provision.CloudResourceTags;
 import com.yahoo.config.provision.DataplaneToken;
 import com.yahoo.config.provision.DockerImage;
+import com.yahoo.config.provision.TelemetryExporterConfiguration;
 import com.yahoo.config.provision.TenantName;
+import com.yahoo.config.provision.serialization.TelemetryExporterConfigurationSerializer;
 import com.yahoo.path.Path;
+import com.yahoo.slime.Slime;
 import com.yahoo.slime.SlimeUtils;
 import com.yahoo.text.Utf8;
 import com.yahoo.transaction.Transaction;
@@ -26,16 +31,19 @@ import com.yahoo.vespa.config.server.filedistribution.AddFileInterface;
 import com.yahoo.vespa.config.server.filedistribution.MockFileManager;
 import com.yahoo.vespa.config.server.session.Session.Status;
 import com.yahoo.vespa.config.server.tenant.CloudAccountSerializer;
+import com.yahoo.vespa.config.server.tenant.CloudResourceTagsSerializer;
 import com.yahoo.vespa.config.server.tenant.DataplaneTokenSerializer;
 import com.yahoo.vespa.config.server.tenant.OperatorCertificateSerializer;
 import com.yahoo.vespa.config.server.tenant.TenantRepository;
 import com.yahoo.vespa.config.server.tenant.TenantSecretStoreSerializer;
+import com.yahoo.vespa.config.server.tenant.TenantVaultSerializer;
 import com.yahoo.vespa.config.server.zookeeper.ZKApplication;
 import com.yahoo.vespa.config.server.zookeeper.ZKApplicationPackage;
 import com.yahoo.vespa.curator.Curator;
 import com.yahoo.vespa.curator.transaction.CuratorOperations;
 import com.yahoo.vespa.curator.transaction.CuratorTransaction;
 import org.apache.zookeeper.data.Stat;
+
 import java.security.cert.X509Certificate;
 import java.time.Duration;
 import java.time.Instant;
@@ -44,17 +52,21 @@ import java.util.Optional;
 import java.util.logging.Level;
 
 import static com.yahoo.vespa.config.server.session.SessionData.ACTIVATION_TRIGGERS_PATH;
+import static com.yahoo.vespa.config.server.session.SessionData.TELEMETRY_EXPORT_CONFIG_PATH;
 import static com.yahoo.vespa.config.server.session.SessionData.APPLICATION_ID_PATH;
 import static com.yahoo.vespa.config.server.session.SessionData.APPLICATION_PACKAGE_REFERENCE_PATH;
 import static com.yahoo.vespa.config.server.session.SessionData.ATHENZ_DOMAIN;
 import static com.yahoo.vespa.config.server.session.SessionData.CLOUD_ACCOUNT_PATH;
+import static com.yahoo.vespa.config.server.session.SessionData.CLOUD_RESOURCE_TAGS_PATH;
 import static com.yahoo.vespa.config.server.session.SessionData.CREATE_TIME_PATH;
 import static com.yahoo.vespa.config.server.session.SessionData.DATAPLANE_TOKENS_PATH;
 import static com.yahoo.vespa.config.server.session.SessionData.DOCKER_IMAGE_REPOSITORY_PATH;
+import static com.yahoo.vespa.config.server.session.SessionData.VERSION_TO_BUILD_FIRST_PATH;
 import static com.yahoo.vespa.config.server.session.SessionData.OPERATOR_CERTIFICATES_PATH;
 import static com.yahoo.vespa.config.server.session.SessionData.QUOTA_PATH;
 import static com.yahoo.vespa.config.server.session.SessionData.SESSION_DATA_PATH;
 import static com.yahoo.vespa.config.server.session.SessionData.TENANT_SECRET_STORES_PATH;
+import static com.yahoo.vespa.config.server.session.SessionData.TENANT_VAULTS_PATH;
 import static com.yahoo.vespa.config.server.session.SessionData.VERSION_PATH;
 import static com.yahoo.vespa.config.server.zookeeper.ZKApplication.USER_DEFCONFIGS_ZK_SUBPATH;
 import static com.yahoo.vespa.curator.Curator.CompletionWaiter;
@@ -100,8 +112,8 @@ public class SessionZooKeeperClient {
     }
 
     public void writeStatus(Session.Status sessionStatus) {
-        try {
-            createWriteStatusTransaction(sessionStatus).commit();
+        try (var transaction = createWriteStatusTransaction(sessionStatus)) {
+            transaction.commit();
         } catch (Exception e) {
             throw new RuntimeException("Unable to write session status", e);
         }
@@ -187,9 +199,9 @@ public class SessionZooKeeperClient {
         return sessionPath.append(APPLICATION_PACKAGE_REFERENCE_PATH);
     }
 
-    private Path versionPath() {
-        return sessionPath.append(VERSION_PATH);
-    }
+    private Path versionPath() { return sessionPath.append(VERSION_PATH); }
+
+    private Path versionToBuildFirstPath() { return sessionPath.append(VERSION_TO_BUILD_FIRST_PATH); }
 
     private Path dockerImageRepositoryPath() {
         return sessionPath.append(DOCKER_IMAGE_REPOSITORY_PATH);
@@ -201,6 +213,10 @@ public class SessionZooKeeperClient {
 
     private Path quotaPath() {
         return sessionPath.append(QUOTA_PATH);
+    }
+
+    private Path tenantVaultPath() {
+        return sessionPath.append(TENANT_VAULTS_PATH);
     }
 
     private Path tenantSecretStorePath() {
@@ -215,12 +231,20 @@ public class SessionZooKeeperClient {
         return sessionPath.append(CLOUD_ACCOUNT_PATH);
     }
 
+    private Path cloudResourceTagsPath() {
+        return sessionPath.append(CLOUD_RESOURCE_TAGS_PATH);
+    }
+
     private Path dataplaneTokensPath() {
         return sessionPath.append(DATAPLANE_TOKENS_PATH);
     }
 
     public void writeVespaVersion(Version version) {
        curator.set(versionPath(), Utf8.toBytes(version.toString()));
+    }
+
+    public void writeVersionToBuildFirst    (Optional<Version> version) {
+        version.ifPresent(v -> curator.set(versionToBuildFirstPath(), Utf8.toBytes(v.toString())));
     }
 
     public void writeSessionData(SessionData sessionData) {
@@ -241,6 +265,11 @@ public class SessionZooKeeperClient {
                        log.log(Level.WARNING, "No Vespa version found for session at " + versionPath().getAbsolute() + "," + "returning current Vtag version");
                        return Vtag.currentVersion;
                    });
+    }
+
+    public Optional<Version> readVersionToBuildFirst() {
+        Optional<byte[]> data = curator.getData(versionToBuildFirstPath());
+        return data.map(d -> Version.fromString(Utf8.toString(d)));
     }
 
     public Optional<DockerImage> readDockerImageRepository() {
@@ -267,7 +296,7 @@ public class SessionZooKeeperClient {
                    });
     }
 
-    public Instant readActivatedTime() {
+    public Instant readStatusChanged() {
         Optional<Stat> statData = curator.getStat(sessionStatusPath);
         return statData.map(s -> Instant.ofEpochMilli(s.getMtime())).orElse(Instant.EPOCH);
     }
@@ -315,6 +344,20 @@ public class SessionZooKeeperClient {
                       .map(slime -> Quota.fromSlime(slime.get()));
     }
 
+    public void writeTenantVaults(List<TenantVault> tenantVaults) {
+        if (! tenantVaults.isEmpty()) {
+            var bytes = uncheck(() -> SlimeUtils.toJsonBytes(TenantVaultSerializer.toSlime(tenantVaults)));
+            curator.set(tenantVaultPath(), bytes);
+        }
+    }
+
+    public List<TenantVault> readTenantVaults() {
+        return curator.getData(tenantVaultPath())
+                .map(SlimeUtils::jsonToSlime)
+                .map(slime -> TenantVaultSerializer.listFromSlime(slime.get()))
+                .orElse(List.of());
+    }
+
     public void writeTenantSecretStores(List<TenantSecretStore> tenantSecretStores) {
         if (!tenantSecretStores.isEmpty()) {
             var bytes = uncheck(() -> SlimeUtils.toJsonBytes(TenantSecretStoreSerializer.toSlime(tenantSecretStores)));
@@ -356,6 +399,22 @@ public class SessionZooKeeperClient {
         return curator.getData(cloudAccountPath()).map(SlimeUtils::jsonToSlime).map(slime -> CloudAccountSerializer.fromSlime(slime.get()));
     }
 
+    public void writeCloudResourceTags(CloudResourceTags cloudResourceTags) {
+        if ( ! cloudResourceTags.isEmpty()) {
+            Slime slime = new Slime();
+            CloudResourceTagsSerializer.toSlime(cloudResourceTags, slime.setObject());
+            byte[] data = uncheck(() -> SlimeUtils.toJsonBytes(slime));
+            curator.set(cloudResourceTagsPath(), data);
+        }
+    }
+
+    public CloudResourceTags readCloudResourceTags() {
+        return curator.getData(cloudResourceTagsPath())
+                      .map(SlimeUtils::jsonToSlime)
+                      .map(slime -> CloudResourceTagsSerializer.fromSlime(slime.get()))
+                      .orElse(CloudResourceTags.empty());
+    }
+
     public void writeDataplaneTokens(List<DataplaneToken> dataplaneTokens) {
         byte[] data = uncheck(() -> SlimeUtils.toJsonBytes(DataplaneTokenSerializer.toSlime(dataplaneTokens)));
         curator.set(dataplaneTokensPath(), data);
@@ -379,6 +438,16 @@ public class SessionZooKeeperClient {
                           log.log(Level.WARNING, "No activation triggers found for session at " + sessionPath.append(ACTIVATION_TRIGGERS_PATH).getAbsolute() + ", returning empty");
                           return ActivationTriggers.empty();
                       });
+    }
+
+    public void writeTelemetryExportConfig(TelemetryExporterConfiguration config) {
+        curator.set(sessionPath.append(TELEMETRY_EXPORT_CONFIG_PATH), TelemetryExporterConfigurationSerializer.toJson(config));
+    }
+
+    public TelemetryExporterConfiguration readTelemetryExporterConfiguration() {
+        return curator.getData(sessionPath.append(TELEMETRY_EXPORT_CONFIG_PATH))
+                      .map(TelemetryExporterConfigurationSerializer::fromJson)
+                      .orElse(TelemetryExporterConfiguration.empty());
     }
 
     /**

@@ -4,7 +4,6 @@ package com.yahoo.vespa.model.content.storagecluster;
 import com.yahoo.config.model.api.ModelContext;
 import com.yahoo.vespa.config.content.StorFilestorConfig;
 import com.yahoo.vespa.model.builder.xml.dom.ModelElement;
-import com.yahoo.vespa.model.content.cluster.ContentCluster;
 
 /**
  * Serves stor-filestor for storage clusters.
@@ -12,8 +11,8 @@ import com.yahoo.vespa.model.content.cluster.ContentCluster;
 public class FileStorProducer implements StorFilestorConfig.Producer {
 
     public static class Builder {
-        protected FileStorProducer build(ModelContext.Properties properties, ContentCluster parent, ModelElement clusterElem) {
-            return new FileStorProducer(properties.featureFlags(), parent, getThreads(clusterElem));
+        protected FileStorProducer build(ModelContext.Properties properties, ModelElement clusterElem) {
+            return new FileStorProducer(properties.featureFlags(), getThreads(clusterElem));
         }
 
        private Integer getThreads(ModelElement clusterElem) {
@@ -43,11 +42,10 @@ public class FileStorProducer implements StorFilestorConfig.Producer {
     }
 
     private final Integer numThreads;
-    private final ContentCluster cluster;
     private final int responseNumThreads;
     private final StorFilestorConfig.Response_sequencer_type.Enum responseSequencerType;
     private final boolean useAsyncMessageHandlingOnSchedule;
-    private final int persistenceThreadMaxFeedOpBatchSize;
+    private final int maxContentNodeMaintenanceOpConcurrency;
 
     private static StorFilestorConfig.Response_sequencer_type.Enum convertResponseSequencerType(String sequencerType) {
         try {
@@ -57,13 +55,12 @@ public class FileStorProducer implements StorFilestorConfig.Producer {
         }
     }
 
-    public FileStorProducer(ModelContext.FeatureFlags featureFlags, ContentCluster parent, Integer numThreads) {
+    public FileStorProducer(ModelContext.FeatureFlags featureFlags, Integer numThreads) {
         this.numThreads = numThreads;
-        this.cluster = parent;
         this.responseNumThreads = featureFlags.defaultNumResponseThreads();
         this.responseSequencerType = convertResponseSequencerType(featureFlags.responseSequencerType());
         this.useAsyncMessageHandlingOnSchedule = featureFlags.useAsyncMessageHandlingOnSchedule();
-        this.persistenceThreadMaxFeedOpBatchSize = featureFlags.persistenceThreadMaxFeedOpBatchSize();
+        this.maxContentNodeMaintenanceOpConcurrency = featureFlags.maxContentNodeMaintenanceOpConcurrency();
     }
 
 
@@ -77,7 +74,12 @@ public class FileStorProducer implements StorFilestorConfig.Producer {
         builder.use_async_message_handling_on_schedule(useAsyncMessageHandlingOnSchedule);
         var throttleBuilder = new StorFilestorConfig.Async_operation_throttler.Builder();
         builder.async_operation_throttler(throttleBuilder);
-        builder.max_feed_op_batch_size(persistenceThreadMaxFeedOpBatchSize);
+        if (maxContentNodeMaintenanceOpConcurrency > 0) {
+            var maintenanceThrottleBuilder = new StorFilestorConfig.Maintenance_operation_throttler.Builder();
+            maintenanceThrottleBuilder.type(StorFilestorConfig.Maintenance_operation_throttler.Type.DYNAMIC);
+            maintenanceThrottleBuilder.max_window_size(maxContentNodeMaintenanceOpConcurrency);
+            builder.maintenance_operation_throttler(maintenanceThrottleBuilder);
+        }
     }
 
 }

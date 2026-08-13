@@ -2,16 +2,17 @@
 package com.yahoo.vespa.model.content;
 
 import com.yahoo.config.model.api.ModelContext;
-import com.yahoo.config.model.deploy.DeployState;
+import com.yahoo.config.provision.ClusterSpec;
+import com.yahoo.config.provision.NodeResources;
 import com.yahoo.vespa.config.content.core.StorDistributormanagerConfig;
 import com.yahoo.vespa.config.content.core.StorServerConfig;
-import com.yahoo.config.model.producer.AnyConfigProducer;
-import com.yahoo.config.model.producer.TreeConfigProducer;
-import com.yahoo.vespa.model.builder.xml.dom.ModelElement;
-import com.yahoo.vespa.model.builder.xml.dom.VespaDomBuilder;
 import com.yahoo.vespa.model.content.engines.PersistenceEngine;
-import org.w3c.dom.Element;
+import com.yahoo.vespa.model.utils.ResourceUtils;
+
 import java.util.Optional;
+
+import static com.yahoo.vespa.model.utils.ResourceUtils.GB;
+import static com.yahoo.vespa.model.utils.ResourceUtils.GiB;
 
 /**
  * Represents specific configuration for a given distributor node.
@@ -20,37 +21,16 @@ public class Distributor extends ContentNode implements StorDistributormanagerCo
 
     PersistenceEngine provider;
 
-    public static class Builder extends VespaDomBuilder.DomConfigProducerBuilder<Distributor, Distributor> {
-        ModelElement clusterXml;
-        PersistenceEngine persistenceProvider;
-
-        public Builder(ModelElement clusterXml, PersistenceEngine persistenceProvider) {
-            this.clusterXml = clusterXml;
-            this.persistenceProvider = persistenceProvider;
-        }
-
-        @Override
-        protected Distributor doBuild(DeployState deployState, TreeConfigProducer<Distributor> ancestor, Element producerSpec) {
-            return new Distributor(deployState.getProperties(), (DistributorCluster)ancestor, new ModelElement(producerSpec).integerAttribute("distribution-key"),
-                                   clusterXml.integerAttribute("distributor-base-port"), persistenceProvider);
-        }
-    }
-
-    Distributor(ModelContext.Properties properties, DistributorCluster parent, int distributionKey, Integer distributorBasePort, PersistenceEngine provider) {
+    public Distributor(ModelContext.Properties properties, DistributorCluster parent, int distributionKey, PersistenceEngine provider) {
         super(properties.featureFlags(), parent, parent.getClusterName(),
              StorageNode.rootFolder + parent.getClusterName() + "/distributor/" + distributionKey, distributionKey);
-
         this.provider = provider;
-
-        if (distributorBasePort != null) {
-            setBasePort(distributorBasePort);
-        }
+        setMallocImpl(properties.mallocImpl(Optional.of(ClusterSpec.Type.content)));
     }
 
     private int tuneNumDistributorStripes() {
-        if (getHostResource() != null &&
-                !getHostResource().realResources().isUnspecified()) {
-            int cores = (int)getHostResource().realResources().vcpu();
+        return maybeRealNodeResources().map(res -> {
+            int cores = (int)res.vcpu();
             // This should match the calculation used when node flavor is not available:
             // storage/src/vespa/storage/common/bucket_stripe_utils.cpp
             if (cores <= 16) {
@@ -60,9 +40,7 @@ public class Distributor extends ContentNode implements StorDistributormanagerCo
             } else {
                 return 4;
             }
-        } else {
-            return 0;
-        }
+        }).orElse(0); // Nodes use OS-reported CPU count instead
     }
 
     @Override
@@ -74,11 +52,27 @@ public class Distributor extends ContentNode implements StorDistributormanagerCo
     @Override
     public void getConfig(StorDistributormanagerConfig.Builder builder) {
         builder.num_distributor_stripes(tuneNumDistributorStripes());
+        maybeRealNodeResources().ifPresent(res -> {
+            // As fun as it would be to have 3.14 CPUs, the content layer deals in cold, unfeeling integers.
+            builder.hwinfo.cpu.cores((int)Math.ceil(res.vcpu()));
+            // For now, don't do any scaling of the memory reported to the distributor
+            builder.hwinfo.memory.size((long)(ResourceUtils.usableMemoryGb(res) * GiB)); // TODO Gb vs GiB?!
+            // The distributor does not use the disk in practice, but since we're already
+            // providing hardware info, we might as well pass it along.
+            builder.hwinfo.disk.size((long)(res.diskGb() * GB));
+        });
     }
 
     @Override
     public Optional<String> getStartupCommand() {
         return Optional.of("exec sbin/vespa-distributord -c $VESPA_CONFIG_ID");
+    }
+
+    protected Optional<NodeResources> maybeRealNodeResources() {
+        if (getHostResource() == null || getHostResource().realResources().isUnspecified()) {
+            return Optional.empty();
+        }
+        return Optional.of(getHostResource().realResources());
     }
 
 }

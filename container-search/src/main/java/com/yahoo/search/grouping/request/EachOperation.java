@@ -30,13 +30,15 @@ public class EachOperation extends GroupingOperation {
                           Map<String, GroupingExpression> aliases,
                           Set<String> hints,
                           GroupingExpression groupBy,
+                          FilterExpression filterBy,
                           String where,
                           boolean forceSinglePass,
                           double accuracy,
                           int precision,
                           int level,
                           int max) {
-        super(parentOfCopy, image, label, orderBy, outputs, children, aliases, hints, groupBy, where, forceSinglePass, accuracy, precision, level, max);
+        super(parentOfCopy, image, label, orderBy, outputs, children, aliases, hints, groupBy, filterBy,
+                where, forceSinglePass, accuracy, precision, level, max);
     }
 
     @Override
@@ -50,6 +52,7 @@ public class EachOperation extends GroupingOperation {
                                  getAliases(),
                                  getHints(),
                                  getGroupBy(),
+                                 getFilterBy(),
                                  getWhere(),
                                  getForceSinglePass(),
                                  getAccuracy(),
@@ -61,7 +64,7 @@ public class EachOperation extends GroupingOperation {
     @Override
     public void resolveLevel(int level) {
         if (level == 0) {
-            throw new IllegalArgumentException("Operation '" + this + "' can not operate on " + getLevelDesc(level) + ".");
+            throw new IllegalArgumentException("Operation '" + this + "' cannot operate on " + getLevelDesc(level) + ".");
         }
         super.resolveLevel(level - 1);
     }

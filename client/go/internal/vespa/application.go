@@ -4,6 +4,7 @@ package vespa
 import (
 	"archive/zip"
 	"bytes"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -22,12 +23,64 @@ type ApplicationPackage struct {
 
 func (ap *ApplicationPackage) HasCertificate() bool { return ap.hasFile("security", "clients.pem") }
 
+func processPEMEntries(data []byte) []*pem.Block {
+	blocks := []*pem.Block{}
+	var block *pem.Block
+	rest := data
+
+	for {
+		block, rest = pem.Decode(rest)
+		if block == nil {
+			break
+		}
+		blocks = append(blocks, block)
+	}
+
+	return blocks
+}
+
+func pemEqual(a, b *pem.Block) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	if a.Type != b.Type {
+		return false
+	}
+	if len(a.Headers) != len(b.Headers) {
+		return false
+	}
+	for k, v := range a.Headers {
+		if b.Headers[k] != v {
+			return false
+		}
+	}
+
+	return bytes.Equal(a.Bytes, b.Bytes)
+}
+
+func containsMatchingCertificate(certificatePem, clientsPem []byte) (bool, error) {
+	certPems := processPEMEntries(certificatePem)
+	if len(certPems) < 1 {
+		return false, fmt.Errorf("missing client certificate pem data in local certificate file")
+	}
+	clientPems := processPEMEntries(clientsPem)
+
+	for _, pem := range clientPems {
+		for _, certPem := range certPems {
+			if pemEqual(pem, certPem) {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
 func (ap *ApplicationPackage) HasMatchingCertificate(certificatePEM []byte) (bool, error) {
 	clientsPEM, err := os.ReadFile(filepath.Join(ap.Path, "security", "clients.pem"))
 	if err != nil {
 		return false, err
 	}
-	return bytes.Equal(clientsPEM, certificatePEM), nil
+	return containsMatchingCertificate(certificatePEM, clientsPEM)
 }
 
 func (ap *ApplicationPackage) HasDeploymentSpec() bool { return ap.hasFile("deployment.xml", "") }
@@ -84,11 +137,7 @@ func (ap *ApplicationPackage) Validate() error {
 func isZip(filename string) bool { return filepath.Ext(filename) == ".zip" }
 
 func alwaysIgnore(filename string) bool {
-	switch filepath.Base(filename) {
-	case ".DS_Store":
-		return true
-	}
-	return false
+	return filepath.Base(filename) == ".DS_Store"
 }
 
 func zipDir(dir string, destination string, ignores *ignore.List) error {
@@ -201,7 +250,11 @@ func (ap *ApplicationPackage) Unzip(test bool) (string, error) {
 	}
 	defer f.Close()
 	for _, f := range f.File {
+		// Normalize the file path and ensure it stays within the temp directory
 		dst := filepath.Join(tmp, f.Name)
+		if !strings.HasPrefix(filepath.Clean(dst), filepath.Clean(tmp)+string(os.PathSeparator)) {
+			return "", fmt.Errorf("illegal file path in archive: %s", f.Name)
+		}
 		if f.FileInfo().IsDir() {
 			if err := os.Mkdir(dst, f.FileInfo().Mode()); err != nil {
 				return "", err

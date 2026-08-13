@@ -5,6 +5,7 @@ vespa_add_library(eval_eval OBJECT
     array_array_map.cpp
     basic_nodes.cpp
     call_nodes.cpp
+    cell_order.cpp
     cell_type.cpp
     compile_tensor_function.cpp
     delete_node.cpp
@@ -16,6 +17,7 @@ vespa_add_library(eval_eval OBJECT
     feature_name_extractor.cpp
     function.cpp
     gbdt.cpp
+    inline_operation.cpp
     int8float.cpp
     interpreted_function.cpp
     key_gen.cpp

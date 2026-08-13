@@ -11,7 +11,9 @@ import org.junit.Test;
 import java.util.LinkedList;
 import java.util.List;
 
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertSame;
 
 /**
  * @author Simon Thoresen Hult
@@ -47,42 +49,12 @@ public class SelectInputTestCase {
     }
 
     @Test
-    public void requireThatExpressionCanBeVerified() {
-        SimpleTestAdapter adapter = new SimpleTestAdapter();
-        adapter.createField(new Field("my_int", DataType.INT));
-        adapter.createField(new Field("my_str", DataType.STRING));
-
-        Expression exp = newSelectInput(new AttributeExpression("my_int"), "my_int");
-        assertVerify(adapter, null, exp);
-        assertVerify(adapter, DataType.INT, exp);
-        assertVerify(adapter, DataType.STRING, exp);
-
-        assertVerifyThrows(adapter, newSelectInput(new AttributeExpression("my_int"), "my_str"),
-                           "Can not assign string to field 'my_int' which is int.");
-        assertVerifyThrows(adapter, newSelectInput(new AttributeExpression("my_int"), "my_unknown"),
-                           "Input field 'my_unknown' not found.");
-    }
-
-    @Test
     public void requireThatSelectedExpressionIsRun() {
         assertSelect(List.of("foo", "bar"), List.of("foo"), "foo");
         assertSelect(List.of("foo", "bar"), List.of("bar"), "bar");
         assertSelect(List.of("foo", "bar"), List.of("foo", "bar"), "foo");
         assertSelect(List.of("foo", "bar"), List.of("bar", "baz"), "bar");
         assertSelect(List.of("foo", "bar"), List.of("baz", "cox"), null);
-    }
-
-    private static void assertVerify(FieldTypeAdapter adapter, DataType value, Expression exp) {
-        assertEquals(value, exp.verify(new VerificationContext(adapter).setCurrentType(value)));
-    }
-
-    private static void assertVerifyThrows(FieldTypeAdapter adapter, Expression exp, String expectedException) {
-        try {
-            exp.verify(new VerificationContext(adapter));
-            fail();
-        } catch (VerificationException e) {
-            assertEquals(expectedException, e.getMessage());
-        }
     }
 
     private static SelectInputExpression newSelectInput(Expression exp, String... fieldNames) {

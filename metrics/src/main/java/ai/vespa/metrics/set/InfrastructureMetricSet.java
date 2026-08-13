@@ -23,12 +23,12 @@ import static ai.vespa.metrics.Suffix.sum;
 /**
  * Encapsulates vespa service metrics.
  *
- * @author yngveaasheim
+ * @author Yngve Aasheim
  */
 public class InfrastructureMetricSet {
 
     public static final MetricSet infrastructureMetricSet = new MetricSet("infrastructure",
-            getInfrastructureMetrics());
+            getInfrastructureMetrics(), Set.of(MicrometerMetrics.asMetricSet()));
 
     private static Set<Metric> getInfrastructureMetrics() {
         Set<Metric> metrics = new LinkedHashSet<>();
@@ -70,6 +70,8 @@ public class InfrastructureMetricSet {
         addMetric(metrics, ConfigServerMetrics.CLUSTER_LOAD_PEAK_CPU.max());
         addMetric(metrics, ConfigServerMetrics.CLUSTER_LOAD_PEAK_MEMORY.max());
         addMetric(metrics, ConfigServerMetrics.CLUSTER_LOAD_PEAK_DISK.max());
+        addMetric(metrics, ConfigServerMetrics.CLUSTER_BACKUP_AGE_FRACTION.last());
+        addMetric(metrics, ConfigServerMetrics.CLUSTER_SNAPSHOT_BUSY_SECONDS.max());
         addMetric(metrics, ConfigServerMetrics.NODES_EMPTY_EXCLUSIVE.max());
         addMetric(metrics, ConfigServerMetrics.NODES_EXPIRED_DEPROVISIONED.count());
         addMetric(metrics, ConfigServerMetrics.NODES_EXPIRED_DIRTY.count());
@@ -120,14 +122,17 @@ public class InfrastructureMetricSet {
         addMetric(metrics, ConfigServerMetrics.LOCK_ATTEMPT_LOCKED_LOAD, EnumSet.of(max, average));
         addMetric(metrics, ConfigServerMetrics.MAINTENANCE_SUCCESS_FACTOR_DEVIATION.max());
         addMetric(metrics, ConfigServerMetrics.MAINTENANCE_DURATION.max());
+        addMetric(metrics, ConfigServerMetrics.MAINTENANCE_CONGESTION.count());
         addMetric(metrics, ConfigServerMetrics.MAINTENANCE_DEPLOYMENT_FAILURE.count());
         addMetric(metrics, ConfigServerMetrics.MAINTENANCE_DEPLOYMENT_TRANSIENT_FAILURE.count());
+        addMetric(metrics, ConfigServerMetrics.MAINTENANCE_DEPLOYMENT_REASON.count());
         addMetric(metrics, ConfigServerMetrics.OVERCOMMITTED_HOSTS.max());
         addMetric(metrics, ConfigServerMetrics.SPARE_HOST_CAPACITY, EnumSet.of(min, max, last)); // TODO: Vespa 9: Remove last. WAIT
         addMetric(metrics, ConfigServerMetrics.THROTTLED_HOST_FAILURES.max());
         addMetric(metrics, ConfigServerMetrics.THROTTLED_NODE_FAILURES.max());
         addMetric(metrics, ConfigServerMetrics.NODE_FAIL_THROTTLING.max());
         addMetric(metrics, ConfigServerMetrics.CLUSTER_AUTOSCALED.count());
+        addMetric(metrics, ConfigServerMetrics.AUTOSCALE_SCALING_DURATION.max());
 
         addMetric(metrics, ConfigServerMetrics.ORCHESTRATOR_LOCK_ACQUIRE_SUCCESS.count());
         addMetric(metrics, ConfigServerMetrics.ORCHESTRATOR_LOCK_ACQUIRE_TIMEOUT.count());
@@ -144,7 +149,8 @@ public class InfrastructureMetricSet {
         addMetric(metrics, ContainerMetrics.MEM_HEAP_USED.average());
         addMetric(metrics, ContainerMetrics.SERVER_NUM_REQUESTS.count());
         addMetric(metrics, ContainerMetrics.SERVER_STARTED_MILLIS.max());
-        addMetric(metrics, ContainerMetrics.SERVER_TOTAL_SUCCESSFUL_RESPONSE_LATENCY.max());
+        addMetric(metrics, ContainerMetrics.JDISC_HTTP_LATENCY.max());
+        addMetric(metrics, ContainerMetrics.JETTY_HTTP_COMPLIANCE_VIOLATION.count());
 
         return metrics;
     }
@@ -170,6 +176,7 @@ public class InfrastructureMetricSet {
         addMetric(metrics, ControllerMetrics.DEPLOYMENT_FAILURE_PERCENTAGE.max());
         addMetric(metrics, ControllerMetrics.DEPLOYMENT_NODE_COUNT_BY_OS_VERSION.max());
         addMetric(metrics, ControllerMetrics.DEPLOYMENT_OS_CHANGE_DURATION.max());
+        addMetric(metrics, ControllerMetrics.DEPLOYMENT_QUOTA_EXCEEDED.count());
         addMetric(metrics, ControllerMetrics.DEPLOYMENT_START.count());
         addMetric(metrics, ControllerMetrics.DEPLOYMENT_SUCCESS.count());
         addMetric(metrics, ControllerMetrics.DEPLOYMENT_TEST_FAILURE.count());
@@ -188,15 +195,19 @@ public class InfrastructureMetricSet {
 
         addMetric(metrics, ControllerMetrics.REMAINING_ROTATIONS, EnumSet.of(min, max, last)); // TODO: Vespa 9: Remove last WAIT
         addMetric(metrics, ControllerMetrics.DNS_QUEUED_REQUESTS.max());
+        addMetric(metrics, ControllerMetrics.CLOUD_QUOTA_USAGE.max());
         addMetric(metrics, ControllerMetrics.ZMS_QUOTA_USAGE.max());
+        addMetric(metrics, ControllerMetrics.STRONGDM_RESOURCES.max());
         addMetric(metrics, ControllerMetrics.COREDUMP_PROCESSED.count());
         addMetric(metrics, ControllerMetrics.AUTH0_EXCEPTIONS.count());
         addMetric(metrics, ControllerMetrics.BILLING_CREDITS.last());
+        addMetric(metrics, ControllerMetrics.BILLING_CREDITS_GLOBAL.last());
         addMetric(metrics, ControllerMetrics.BILLING_EXCEPTIONS.count());
         addMetric(metrics, ControllerMetrics.BILLING_WEBHOOK_FAILURES.count());
         addMetric(metrics, ControllerMetrics.CERTIFICATE_POOL_AVAILABLE.max());
         addMetric(metrics, ControllerMetrics.CERTIFICATE_COUNT.max());
         addMetric(metrics, ControllerMetrics.CERTIFICATE_NAME_COUNT.max());
+        addMetric(metrics, ControllerMetrics.CERTIFICATE_REQUEST_EXCEPTIONS.count());
 
         addMetric(metrics, ControllerMetrics.METERING_AGE_SECONDS.min());
         addMetric(metrics, ControllerMetrics.METERING_LAST_REPORTED.max());
@@ -209,6 +220,18 @@ public class InfrastructureMetricSet {
         addMetric(metrics, ControllerMetrics.HUBSPOT_LAST_SUCCESS.last());
 
         addMetric(metrics, ControllerMetrics.TENANT_CREATED_LAST_SUCCESS.last());
+
+        addMetric(metrics, ControllerMetrics.ATLASSIAN_EXCEPTIONS.count());
+        addMetric(metrics, ControllerMetrics.ATLASSIAN_LAST_SUCCESS.last());
+        addMetric(metrics, ControllerMetrics.ATLASSIAN_ASSETS.max());
+        addMetric(metrics, ControllerMetrics.ATLASSIAN_SERVICEDESK_CUSTOMERS.max());
+
+        addMetric(metrics, ControllerMetrics.AWS_S3_POOL_LEASED_CONCURRENCY, EnumSet.of(max, sum, count));
+        addMetric(metrics, ControllerMetrics.AWS_S3_POOL_AVAILABLE_CONCURRENCY, EnumSet.of(max, sum, count));
+        addMetric(metrics, ControllerMetrics.AWS_S3_POOL_MAX_CONCURRENCY, EnumSet.of(max, sum, count));
+        addMetric(metrics, ControllerMetrics.AWS_S3_POOL_PENDING_CONCURRENCY_ACQUIRES, EnumSet.of(max, sum, count));
+        addMetric(metrics, ControllerMetrics.AWS_S3_POOL_CONCURRENCY_ACQUIRE_DURATION, EnumSet.of(max, sum, count));
+        addMetric(metrics, ControllerMetrics.AWS_S3_POOL_OPEN_STREAMS, EnumSet.of(max, sum, count));
 
         return metrics;
     }

@@ -22,13 +22,12 @@ import com.yahoo.document.fieldpathupdate.FieldPathUpdate;
 import com.yahoo.document.update.AssignValueUpdate;
 import com.yahoo.document.update.FieldUpdate;
 import com.yahoo.document.update.ValueUpdate;
-import com.yahoo.vespa.indexinglanguage.AdapterFactory;
-import com.yahoo.vespa.indexinglanguage.SimpleAdapterFactory;
-import com.yahoo.vespa.indexinglanguage.expressions.Expression;
+import com.yahoo.vespa.indexinglanguage.FieldValuesFactory;
 import com.yahoo.vespa.indexinglanguage.expressions.IndexExpression;
 import com.yahoo.vespa.indexinglanguage.expressions.InputExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.InvalidInputException;
+import com.yahoo.vespa.indexinglanguage.expressions.ScriptExpression;
 import com.yahoo.vespa.indexinglanguage.expressions.StatementExpression;
-import com.yahoo.vespa.indexinglanguage.parser.ParseException;
 import org.junit.Test;
 
 import java.util.ArrayList;
@@ -41,32 +40,32 @@ import static org.junit.Assert.fail;
 /**
  * @author Simon Thoresen Hult
  */
-@SuppressWarnings("unchecked")
+@SuppressWarnings({"unchecked", "deprecation", "removal"})
 public class DocumentScriptTestCase {
 
-    private static final AdapterFactory ADAPTER_FACTORY = new SimpleAdapterFactory();
+    private static final FieldValuesFactory fieldValuesFactory = new FieldValuesFactory();
 
     @Test
-    public void requireThatDocumentWithExtraFieldsThrow() throws ParseException {
-        assertFail("Field 'extraField' is not part of the declared document type 'documentType'.",
+    public void requireThatDocumentWithExtraFieldsThrow() {
+        assertFail("Field 'extraField' is not part of the declared document type 'documentType'",
                    newDocument(new StringFieldValue("foo"), new StringFieldValue("bar")));
-        assertFail("Field 'extraField' is not part of the declared document type 'documentType'.",
+        assertFail("Field 'extraField' is not part of the declared document type 'documentType'",
                    newDocument(null, new StringFieldValue("bar")));
     }
 
     @Test
-    public void requireThatFieldUpdateToExtraFieldsThrow() throws ParseException {
-        assertFail("Field 'extraField' is not part of the declared document type 'documentType'.",
+    public void requireThatFieldUpdateToExtraFieldsThrow() {
+        assertFail("Field 'extraField' is not part of the declared document type 'documentType'",
                    newFieldUpdate(new StringFieldValue("foo"), new StringFieldValue("bar")));
-        assertFail("Field 'extraField' is not part of the declared document type 'documentType'.",
+        assertFail("Field 'extraField' is not part of the declared document type 'documentType'",
                    newFieldUpdate(null, new StringFieldValue("bar")));
     }
 
     @Test
-    public void requireThatPathUpdateToExtraFieldsThrow() throws ParseException {
-        assertFail("Field 'extraField' is not part of the declared document type 'documentType'.",
+    public void requireThatPathUpdateToExtraFieldsThrow() {
+        assertFail("Field 'extraField' is not part of the declared document type 'documentType'",
                    newPathUpdate(new StringFieldValue("foo"), new StringFieldValue("bar")));
-        assertFail("Field 'extraField' is not part of the declared document type 'documentType'.",
+        assertFail("Field 'extraField' is not part of the declared document type 'documentType'",
                    newPathUpdate(null, new StringFieldValue("bar")));
     }
 
@@ -179,7 +178,7 @@ public class DocumentScriptTestCase {
         DocumentUpdate executeWithUpdate(String fieldName, FieldPathUpdate updateIn) {
             DocumentUpdate update = new DocumentUpdate(type, "id:ns:documentType::");
             update.addFieldPathUpdate(updateIn);
-            return newScript(type, fieldName).execute(ADAPTER_FACTORY, update);
+            return newScript(type, fieldName).execute(fieldValuesFactory, update, null);
         }
 
         FieldPathUpdate executeWithUpdateAndExpectFieldPath(String fieldName, FieldPathUpdate updateIn) {
@@ -239,7 +238,7 @@ public class DocumentScriptTestCase {
         docType.addField("myField", fieldValue.getDataType());
         Document doc = new Document(docType, "id:ns:myDocumentType::");
         doc.setFieldValue("myField", fieldValue.clone());
-        doc = newScript(docType).execute(ADAPTER_FACTORY, doc);
+        doc = newScript(docType).execute(fieldValuesFactory, doc, false, null);
         return doc.getFieldValue("myField");
     }
 
@@ -248,7 +247,7 @@ public class DocumentScriptTestCase {
         docType.addField("myField", fieldValue.getDataType());
         DocumentUpdate update = new DocumentUpdate(docType, "id:ns:myDocumentType::");
         update.addFieldUpdate(FieldUpdate.createAssign(docType.getField("myField"), fieldValue));
-        update = newScript(docType).execute(ADAPTER_FACTORY, update);
+        update = newScript(docType).execute(fieldValuesFactory, update, null);
         return update.getFieldUpdate("myField").getValueUpdate(0);
     }
 
@@ -257,14 +256,14 @@ public class DocumentScriptTestCase {
         docType.addField("myField", fieldValue.getDataType());
         DocumentUpdate update = new DocumentUpdate(docType, "id:ns:myDocumentType::");
         update.addFieldPathUpdate(new AssignFieldPathUpdate(docType, "myField", fieldValue));
-        update = newScript(docType).execute(ADAPTER_FACTORY, update);
+        update = newScript(docType).execute(fieldValuesFactory, update, null);
         return update.getFieldUpdate("myField").getValueUpdate(0);
     }
 
-    private static DocumentScript newScript(DocumentType docType, String fieldName) {
-        return new DocumentScript(docType.getName(), List.of(fieldName),
-                new StatementExpression(new InputExpression(fieldName),
-                        new IndexExpression(fieldName)));
+    private static DocumentScript newScript(DocumentType type, String fieldName) {
+        var script = new ScriptExpression();
+        return new DocumentScript(type, List.of(fieldName),
+                                  new ScriptExpression(new StatementExpression(new InputExpression(fieldName), new IndexExpression(fieldName))));
     }
 
     private static DocumentScript newScript(DocumentType docType) {
@@ -330,34 +329,30 @@ public class DocumentScriptTestCase {
         return update;
     }
 
-    private static void assertFail(String expectedException, Document document) throws ParseException {
+    private static void assertFail(String expectedException, Document document) {
         try {
             execute(document);
             fail();
-        } catch (IllegalArgumentException e) {
+        } catch (InvalidInputException e) {
             assertEquals(expectedException, e.getMessage());
         }
     }
 
-    private static void assertFail(String expectedException, DocumentUpdate update) throws ParseException {
+    private static void assertFail(String expectedException, DocumentUpdate update) {
         try {
             execute(update);
             fail();
-        } catch (IllegalArgumentException e) {
+        } catch (InvalidInputException e) {
             assertEquals(expectedException, e.getMessage());
         }
     }
 
-    private static Document execute(Document document) throws ParseException {
-        return newScript().execute(new SimpleAdapterFactory(), document);
+    private static Document execute(Document document) {
+        return newScript(document.getDataType()).execute(new FieldValuesFactory(), document, false, null);
     }
 
-    private static DocumentUpdate execute(DocumentUpdate update) throws ParseException {
-        return newScript().execute(new SimpleAdapterFactory(), update);
+    private static DocumentUpdate execute(DocumentUpdate update) {
+        return newScript(update.getType()).execute(new FieldValuesFactory(), update, null);
     }
 
-    private static DocumentScript newScript() throws ParseException {
-        return new DocumentScript("documentType", List.of("documentField"),
-                                  Expression.fromString("input documentField | index documentField"));
-    }
 }

@@ -9,6 +9,7 @@ import com.yahoo.schema.Schema;
 import com.yahoo.schema.document.Attribute;
 import com.yahoo.document.WeightedSetDataType;
 import com.yahoo.vespa.documentmodel.DocumentSummary;
+import com.yahoo.vespa.documentmodel.SummaryElementsSelector;
 import com.yahoo.vespa.documentmodel.SummaryField;
 import com.yahoo.vespa.documentmodel.SummaryTransform;
 import com.yahoo.vespa.model.container.search.QueryProfiles;
@@ -28,7 +29,7 @@ public class SummaryConsistency extends Processor {
     @Override
     public void process(boolean validate, boolean documentsOnly) {
         for (DocumentSummary summary : schema.getSummaries().values()) {
-            if (summary.getName().equals("default")) continue;
+            if (summary.name().equals("default")) continue;
 
             for (SummaryField summaryField : summary.getSummaryFields().values()) {
                 assertConsistency(summaryField, schema, validate);
@@ -55,8 +56,9 @@ public class SummaryConsistency extends Processor {
     }
 
     private void assertConsistentTypes(SummaryField existing, SummaryField seen) {
-        if (existing.getDataType() instanceof WeightedSetDataType && seen.getDataType() instanceof WeightedSetDataType &&
-            ((WeightedSetDataType)existing.getDataType()).getNestedType().equals(((WeightedSetDataType)seen.getDataType()).getNestedType()))
+        if (existing.getDataType() instanceof WeightedSetDataType &&
+            seen.getDataType() instanceof WeightedSetDataType &&
+            existing.getDataType().getNestedType().equals(seen.getDataType().getNestedType()))
             return; // Disregard create-if-nonexistent and create-if-zero distinction
         if ( ! compatibleTypes(seen.getDataType(), existing.getDataType()))
             throw new IllegalArgumentException(existing.toLocateString() + " is inconsistent with " + 
@@ -71,37 +73,52 @@ public class SummaryConsistency extends Processor {
     }
 
     private void makeConsistentOrThrow(SummaryField field1, SummaryField field2, Schema schema) {
-        if (field2.getTransform() == SummaryTransform.ATTRIBUTE && field1.getTransform() == SummaryTransform.NONE) {
+        if (field1.getElementsSelector().equals(SummaryElementsSelector.selectAll()) &&
+            field1.getTransform() == SummaryTransform.NONE &&
+            field2.getTransform() == SummaryTransform.ATTRIBUTE) {
             Attribute attribute = schema.getAttribute(field1.getName());
             if (attribute != null) {
+                field1.setElementsSelector(field2.getElementsSelector());
                 field1.setTransform(SummaryTransform.ATTRIBUTE);
             }
         }
 
-        if (field2.getTransform().equals(SummaryTransform.NONE)) {
+        if (field2.getElementsSelector().equals(SummaryElementsSelector.selectAll()) &&
+            field2.getTransform().equals(SummaryTransform.NONE)) {
+            field2.setElementsSelector(field1.getElementsSelector());
             field2.setTransform(field1.getTransform());
         }
-        else { // New field sets an explicit transform - must be the same
-            assertEqualTransform(field1,field2);
-        }
+
+        assertEqualElementsSelector(field1, field2);
+        assertEqualTransform(field1,field2);
     }
 
     private void makeConsistentWithDefaultOrThrow(SummaryField defaultField, SummaryField newField) {
-        if (newField.getTransform().equals(SummaryTransform.NONE)) {
+        if (newField.getElementsSelector().equals(SummaryElementsSelector.selectAll()) &&
+            newField.getTransform().equals(SummaryTransform.NONE)) {
+            newField.setElementsSelector(defaultField.getElementsSelector());
             newField.setTransform(defaultField.getTransform());
         }
-        else { // New field sets an explicit transform - must be the same
-            assertEqualTransform(defaultField,newField);
+        assertEqualElementsSelector(defaultField, newField);
+        assertEqualTransform(defaultField, newField);
+    }
+
+    private void assertEqualElementsSelector(SummaryField field1, SummaryField field2) {
+        if ( ! field2.getElementsSelector().equals(field1.getElementsSelector())) {
+            throw new IllegalArgumentException("Conflicting summary elements selectors. " + field2.toLocateString() +
+                    " is already defined as " +
+                    field1.toLocateString() + ". A field with the same name " +
+                    "can not have different element selectors in different summary classes");
         }
     }
 
     private void assertEqualTransform(SummaryField field1, SummaryField field2) {
         if ( ! field2.getTransform().equals(field1.getTransform())) {
-            throw new IllegalArgumentException("Conflicting summary transforms. " + field2 + " is already defined as " +
-                                               field1 + ". A field with the same name " +
+            throw new IllegalArgumentException("Conflicting summary transforms. " + field2.toLocateString() +
+                                               " is already defined as " +
+                                               field1.toLocateString() + ". A field with the same name " +
                                                "can not have different transforms in different summary classes");
         }
     }
-
 
 }

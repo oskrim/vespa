@@ -1,0 +1,357 @@
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+package com.yahoo.prelude.fastsearch;
+
+import com.yahoo.prelude.fastsearch.DocumentDatabase;
+import com.yahoo.prelude.fastsearch.DocsumDefinitionSet;
+import com.yahoo.processing.IllegalInputException;
+
+import com.yahoo.search.Query;
+import com.yahoo.search.Result;
+import com.yahoo.search.result.Hit;
+
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.TreeSet;
+import java.util.logging.Logger;
+
+/**
+ * PartialSummaryHandler is a helper class to help handling of fill()
+ * requests which only cover some of the possible summary fields.
+ *
+ * Usage:
+ * 1) construct from DocumentDatabase or DocsumDefinitionSet
+ * 2) call wantToFill to specify intent
+ * 3) use askForSummary and askForFields for making the backend request
+ * 4) use needFill to see if the Hit actually needs filling
+ * 5) use effectiveDocsumDef for decoding the backend response
+ * 6) use markFilled to mark the Hit with what actually got filled
+ *
+ * @author arnej
+ */
+public class PartialSummaryHandler {
+    public static final String DEFAULT_CLASS = "default";
+    public static final String ALL_FIELDS_CLASS = "[all]"; // best we can do
+    public static final String PRESENTATION = "[presentation]";
+
+    private static final Logger log = Logger.getLogger(PartialSummaryHandler.class.getName());
+
+    /** resolve summary class to use when none provided */
+    public static String resolveSummaryClass(Result result) {
+        return PRESENTATION;
+    }
+
+    private final DocsumDefinitionSet docsumDefinitions;
+    private DocsumDefinition effectiveDocsumDef = null;
+    private final Map<String, Set<String>> knownSummaryClasses = new HashMap<>();
+    private String summaryFromQuery = null;
+    private String summaryRequestedInFill = null;
+    private String askForSummary = null;
+    private Set<String> fillMarkers = new HashSet<>();
+    private Set<String> fieldsFromQuery = null;
+    private Set<String> resultHasFilled = null;
+    private Set<String> askForFields = null;
+
+    public PartialSummaryHandler(DocumentDatabase docDb) {
+        this(docDb.getDocsumDefinitionSet());
+    }
+    public PartialSummaryHandler(DocsumDefinitionSet docsumDefinitionSet) {
+        this.docsumDefinitions = docsumDefinitionSet;
+    }
+
+    // for unit testing:
+    public PartialSummaryHandler(Map<String, Set<String>> knownSummaryClasses) {
+        this.docsumDefinitions = null;
+        this.knownSummaryClasses.putAll(knownSummaryClasses);
+    }
+
+    public void wantToFill(Result result, String summaryClass) {
+        this.summaryRequestedInFill = summaryClass;
+        analyzeResult(result);
+        analyzeQuery(result.getQuery());
+        // NOTE: ordering here is important, there are dependencies between these steps:
+        computeAskForFields();
+        computeAskForSum(result.getQuery());
+        computeFillMarker();
+        computeEffectiveDocsumDef();
+    }
+
+    // for streaming
+    public void wantToFill(Query query) {
+        this.summaryRequestedInFill = PRESENTATION;
+        this.resultHasFilled = Set.of();
+        // NOTE: ordering here is important, there are dependencies between these steps:
+        analyzeQuery(query);
+        computeAskForFields();
+        computeAskForSum(query);
+        computeFillMarker();
+        computeEffectiveDocsumDef();
+    }
+
+    // which summary class we should ask the backend for:
+    public String askForSummary() { return askForSummary; }
+
+    // if requesting a specific set of fields, which ones, otherwise null
+    public Set<String> askForFields() { return askForFields; }
+
+    // does this Hit need to be filled
+    public boolean needFill(Hit hit) {
+        return needsMoreFill(hit.getFilled());
+    }
+
+    // is the entire Result already filled as needed
+    public boolean resultAlreadyFilled() {
+        return ! needsMoreFill(resultHasFilled);
+    }
+
+    // what is the currently-effective DocsumDefinition
+    public DocsumDefinition effectiveDocsumDef() {
+        if (effectiveDocsumDef == null) {
+            if (docsumDefinitions == null) {
+                throw new IllegalStateException("missing docsumDefinitions");
+            }
+            throw new IllegalStateException("docsumDefinition missing for summary=" + askForSummary);
+        }
+        return effectiveDocsumDef;
+    }
+
+    // mark the Hit with how it actually got filled
+    public void markFilled(Hit hit) {
+        for (String marker : fillMarkers) {
+            hit.setFilled(marker);
+        }
+    }
+
+    private void analyzeResult(Result result) {
+        this.resultHasFilled = result.hits().getFilled();
+    }
+
+    private void analyzeQuery(Query query) {
+        var presentation = query.getPresentation();
+        this.summaryFromQuery = presentation.getSummary();
+        this.fieldsFromQuery = presentation.getSummaryFields();
+    }
+
+    private static boolean isFieldListRequest(String summaryClass) {
+        return summaryClass != null && summaryClass.startsWith("[f:");
+    }
+
+    private static boolean isDefaultRequest(String summaryClass) {
+        return summaryClass == null || summaryClass.equals(DEFAULT_CLASS) || summaryClass.equals(PRESENTATION);
+    }
+
+    private static boolean isPresentationRequest(String summaryClass) {
+        return summaryClass != null && summaryClass.equals(PRESENTATION);
+    }
+
+    private void computeAskForSum(Query query) {
+        this.askForSummary = summaryRequestedInFill;
+        if (askForSummary == null || askForSummary.equals(PRESENTATION)) {
+            askForSummary = summaryFromQuery;
+        }
+        if (askForSummary == null) {
+            askForSummary = DEFAULT_CLASS;
+        }
+        if (askForFields != null) {
+            var fieldsFromClass = getFieldsForClass(askForSummary);
+            var available = fieldsAlreadyFilled(resultHasFilled);
+            available.addAll(fieldsFromClass);
+            if (! available.containsAll(askForFields)) {
+                // Conflicting requirements. Possible reason:
+                // The user has specified both "select A,B from ..." and "presentation.summary=foo"
+                // where the "foo" class does not contain all of the "A,B" list.
+                // So what was the intention? We can't really tell.
+                // Use the union of fields, and the 'all' class.
+                askForFields.addAll(fieldsFromClass);
+                // Add a trace message which they can find if they don't get their expected result.
+                query.trace("requested summary=" + askForSummary +
+                            " does not contain all fields " + fieldsFromQuery +
+                            " from query; trying fields=" + askForFields +
+                            " and summary=" + ALL_FIELDS_CLASS,
+                            1);
+                askForSummary = ALL_FIELDS_CLASS;
+            }
+        }
+    }
+
+    private void computeAskForFields() {
+        this.askForFields = null;
+        if (isFieldListRequest(summaryRequestedInFill)) {
+            var fieldSet = parseFieldList(summaryRequestedInFill);
+            if (! fieldSet.isEmpty()) {
+                this.askForFields = fieldSet;
+            }
+        } else if (isPresentationRequest(summaryRequestedInFill) || isDefaultRequest(summaryRequestedInFill)) {
+            if (! fieldsFromQuery.isEmpty()) {
+                // must make a copy to avoid disturbing the query.
+                // Use TreeSet for deterministic ordering:
+                askForFields = new TreeSet<>(fieldsFromQuery);
+            }
+        } else if (summaryRequestedInFill != null && summaryRequestedInFill.startsWith("[")) {
+            throw new IllegalArgumentException("fill(" + summaryRequestedInFill + ") is not valid");
+        }
+    }
+
+    private void computeFillMarker() {
+        if (isPresentationRequest(summaryRequestedInFill)) {
+            fillMarkers.add(summaryRequestedInFill);
+            if (askForFields != null) {
+                fillMarkers.add(syntheticName(askForFields));
+            } else {
+                fillMarkers.add(summaryFromQuery);
+            }
+        } else if (askForFields != null) {
+            fillMarkers.add(syntheticName(askForFields));
+        } else {
+            fillMarkers.add(summaryRequestedInFill);
+            fillMarkers.add(askForSummary);
+        }
+    }
+
+    private static String syntheticName(Set<String> summaryFields) {
+        // ensure deterministic ordering:
+        var sorted = new TreeSet<String>(summaryFields);
+        var buf = new StringBuilder();
+        buf.append("[f:");
+        for (String field : sorted) {
+            buf.append(buf.length() == 3 ? "" : ",");
+            buf.append(field);
+        }
+        buf.append(']');
+        return buf.toString();
+    }
+
+    public static String quotedSummaryClassName(String summaryClass, Set<String> summaryFields) {
+        if (isDefaultRequest(summaryClass) && ! summaryFields.isEmpty()) {
+            return syntheticName(summaryFields);
+        } else if (summaryClass == null) {
+            return "[null]";
+        } else {
+            return "'" + summaryClass + "'";
+        }
+    }
+
+    public static String enoughFields(String summaryClass, Result result) {
+        var summaryFields = result.getQuery().getPresentation().getSummaryFields();
+        if (isDefaultRequest(summaryClass)) {
+            if (! summaryFields.isEmpty()) {
+                // it's enough to have the string we would use as fillMarker
+                return syntheticName(summaryFields);
+            }
+            String wantSum = result.getQuery().getPresentation().getSummary();
+            if (wantSum == null) {
+                return DEFAULT_CLASS;
+            }
+            return wantSum;
+        } else {
+            // this is 'always' enough:
+            return ALL_FIELDS_CLASS;
+        }
+    }
+
+    public Optional<String> validateSummaryClass(String summaryClass, Query query) {
+        if (isFieldListRequest(summaryClass)) {
+            var fieldSet = parseFieldList(summaryClass);
+            if (fieldSet.isEmpty()) {
+                return Optional.of("Invalid fill() request with empty fieldset for summary '" + summaryClass + "'");
+            }
+        } else if (isPresentationRequest(summaryClass)) {
+            String wantClass = query.getPresentation().getSummary();
+            if (! ensureKnownClass(wantClass)) {
+                return Optional.of("Summary '" + wantClass + "' does not exist");
+            }
+        } else if (summaryClass != null) {
+            if (! ensureKnownClass(summaryClass)) {
+                return Optional.of("Invalid fill() request for non-existing summary '" + summaryClass + "'");
+            }
+        }
+        return Optional.empty();
+    }
+
+    private void computeEffectiveDocsumDef() {
+        if (docsumDefinitions != null) {
+            effectiveDocsumDef = docsumDefinitions.getDocsum(askForSummary);
+            if (askForFields != null) {
+                effectiveDocsumDef = new DocsumDefinition("<unnamed>", effectiveDocsumDef, askForFields);
+            }
+        }
+    }
+
+    private Set<String> parseFieldList(String fieldList) {
+        if (fieldList.startsWith("[f:") && fieldList.endsWith("]")) {
+            String content = fieldList.substring(3, fieldList.length() - 1);
+            String[] parts = content.split(",");
+            return new TreeSet<>(Arrays.asList(parts));
+        }
+        return Set.of();
+    }
+
+    private Set<String> getFieldsForClass(String wantClass) {
+        if (! ensureKnownClass(wantClass)) {
+            throw new IllegalArgumentException("unknown summary class: " + wantClass);
+        }
+        return knownSummaryClasses.get(wantClass);
+    }
+
+    private boolean ensureKnownClass(String wantClass) {
+        if (knownSummaryClasses.containsKey(wantClass))
+            return true;
+        if (isFieldListRequest(wantClass)) {
+            var fieldSet = parseFieldList(wantClass);
+            if (fieldSet.isEmpty())
+                return false;
+            knownSummaryClasses.put(wantClass, fieldSet);
+            return true;
+        }
+        if (docsumDefinitions != null && docsumDefinitions.hasDocsum(wantClass)) {
+            var docsumDef = docsumDefinitions.getDocsum(wantClass);
+            var fields = docsumDef.fields().keySet();
+            var fieldSet = Set.copyOf(fields);
+            knownSummaryClasses.put(wantClass, fieldSet);
+            return true;
+        }
+        return false;
+    }
+
+    private Set<String> fieldsAlreadyFilled(Set<String> alreadyFilled) {
+        var gotFields = new HashSet<String>();
+        for (var hasSummary : alreadyFilled) {
+            if (hasSummary == PRESENTATION) continue;
+            var hasSome = getFieldsForClass(hasSummary);
+            for (String field : hasSome) {
+                gotFields.add(field);
+            }
+        }
+        return gotFields;
+    }
+
+    private boolean needsMoreFill(Set<String> alreadyFilled) {
+        // unfillable?
+        if (alreadyFilled == null) return false;
+
+        // do we already have the entire thing?
+        if (alreadyFilled.contains(askForSummary)) return false;
+        // do we already have the entire subset?
+        for (var marker : fillMarkers) {
+            if (alreadyFilled.contains(marker)) return false;
+        }
+
+        // no, see what we have got:
+        var gotFields = fieldsAlreadyFilled(alreadyFilled);
+
+        // check if got covers all that we want:
+        var wantFields = (askForFields == null ? getFieldsForClass(askForSummary) : askForFields);
+        for (String field : wantFields) {
+            if (! gotFields.contains(field)) {
+                // need this field
+                return true;
+            }
+        }
+        // we have everything needed
+        return false;
+    }
+
+}

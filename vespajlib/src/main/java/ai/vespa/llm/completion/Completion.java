@@ -24,8 +24,24 @@ public record Completion(String text, FinishReason finishReason) {
         /** The completion is not finished yet, more tokens are incoming. */
         none,
 
+        /** Other, may be encountered for models with specific stop tokens, e.g. 'eos' for deepseek. */
+        other,
+
         /** An error occurred while generating the completion */
-        error
+        error,
+
+        /** The request for the completion was discarded without raising an error. */
+        discard,
+
+        /** Model generated a completion with a tool call. */
+        tool_calls,
+
+        /** Model finished due to blocking by content filter. */
+        content_filter,
+
+        /** Model finished with function call. */
+        function_call,
+
     }
 
     public Completion(String text, FinishReason finishReason) {

@@ -28,7 +28,7 @@ public class ConfigServerContainerModelBuilder extends ContainerModelBuilder {
     @Override
     public void doBuild(ContainerModel model, Element spec, ConfigModelContext modelContext) {
         ConfigserverCluster cluster = new ConfigserverCluster(modelContext.getParentProducer(), "configserver",
-                                                              options);
+                                                              options, modelContext.featureFlags());
         super.doBuild(model, spec, modelContext.withParent(cluster));
         cluster.setContainerCluster(model.getCluster());
     }
@@ -52,7 +52,7 @@ public class ConfigServerContainerModelBuilder extends ContainerModelBuilder {
     }
 
     @Override
-    protected void addModelEvaluationRuntime(ApplicationContainerCluster cluster) {
+    protected void addModelEvaluationRuntime(DeployState deployState, ApplicationContainerCluster cluster) {
         // Model evaluation bundles are pre-installed in the standalone container.
     }
 

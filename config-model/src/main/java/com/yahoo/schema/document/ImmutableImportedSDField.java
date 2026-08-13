@@ -47,6 +47,11 @@ public class ImmutableImportedSDField implements ImmutableSDField {
     }
 
     @Override
+    public boolean doesBitPacking() {
+        return importedField.targetField().doesBitPacking();
+    }
+
+    @Override
     public boolean doesLowerCasing() {
         return importedField.targetField().doesLowerCasing();
     }
@@ -147,6 +152,12 @@ public class ImmutableImportedSDField implements ImmutableSDField {
     public NormalizeLevel getNormalizing() {
         return importedField.targetField().getNormalizing();
     }
+
+    @Override
+    public String getIndexLinguisticsProfile() { return importedField.targetField().getIndexLinguisticsProfile(); }
+
+    @Override
+    public String getSearchLinguisticsProfile() { return importedField.targetField().getSearchLinguisticsProfile(); }
 
     @Override
     public ImmutableSDField getStructField(String name) {

@@ -20,18 +20,21 @@ class GlobalPhaseSetup {
 
     final FunEvalSpec globalPhaseEvalSpec;
     final int rerankCount;
+    final double rankScoreDropLimit;
     final Collection<String> matchFeaturesToHide;
     final List<NormalizerSetup> normalizers;
     final Map<String, Tensor> defaultValues;
 
     GlobalPhaseSetup(FunEvalSpec globalPhaseEvalSpec,
                      final int rerankCount,
+                     final double rankScoreDropLimit,
                      Collection<String> matchFeaturesToHide,
                      List<NormalizerSetup> normalizers,
                      Map<String, Tensor> defaultValues)
     {
         this.globalPhaseEvalSpec = globalPhaseEvalSpec;
         this.rerankCount = rerankCount;
+        this.rankScoreDropLimit = rankScoreDropLimit;
         this.matchFeaturesToHide = matchFeaturesToHide;
         this.normalizers = normalizers;
         this.defaultValues = defaultValues;
@@ -125,7 +128,10 @@ class GlobalPhaseSetup {
                     fromQuery.add(queryFeatureName);
                 } else if (availableNormalizers.contains(input)) {
                     usedNormalizers.add(input);
-                } else if (availableMatchFeatures.contains(input)) {
+                } else if (availableMatchFeatures.contains(input) ||
+                            // per-hit pseudo match feature:
+                           input.equals(HitRescorer.RELEVANCE_SCORE))
+                {
                     String mfName = renamedFeatures.getOrDefault(input, input);
                     fromMF.add(new MatchFeatureInput(input, mfName));
                 } else if (renamedFeatures.containsValue(input)) {
@@ -145,13 +151,17 @@ class GlobalPhaseSetup {
         }
         Supplier<FunctionEvaluator> functionEvaluatorSource = null;
         int rerankCount = -1;
+        double rankScoreDropLimit = -Double.MAX_VALUE;
         Set<String> namesToHide = new HashSet<>();
         Set<String> matchFeatures = new HashSet<>();
         Map<String, String> renameFeatures = new HashMap<>();
-        String toRename = null;
+        String renameFrom = null;
         for (var prop : rp.fef().property()) {
             if (prop.name().equals("vespa.globalphase.rerankcount")) {
                 rerankCount = Integer.parseInt(prop.value());
+            }
+            if (prop.name().equals("vespa.globalphase.rankscoredroplimit")) {
+                rankScoreDropLimit = Double.parseDouble(prop.value());
             }
             if (prop.name().equals("vespa.rank.globalphase")) {
                 functionEvaluatorSource = () -> model.evaluatorOf("globalphase");
@@ -163,14 +173,16 @@ class GlobalPhaseSetup {
                 matchFeatures.add(prop.value());
             }
             if (prop.name().equals("vespa.feature.rename")) {
-                if (toRename == null) {
-                    toRename = prop.value();
+                if (renameFrom == null) {
+                    renameFrom = prop.value();
                 } else {
-                    renameFeatures.put(toRename, prop.value());
-                    toRename = null;
+                    renameFeatures.put(renameFrom, prop.value());
+                    renameFrom = null;
                 }
             }
         }
+        // ignore renamed summary features (not available as match features)
+        renameFeatures.entrySet().removeIf(entry -> !matchFeatures.contains(entry.getKey()));
         if (rerankCount < 0) {
             rerankCount = 100;
         }
@@ -196,7 +208,7 @@ class GlobalPhaseSetup {
             Supplier<Evaluator> supplier = SimpleEvaluator.wrap(functionEvaluatorSource);
             var gfun = new FunEvalSpec(supplier, mainResolver.fromQuery, mainResolver.fromMF);
             var defaultValues = extraDefaultQueryFeatureValues(rp, mainResolver.fromQuery, normalizers);
-            return new GlobalPhaseSetup(gfun, rerankCount, namesToHide, normalizers, defaultValues);
+            return new GlobalPhaseSetup(gfun, rerankCount, rankScoreDropLimit, namesToHide, normalizers, defaultValues);
         }
         return null;
     }

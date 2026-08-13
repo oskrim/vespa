@@ -6,9 +6,11 @@ import com.yahoo.config.model.api.ContainerEndpoint;
 import com.yahoo.config.model.api.EndpointCertificateMetadata;
 import com.yahoo.config.model.api.Quota;
 import com.yahoo.config.model.api.TenantSecretStore;
+import com.yahoo.config.model.api.TenantVault;
 import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.AthenzDomain;
 import com.yahoo.config.provision.CloudAccount;
+import com.yahoo.config.provision.CloudResourceTags;
 import com.yahoo.config.provision.DataplaneToken;
 import com.yahoo.config.provision.DockerImage;
 import com.yahoo.config.provision.TenantName;
@@ -20,10 +22,12 @@ import com.yahoo.slime.SlimeUtils;
 import com.yahoo.vespa.config.server.TimeoutBudget;
 import com.yahoo.vespa.config.server.http.SessionHandler;
 import com.yahoo.vespa.config.server.tenant.CloudAccountSerializer;
+import com.yahoo.vespa.config.server.tenant.CloudResourceTagsSerializer;
 import com.yahoo.vespa.config.server.tenant.ContainerEndpointSerializer;
 import com.yahoo.vespa.config.server.tenant.DataplaneTokenSerializer;
 import com.yahoo.vespa.config.server.tenant.EndpointCertificateMetadataSerializer;
 import com.yahoo.vespa.config.server.tenant.TenantSecretStoreSerializer;
+import com.yahoo.vespa.config.server.tenant.TenantVaultSerializer;
 
 import java.security.cert.X509Certificate;
 import java.time.Clock;
@@ -32,7 +36,6 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Function;
-import java.util.stream.Collectors;
 
 /**
  * Parameters for preparing an application. Immutable.
@@ -47,16 +50,19 @@ public final class PrepareParams {
     static final String DRY_RUN_PARAM_NAME = "dryRun";
     static final String VERBOSE_PARAM_NAME = "verbose";
     static final String VESPA_VERSION_PARAM_NAME = "vespaVersion";
+    static final String VESPA_VERSION_TO_BUILD_FIRST_PARAM_NAME = "vespaVersionToBuildFirst";
     static final String CONTAINER_ENDPOINTS_PARAM_NAME = "containerEndpoints";
     static final String ENDPOINT_CERTIFICATE_METADATA_PARAM_NAME = "endpointCertificateMetadata";
     static final String DOCKER_IMAGE_REPOSITORY = "dockerImageRepository";
     static final String ATHENZ_DOMAIN = "athenzDomain";
     static final String QUOTA_PARAM_NAME = "quota";
+    static final String TENANT_VAULTS_PARAM_NAME = "tenantVaults";
     static final String TENANT_SECRET_STORES_PARAM_NAME = "tenantSecretStores";
     static final String FORCE_PARAM_NAME = "force";
     static final String WAIT_FOR_RESOURCES_IN_PREPARE = "waitForResourcesInPrepare";
     static final String OPERATOR_CERTIFICATES = "operatorCertificates";
     static final String CLOUD_ACCOUNT = "cloudAccount";
+    static final String CLOUD_RESOURCE_TAGS = "cloudResourceTags";
     static final String DATAPLANE_TOKENS = "dataplaneTokens";
 
     private final ApplicationId applicationId;
@@ -69,14 +75,17 @@ public final class PrepareParams {
     private final boolean force;
     private final boolean waitForResourcesInPrepare;
     private final Optional<Version> vespaVersion;
+    private final Optional<Version> vespaVersionToBuildFirst;
     private final List<ContainerEndpoint> containerEndpoints;
     private final Optional<EndpointCertificateMetadata> endpointCertificateMetadata;
     private final Optional<DockerImage> dockerImageRepository;
     private final Optional<AthenzDomain> athenzDomain;
     private final Optional<Quota> quota;
+    private final List<TenantVault> tenantVaults;
     private final List<TenantSecretStore> tenantSecretStores;
     private final List<X509Certificate> operatorCertificates;
     private final Optional<CloudAccount> cloudAccount;
+    private final CloudResourceTags cloudResourceTags;
     private final List<DataplaneToken> dataplaneTokens;
 
     private PrepareParams(ApplicationId applicationId,
@@ -87,16 +96,19 @@ public final class PrepareParams {
                           boolean isBootstrap,
                           boolean isInternalRedeployment,
                           Optional<Version> vespaVersion,
+                          Optional<Version> vespaVersionToBuildFirst,
                           List<ContainerEndpoint> containerEndpoints,
                           Optional<EndpointCertificateMetadata> endpointCertificateMetadata,
                           Optional<DockerImage> dockerImageRepository,
                           Optional<AthenzDomain> athenzDomain,
                           Optional<Quota> quota,
+                          List<TenantVault> tenantVaults,
                           List<TenantSecretStore> tenantSecretStores,
                           boolean force,
                           boolean waitForResourcesInPrepare,
                           List<X509Certificate> operatorCertificates,
                           Optional<CloudAccount> cloudAccount,
+                          CloudResourceTags cloudResourceTags,
                           List<DataplaneToken> dataplaneTokens) {
         this.timeoutBudget = timeoutBudget;
         this.applicationId = Objects.requireNonNull(applicationId);
@@ -106,16 +118,19 @@ public final class PrepareParams {
         this.isBootstrap = isBootstrap;
         this.isInternalRedeployment = isInternalRedeployment;
         this.vespaVersion = vespaVersion;
+        this.vespaVersionToBuildFirst = vespaVersionToBuildFirst;
         this.containerEndpoints = containerEndpoints;
         this.endpointCertificateMetadata = endpointCertificateMetadata;
         this.dockerImageRepository = dockerImageRepository;
         this.athenzDomain = athenzDomain;
         this.quota = quota;
+        this.tenantVaults = tenantVaults;
         this.tenantSecretStores = tenantSecretStores;
         this.force = force;
         this.waitForResourcesInPrepare = waitForResourcesInPrepare;
         this.operatorCertificates = operatorCertificates;
         this.cloudAccount = Objects.requireNonNull(cloudAccount);
+        this.cloudResourceTags = Objects.requireNonNull(cloudResourceTags);
         this.dataplaneTokens = dataplaneTokens;
     }
 
@@ -131,14 +146,17 @@ public final class PrepareParams {
         private ApplicationId applicationId = null;
         private TimeoutBudget timeoutBudget = new TimeoutBudget(Clock.systemUTC(), Duration.ofSeconds(60));
         private Optional<Version> vespaVersion = Optional.empty();
+        private Optional<Version> vespaVersionToBuildFirst = Optional.empty();
         private List<ContainerEndpoint> containerEndpoints = null;
         private Optional<EndpointCertificateMetadata> endpointCertificateMetadata = Optional.empty();
         private Optional<DockerImage> dockerImageRepository = Optional.empty();
         private Optional<AthenzDomain> athenzDomain = Optional.empty();
         private Optional<Quota> quota = Optional.empty();
+        private List<TenantVault> tenantVaults = List.of();
         private List<TenantSecretStore> tenantSecretStores = List.of();
         private List<X509Certificate> operatorCertificates = List.of();
         private Optional<CloudAccount> cloudAccount = Optional.empty();
+        private CloudResourceTags cloudResourceTags = CloudResourceTags.empty();
         private List<DataplaneToken> dataplaneTokens = List.of();
 
         public Builder() { }
@@ -189,6 +207,19 @@ public final class PrepareParams {
 
         public Builder vespaVersion(Version vespaVersion) {
             this.vespaVersion = Optional.ofNullable(vespaVersion);
+            return this;
+        }
+
+        public Builder vespaVersionToBuildFirst(String version) {
+            Optional<Version> v = Optional.empty();
+            if (version != null && !version.isEmpty()) {
+                v = Optional.of(Version.fromString(version));
+            }
+            return vespaVersionToBuildFirst(v);
+        }
+
+        public Builder vespaVersionToBuildFirst(Optional<Version> version) {
+            this.vespaVersionToBuildFirst = version;
             return this;
         }
 
@@ -250,6 +281,18 @@ public final class PrepareParams {
             return this;
         }
 
+        public Builder tenantVaults(String serialized) {
+            List<TenantVault> vaults = (serialized == null)
+                    ? List.of()
+                    : TenantVaultSerializer.listFromSlime(SlimeUtils.jsonToSlime(serialized).get());
+            return tenantVaults(vaults);
+        }
+
+        public Builder tenantVaults(List<TenantVault> tenantVaults) {
+            this.tenantVaults = tenantVaults;
+            return this;
+        }
+
         public Builder tenantSecretStores(String serialized) {
             List<TenantSecretStore> secretStores = (serialized == null)
                     ? List.of()
@@ -282,6 +325,11 @@ public final class PrepareParams {
             return this;
         }
 
+        public Builder cloudResourceTags(CloudResourceTags cloudResourceTags) {
+            this.cloudResourceTags = cloudResourceTags != null ? cloudResourceTags : CloudResourceTags.empty();
+            return this;
+        }
+
         public Builder dataplaneTokens(List<DataplaneToken> dataplaneTokens) {
             this.dataplaneTokens = List.copyOf(dataplaneTokens);
             return this;
@@ -296,16 +344,19 @@ public final class PrepareParams {
                                      isBootstrap,
                                      isInternalRedeployment,
                                      vespaVersion,
+                                     vespaVersionToBuildFirst,
                                      containerEndpoints,
                                      endpointCertificateMetadata,
                                      dockerImageRepository,
                                      athenzDomain,
                                      quota,
+                                     tenantVaults,
                                      tenantSecretStores,
                                      force,
                                      waitForResourcesInPrepare,
                                      operatorCertificates,
                                      cloudAccount,
+                                     cloudResourceTags,
                                      dataplaneTokens);
         }
 
@@ -318,11 +369,13 @@ public final class PrepareParams {
                             .timeoutBudget(SessionHandler.getTimeoutBudget(request, barrierTimeout))
                             .applicationId(createApplicationId(request, tenant))
                             .vespaVersion(request.getProperty(VESPA_VERSION_PARAM_NAME))
+                            .vespaVersionToBuildFirst(request.getProperty(VESPA_VERSION_TO_BUILD_FIRST_PARAM_NAME))
                             .containerEndpoints(request.getProperty(CONTAINER_ENDPOINTS_PARAM_NAME))
                             .endpointCertificateMetadata(request.getProperty(ENDPOINT_CERTIFICATE_METADATA_PARAM_NAME))
                             .dockerImageRepository(request.getProperty(DOCKER_IMAGE_REPOSITORY))
                             .athenzDomain(request.getProperty(ATHENZ_DOMAIN))
                             .quota(request.getProperty(QUOTA_PARAM_NAME))
+                            .tenantVaults(request.getProperty(TENANT_VAULTS_PARAM_NAME))
                             .tenantSecretStores(request.getProperty(TENANT_SECRET_STORES_PARAM_NAME))
                             .force(request.getBooleanProperty(FORCE_PARAM_NAME))
                             .waitForResourcesInPrepare(request.getBooleanProperty(WAIT_FOR_RESOURCES_IN_PREPARE))
@@ -330,26 +383,33 @@ public final class PrepareParams {
     }
 
     public static PrepareParams fromJson(byte[] json, TenantName tenant, Duration barrierTimeout) {
+        return fromJson(json, tenant, barrierTimeout, false);
+    }
+
+    public static PrepareParams fromJson(byte[] json, TenantName tenant, Duration barrierTimeout, boolean verboseOverride) {
         Slime slime = SlimeUtils.jsonToSlimeOrThrow(json);
         Inspector params = slime.get();
 
         return new Builder()
                 .ignoreValidationErrors(booleanValue(params, IGNORE_VALIDATION_PARAM_NAME))
                 .dryRun(booleanValue(params, DRY_RUN_PARAM_NAME))
-                .verbose(booleanValue(params, VERBOSE_PARAM_NAME))
+                .verbose(booleanValue(params, VERBOSE_PARAM_NAME) || verboseOverride)
                 .timeoutBudget(SessionHandler.getTimeoutBudget(getTimeout(params, barrierTimeout)))
                 .applicationId(createApplicationId(params, tenant))
                 .vespaVersion(SlimeUtils.optionalString(params.field(VESPA_VERSION_PARAM_NAME)).orElse(null))
+                .vespaVersionToBuildFirst(SlimeUtils.optionalString(params.field(VESPA_VERSION_TO_BUILD_FIRST_PARAM_NAME)).orElse(null))
                 .containerEndpointList(deserialize(params.field(CONTAINER_ENDPOINTS_PARAM_NAME), ContainerEndpointSerializer::endpointListFromSlime, List.of()))
                 .endpointCertificateMetadata(deserialize(params.field(ENDPOINT_CERTIFICATE_METADATA_PARAM_NAME), EndpointCertificateMetadataSerializer::fromSlime))
                 .dockerImageRepository(SlimeUtils.optionalString(params.field(DOCKER_IMAGE_REPOSITORY)).orElse(null))
                 .athenzDomain(SlimeUtils.optionalString(params.field(ATHENZ_DOMAIN)).orElse(null))
                 .quota(deserialize(params.field(QUOTA_PARAM_NAME), Quota::fromSlime))
+                .tenantVaults(deserialize(params.field(TENANT_VAULTS_PARAM_NAME), TenantVaultSerializer::listFromSlime, List.of()))
                 .tenantSecretStores(deserialize(params.field(TENANT_SECRET_STORES_PARAM_NAME), TenantSecretStoreSerializer::listFromSlime, List.of()))
                 .force(booleanValue(params, FORCE_PARAM_NAME))
                 .waitForResourcesInPrepare(booleanValue(params, WAIT_FOR_RESOURCES_IN_PREPARE))
                 .operatorCertificates(deserialize(params.field(OPERATOR_CERTIFICATES), PrepareParams::readOperatorCertificates, List.of()))
                 .cloudAccount(deserialize(params.field(CLOUD_ACCOUNT), CloudAccountSerializer::fromSlime, null))
+                .cloudResourceTags(deserialize(params.field(CLOUD_RESOURCE_TAGS), CloudResourceTagsSerializer::fromSlime, CloudResourceTags.empty()))
                 .dataplaneTokens(deserialize(params.field(DATAPLANE_TOKENS), DataplaneTokenSerializer::fromSlime, List.of()))
                 .build();
     }
@@ -417,6 +477,9 @@ public final class PrepareParams {
     /** Returns the Vespa version the nodes running the prepared system should have, or empty to use the system version */
     public Optional<Version> vespaVersion() { return vespaVersion; }
 
+    /** Returns the Vespa version to build first when building several models. A pinned application  will have this set */
+    public Optional<Version> vespaVersionToBuildFirst() { return vespaVersionToBuildFirst; }
+
     /** Returns the container endpoints that should be made available for this deployment. One per cluster */
     public List<ContainerEndpoint> containerEndpoints() {
         return containerEndpoints;
@@ -458,6 +521,10 @@ public final class PrepareParams {
         return quota;
     }
 
+    public List<TenantVault> tenantVaults() {
+        return tenantVaults;
+    }
+
     public List<TenantSecretStore> tenantSecretStores() {
         return tenantSecretStores;
     }
@@ -468,6 +535,10 @@ public final class PrepareParams {
 
     public Optional<CloudAccount> cloudAccount() {
         return cloudAccount;
+    }
+
+    public CloudResourceTags cloudResourceTags() {
+        return cloudResourceTags;
     }
 
     public List<DataplaneToken> dataplaneTokens() {

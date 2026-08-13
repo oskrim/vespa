@@ -2,27 +2,25 @@
 
 #pragma once
 
-#include "i_attribute_manager.h"
 #include <vespa/vespalib/net/http/state_explorer.h>
 
 namespace proton {
 
+struct IAttributeManager;
+
 /**
  * Class used to explore the state of an attribute manager and its attribute vectors.
  */
-class AttributeManagerExplorer : public vespalib::StateExplorer
-{
-private:
-    proton::IAttributeManager::SP _mgr;
+class AttributeManagerExplorer : public vespalib::StateExplorer {
+    std::shared_ptr<IAttributeManager> _mgr;
 
 public:
-    AttributeManagerExplorer(const proton::IAttributeManager::SP &mgr);
-    ~AttributeManagerExplorer();
+    AttributeManagerExplorer(std::shared_ptr<IAttributeManager> mgr);
+    ~AttributeManagerExplorer() override;
 
-    void get_state(const vespalib::slime::Inserter &inserter, bool full) const override;
+    void get_state(const vespalib::slime::Inserter& inserter, bool full) const override;
     std::vector<std::string> get_children_names() const override;
     std::unique_ptr<StateExplorer> get_child(std::string_view name) const override;
 };
 
 } // namespace proton
-

@@ -27,12 +27,13 @@ import java.time.Clock;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
-import java.util.logging.Level;
 import java.util.logging.Logger;
 
 import static com.yahoo.yolean.Exceptions.uncheck;
 import static java.util.logging.Level.FINE;
+import static java.util.logging.Level.FINEST;
 import static java.util.logging.Level.INFO;
+import static java.util.logging.Level.WARNING;
 
 /**
  * Global file directory, holding files for file distribution for all deployed applications.
@@ -55,7 +56,7 @@ public class FileDirectory extends AbstractComponent {
         try {
             ensureRootExist();
         } catch (IllegalArgumentException e) {
-            log.log(Level.WARNING, "Failed creating directory in constructor, will retry on demand : " + e.getMessage());
+            log.log(WARNING, "Failed creating directory in constructor, will retry on demand : " + e.getMessage());
         }
     }
 
@@ -84,8 +85,8 @@ public class FileDirectory extends AbstractComponent {
         ensureRootExist();
         File dir = new File(getPath(reference));
         if (!dir.exists()) {
-            // This is common when config server has not yet received the file from one the server the app was deployed on
-            log.log(FINE, "File reference '" + reference.value() + "' ('" + dir.getAbsolutePath() + "') does not exist.");
+            // This is common when config server has not yet received the file from the server the app was deployed on
+            log.log(FINEST, "File reference '" + reference.value() + "' ('" + dir.getAbsolutePath() + "') does not exist.");
             return Optional.empty();
         }
         if (!dir.isDirectory()) {
@@ -107,10 +108,10 @@ public class FileDirectory extends AbstractComponent {
         if (file.isDirectory()) {
             return Files.walk(file.toPath(), 100).map(path -> {
                 try {
-                    log.log(Level.FINEST, () -> "Calculating hash for '" + path + "'");
+                    log.log(FINEST, () -> "Calculating hash for '" + path + "'");
                     return hash(path.toFile(), hasher);
                 } catch (IOException e) {
-                    log.log(Level.WARNING, "Failed getting hash from '" + path + "'");
+                    log.log(WARNING, "Failed getting hash from '" + path + "'");
                     return 0;
                 }
             }).mapToLong(Number::longValue).sum();
@@ -149,7 +150,7 @@ public class FileDirectory extends AbstractComponent {
     }
 
     private void deleteDirRecursively(File dir) {
-        log.log(FINE, "Will delete dir " + dir);
+        log.log(FINEST, "Will delete dir " + dir);
         if ( ! IOUtils.recursiveDeleteDir(dir))
             log.log(INFO, "Failed to delete " + dir);
     }
@@ -162,7 +163,7 @@ public class FileDirectory extends AbstractComponent {
 
         File existingFile = destinationDir.toPath().resolve(source.getName()).toFile();
         if ( ! existingFile.exists() || ! computeHash(existingFile).equals(hashOfFileToBeAdded)) {
-            log.log(Level.WARNING, "Directory for file reference '" + fileReference.value() +
+            log.log(WARNING, "Directory for file reference '" + fileReference.value() +
                     "' has content that does not match its hash, deleting everything in " +
                     destinationDir.getAbsolutePath());
             deleteDirRecursively(destinationDir);

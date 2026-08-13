@@ -1,6 +1,7 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.slime;
 
+import java.util.Arrays;
 import java.util.function.Consumer;
 import static com.yahoo.slime.BinaryFormat.decode_double;
 import static com.yahoo.slime.BinaryFormat.decode_meta;
@@ -93,11 +94,7 @@ public final class BinaryView implements Inspector {
         } else {
             --bytes;
         }
-        byte[] ret = new byte[bytes];
-        for (int i = 0; i < bytes; ++i) {
-            ret[i] = data[idx++];
-        }
-        return ret;
+        return Arrays.copyOfRange(data, idx, idx + bytes);
     }
     private Inspector find_field(int pos, int len, int sym) {
         for (int i = 0; i < len; ++i) {
@@ -287,12 +284,12 @@ public final class BinaryView implements Inspector {
         var input = new BufferedInput(data);
         var names = new SymbolTable();
         BinaryDecoder.decodeSymbolTable(input, names);
-        var index = new DecodeIndex(input.getBacking().length, input.getPosition());
+        var index = new DecodeIndex(data.length, input.getPosition());
         buildIndex(input, index, 0, 0);
         if (input.failed()) {
             throw new IllegalArgumentException("bad input: " + input.getErrorMessage());
         }
-        return new BinaryView(input.getBacking(), names, index.getBacking(), 0);
+        return new BinaryView(data, names, index.getBacking(), 0);
     }
 
     static int peek_cmpr_int_for_testing(byte[] data, int idx) {

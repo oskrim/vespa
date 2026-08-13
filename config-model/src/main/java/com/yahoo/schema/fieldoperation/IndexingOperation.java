@@ -2,7 +2,9 @@
 package com.yahoo.schema.fieldoperation;
 
 import com.yahoo.language.Linguistics;
+import com.yahoo.language.process.Chunker;
 import com.yahoo.language.process.Embedder;
+import com.yahoo.language.process.FieldGenerator;
 import com.yahoo.language.simple.SimpleLinguistics;
 import com.yahoo.schema.document.SDField;
 import com.yahoo.schema.parser.ParseException;
@@ -10,7 +12,6 @@ import com.yahoo.schema.parser.SimpleCharStream;
 import com.yahoo.vespa.indexinglanguage.ScriptParserContext;
 import com.yahoo.vespa.indexinglanguage.expressions.ScriptExpression;
 import com.yahoo.vespa.indexinglanguage.expressions.StatementExpression;
-import com.yahoo.vespa.indexinglanguage.linguistics.AnnotatorConfig;
 import com.yahoo.yolean.Exceptions;
 
 import java.util.Map;
@@ -34,14 +35,17 @@ public class IndexingOperation implements FieldOperation {
 
     /** Creates an indexing operation which will use the simple linguistics implementation suitable for testing */
     public static IndexingOperation fromStream(SimpleCharStream input, boolean multiLine) throws ParseException {
-        return fromStream(input, multiLine, new SimpleLinguistics(), Embedder.throwsOnUse.asMap());
+        return fromStream(input, multiLine, new SimpleLinguistics(),
+                          Chunker.throwsOnUse.asMap(), Embedder.throwsOnUse.asMap(), FieldGenerator.throwsOnUse.asMap());
     }
 
-    public static IndexingOperation fromStream(SimpleCharStream input, boolean multiLine,
-                                               Linguistics linguistics, Map<String, Embedder> embedders)
-            throws ParseException {
-        ScriptParserContext config = new ScriptParserContext(linguistics, embedders);
-        config.setAnnotatorConfig(new AnnotatorConfig());
+    public static IndexingOperation fromStream(SimpleCharStream input,
+                                               boolean multiLine,
+                                               Linguistics linguistics,
+                                               Map<String, Chunker> chunkers,
+                                               Map<String, Embedder> embedders,
+                                               Map<String, FieldGenerator> generators) throws ParseException {
+        ScriptParserContext config = new ScriptParserContext(linguistics, chunkers, embedders, generators);
         config.setInputStream(input);
         ScriptExpression exp;
         try {

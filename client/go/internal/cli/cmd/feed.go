@@ -18,6 +18,7 @@ import (
 
 func addFeedFlags(cli *CLI, cmd *cobra.Command, options *feedOptions) {
 	cmd.PersistentFlags().IntVar(&options.connections, "connections", 8, "The number of connections to use")
+	cmd.PersistentFlags().IntVar(&options.inflight, "inflight", 0, "The target number of inflight requests. 0 to dynamically detect the best value (default 0)")
 	cmd.PersistentFlags().StringVar(&options.compression, "compression", "auto", `Whether to compress the document data when sending the HTTP request. Default is "auto", which compresses large documents. Must be "auto", "gzip" or "none"`)
 	cmd.PersistentFlags().IntVar(&options.timeoutSecs, "timeout", 0, "Individual feed operation timeout in seconds. 0 to disable (default 0)")
 	cmd.Flags().StringSliceVarP(&options.headers, "header", "", nil, "Add a header to all HTTP requests, on the format 'Header: Value'. This can be specified multiple times")
@@ -40,6 +41,7 @@ func addFeedFlags(cli *CLI, cmd *cobra.Command, options *feedOptions) {
 
 type feedOptions struct {
 	connections    int
+	inflight       int
 	compression    string
 	route          string
 	verbose        bool
@@ -134,10 +136,14 @@ func createServices(n int, timeout time.Duration, cli *CLI, waiter *Waiter) ([]h
 	if err != nil {
 		return nil, "", err
 	}
+
+	authMethod := cli.selectAuthMethod()
+
 	services := make([]httputil.Client, 0, n)
 	baseURL := ""
+
 	for range n {
-		service, err := waiter.Service(target, cli.config.cluster())
+		service, err := waiter.ServiceWithAuthMethod(target, cli.config.cluster(), authMethod)
 		if err != nil {
 			return nil, "", err
 		}
@@ -145,7 +151,9 @@ func createServices(n int, timeout time.Duration, cli *CLI, waiter *Waiter) ([]h
 		// Create a separate HTTP client for each service
 		client := cli.httpClientFactory(timeout)
 		// Feeding should always use HTTP/2
-		httputil.ForceHTTP2(client, service.TLSOptions.KeyPair, service.TLSOptions.CACertificatePEM, service.TLSOptions.TrustAll)
+		if authMethod != "token" {
+			httputil.ForceHTTP2(client, service.TLSOptions.KeyPair, service.TLSOptions.CACertificatePEM, service.TLSOptions.TrustAll)
+		}
 		service.SetClient(client)
 		services = append(services, service)
 	}
@@ -244,6 +252,10 @@ func feed(files []string, options feedOptions, cli *CLI, cmd *cobra.Command) err
 	if err != nil {
 		return err
 	}
+	err = cli.addBearerToken(&header)
+	if err != nil {
+		return err
+	}
 	client, err := document.NewClient(document.ClientOptions{
 		Compression: compression,
 		Timeout:     timeout,
@@ -257,7 +269,7 @@ func feed(files []string, options feedOptions, cli *CLI, cmd *cobra.Command) err
 	if err != nil {
 		return err
 	}
-	throttler := document.NewThrottler(options.connections)
+	throttler := document.NewThrottler(options.connections, options.inflight)
 	circuitBreaker := document.NewCircuitBreaker(10*time.Second, time.Duration(options.doomSecs)*time.Second)
 	dispatcher := document.NewDispatcher(client, throttler, circuitBreaker, cli.Stderr, options.verbose)
 	start := cli.now()

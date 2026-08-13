@@ -3,23 +3,20 @@ package com.yahoo.vespa.config.server.maintenance;
 
 import com.yahoo.config.FileReference;
 import com.yahoo.config.provision.ApplicationId;
-import com.yahoo.config.subscription.ConfigSourceSet;
-import com.yahoo.jrt.Supervisor;
-import com.yahoo.jrt.Transport;
-import com.yahoo.vespa.config.ConnectionPool;
 import com.yahoo.vespa.config.server.ApplicationRepository;
+import com.yahoo.vespa.config.server.filedistribution.FileServer;
 import com.yahoo.vespa.config.server.session.RemoteSession;
 import com.yahoo.vespa.config.server.session.Session;
 import com.yahoo.vespa.config.server.session.SessionRepository;
 import com.yahoo.vespa.config.server.tenant.Tenant;
 import com.yahoo.vespa.curator.Curator;
 import com.yahoo.vespa.defaults.Defaults;
-import com.yahoo.vespa.filedistribution.FileDistributionConnectionPool;
 import com.yahoo.vespa.filedistribution.FileDownloader;
 import com.yahoo.vespa.filedistribution.FileReferenceDownload;
 
 import java.io.File;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
@@ -28,9 +25,11 @@ import java.util.concurrent.Future;
 import java.util.logging.Logger;
 
 import static com.yahoo.vespa.config.server.filedistribution.FileDistributionUtil.fileReferenceExistsOnDisk;
-import static com.yahoo.vespa.config.server.filedistribution.FileDistributionUtil.getOtherConfigServersInCluster;
 import static com.yahoo.vespa.config.server.session.Session.Status.ACTIVATE;
 import static com.yahoo.vespa.config.server.session.Session.Status.PREPARE;
+import static java.util.logging.Level.FINE;
+import static java.util.logging.Level.INFO;
+import static java.util.logging.Level.WARNING;
 
 /**
  * Verifies that all active sessions has an application package on local disk.
@@ -45,13 +44,14 @@ public class ApplicationPackageMaintainer extends ConfigServerMaintainer {
     private static final Logger log = Logger.getLogger(ApplicationPackageMaintainer.class.getName());
 
     private final File downloadDirectory;
-    private final Supervisor supervisor = new Supervisor(new Transport("filedistribution-pool")).setDropEmptyBuffers(true);
     private final FileDownloader fileDownloader;
 
-    ApplicationPackageMaintainer(ApplicationRepository applicationRepository, Curator curator, Duration interval) {
+    ApplicationPackageMaintainer(ApplicationRepository applicationRepository, Curator curator, Duration interval,
+                                 FileServer fileServer) {
         super(applicationRepository, curator, applicationRepository.flagSource(), applicationRepository.clock(), interval, false);
-        this.downloadDirectory = new File(Defaults.getDefaults().underVespaHome(applicationRepository.configserverConfig().fileReferencesDir()));
-        this.fileDownloader = createFileDownloader(applicationRepository, downloadDirectory, supervisor);
+        String fileReferencesDir = applicationRepository.configserverConfig().fileReferencesDir();
+        this.downloadDirectory = new File(Defaults.getDefaults().underVespaHome(fileReferencesDir));
+        this.fileDownloader = fileServer.downloader();
     }
 
     @Override
@@ -61,6 +61,7 @@ public class ApplicationPackageMaintainer extends ConfigServerMaintainer {
 
         List<Runnable> futureDownloads = new ArrayList<>();
         for (Session session : preparedAndActivatedSessions()) {
+            log.log(FINE, () -> "Considering session " + session.getSessionId());
             if (shuttingDown())
                 return asSuccessFactorDeviation(attempts, failures[0]);
 
@@ -69,12 +70,14 @@ public class ApplicationPackageMaintainer extends ConfigServerMaintainer {
                 continue;
 
             Optional<FileReference> appFileReference = session.getApplicationPackageReference();
+            log.log(FINE, () -> "Application package reference: " + appFileReference);
             if (appFileReference.isPresent()) {
                 long sessionId = session.getSessionId();
                 FileReference fileReference = appFileReference.get();
 
                 attempts++;
                 if (! fileReferenceExistsOnDisk(downloadDirectory, fileReference)) {
+                    log.log(FINE, () -> "Application package reference: " + appFileReference.get() + " not on disk, downloading");
                     Future<Optional<File>> futureDownload = startDownload(fileReference, sessionId, applicationId);
                     futureDownloads.add(() -> {
                         try {
@@ -84,13 +87,11 @@ public class ApplicationPackageMaintainer extends ConfigServerMaintainer {
                             }
                         }
                         catch (Exception e) {
-                            log.warning("Exception when downloading application package (" + fileReference + ")" +
-                                                " for " + applicationId + " (session " + sessionId + "): " + e.getMessage());
+                            log.log(WARNING, "Exception when downloading application package (" + fileReference + ")" +
+                                    " for " + applicationId + " (session " + sessionId + "): " + e.getMessage());
                         }
                         failures[0]++;
-                        log.info("Downloading application package (" + fileReference + ")" +
-                                         " for " + applicationId + " (session " + sessionId + ") unsuccessful. " +
-                                         "Can be ignored unless it happens many times over a long period of time, retries is expected");
+                        logFailure(session, fileReference, applicationId);
                     });
                 }
                 else {
@@ -103,7 +104,7 @@ public class ApplicationPackageMaintainer extends ConfigServerMaintainer {
     }
 
     private Future<Optional<File>> startDownload(FileReference fileReference, long sessionId, ApplicationId applicationId) {
-        log.fine(() -> "Downloading application package with file reference " + fileReference +
+        log.log(FINE, () -> "Downloading application package with " + fileReference +
                 " for " + applicationId + " (session " + sessionId + ")");
         return fileDownloader.getFutureFileOrTimeout(new FileReferenceDownload(fileReference,
                                                                                this.getClass().getSimpleName(),
@@ -111,7 +112,6 @@ public class ApplicationPackageMaintainer extends ConfigServerMaintainer {
     }
 
     private Collection<RemoteSession> preparedAndActivatedSessions() {
-        var tenantRepository = applicationRepository.tenantRepository();
         return tenantRepository.getAllTenantNames().stream()
                 .map(tenantRepository::getTenant)
                 .map(t -> t.getSessionRepository().getRemoteSessions())
@@ -120,18 +120,8 @@ public class ApplicationPackageMaintainer extends ConfigServerMaintainer {
                 .toList();
     }
 
-    private static FileDownloader createFileDownloader(ApplicationRepository applicationRepository,
-                                                       File downloadDirectory,
-                                                       Supervisor supervisor) {
-        List<String> otherConfigServersInCluster = getOtherConfigServersInCluster(applicationRepository.configserverConfig());
-        ConfigSourceSet configSourceSet = new ConfigSourceSet(otherConfigServersInCluster);
-        ConnectionPool connectionPool = new FileDistributionConnectionPool(configSourceSet, supervisor);
-        return new FileDownloader(connectionPool, supervisor, downloadDirectory, Duration.ofSeconds(60));
-    }
-
     @Override
     public void awaitShutdown() {
-        supervisor.transport().shutdown().join();
         fileDownloader.close();
         super.awaitShutdown();
     }
@@ -141,6 +131,15 @@ public class ApplicationPackageMaintainer extends ConfigServerMaintainer {
         SessionRepository sessionRepository = tenant.getSessionRepository();
         if (sessionRepository.getLocalSession(sessionId) == null)
             sessionRepository.createLocalSessionFromDistributedApplicationPackage(sessionId);
+    }
+
+    private void logFailure(Session session, FileReference fileReference, ApplicationId applicationId) {
+        var deployed = Instant.ofEpochMilli(session.getMetaData().getDeployTimestamp());
+        var level = Duration.between(deployed, applicationRepository.clock().instant()).toMinutes() > 2
+                ? INFO
+                : FINE;
+        log.log(level, "Downloading application package (" + fileReference + ")" +
+                " for " + applicationId + " (session " + session.getSessionId() + ") unsuccessful.");
     }
 
 }

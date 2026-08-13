@@ -2,6 +2,7 @@
 package com.yahoo.search;
 
 import com.yahoo.component.ComponentId;
+import com.yahoo.prelude.fastsearch.PartialSummaryHandler;
 import com.yahoo.processing.Processor;
 import com.yahoo.processing.Response;
 import com.yahoo.search.searchchain.Execution;
@@ -156,17 +157,22 @@ public abstract class Searcher extends Processor {
      */
     public final void ensureFilled(Result result, String summaryClass, Execution execution) {
         if (summaryClass == null)
-            summaryClass = result.getQuery().getPresentation().getSummary();
+            summaryClass = PartialSummaryHandler.resolveSummaryClass(result);
 
-        if ( ! result.isFilled(summaryClass)) {
-            fill(result, summaryClass, execution);
-        }
-        else {
+        String alsoCheck = PartialSummaryHandler.enoughFields(summaryClass, result);
+        var hasFilled = result.hits().getFilled();
+        if (hasFilled == null || hasFilled.contains(summaryClass) || hasFilled.contains(alsoCheck)) {
             int fillRejectTraceAt = 3;
             if (result.getQuery().getTrace().getLevel() >= fillRejectTraceAt)
                 result.getQuery().trace("Ignoring fill(" + summaryClass + "): " +
-                                        ( result.hits().getFilled() == null ? "Hits are unfillable" : "Hits already filled" ) +
-                                        ": result.hits().getFilled()=" + result.hits().getFilled(), fillRejectTraceAt);
+                                        ( hasFilled == null ? "Hits are unfillable" : "Hits already filled" ) +
+                                        ": result.hits().getFilled()=" + hasFilled, fillRejectTraceAt);
+        }
+        else {
+            int fillStartTraceAt = 6;
+            if (result.getQuery().getTrace().getLevel() >= fillStartTraceAt)
+                result.getQuery().trace("Hits need fill(" + summaryClass + "); hasFilled=" + hasFilled + " in " + this.getClass(), fillStartTraceAt);
+            fill(result, summaryClass, execution);
         }
     }
 

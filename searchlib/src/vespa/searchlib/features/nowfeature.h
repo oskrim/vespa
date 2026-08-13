@@ -22,6 +22,7 @@ public:
      * Constructs a new executor.
      **/
     NowExecutor(int64_t timestamp);
+    bool isPure() override { return true; }
     void execute(uint32_t docId) override;
 };
 
@@ -30,14 +31,12 @@ public:
  */
 class NowBlueprint : public fef::Blueprint {
 public:
-    NowBlueprint() : fef::Blueprint("now") { }
-    void visitDumpFeatures(const fef::IIndexEnvironment &env, fef::IDumpFeatureVisitor &visitor) const override;
+    NowBlueprint() : fef::Blueprint("now") {}
+    void visitDumpFeatures(const fef::IIndexEnvironment& env, fef::IDumpFeatureVisitor& visitor) const override;
     fef::Blueprint::UP createInstance() const override;
-    fef::ParameterDescriptions getDescriptions() const override {
-        return fef::ParameterDescriptions().desc();
-    }
-    bool setup(const fef::IIndexEnvironment & env, const fef::ParameterList & params) override;
-    fef::FeatureExecutor &createExecutor(const fef::IQueryEnvironment &env, vespalib::Stash &stash) const override;
+    fef::ParameterDescriptions getDescriptions() const override { return fef::ParameterDescriptions().desc(); }
+    bool setup(const fef::IIndexEnvironment& env, const fef::ParameterList& params) override;
+    fef::FeatureExecutor& createExecutor(const fef::IQueryEnvironment& env, vespalib::Stash& stash) const override;
 };
 
-}
+} // namespace search::features

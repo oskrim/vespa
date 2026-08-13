@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -75,9 +76,10 @@ type Services struct {
 }
 
 type Container struct {
-	Root  xml.Name `xml:"container"`
-	ID    string   `xml:"id,attr"`
-	Nodes Nodes    `xml:"nodes"`
+	Root    xml.Name `xml:"container"`
+	ID      string   `xml:"id,attr"`
+	Nodes   Nodes    `xml:"nodes"`
+	Clients []Client `xml:"clients>client"`
 }
 
 type Content struct {
@@ -96,6 +98,12 @@ type Resources struct {
 	Disk   string `xml:"disk,attr"`
 }
 
+type Client struct {
+	ID          string    `xml:"id,attr"`
+	Certificate *struct{} `xml:"certificate"`
+	Token       *struct{} `xml:"token"`
+}
+
 func (s Services) String() string { return s.rawXML.String() }
 
 // Replace replaces any elements of name found under parentName with data.
@@ -110,6 +118,50 @@ func (s *Services) Replace(parentName, name string, data interface{}) error {
 	}
 	*s = newXML
 	return nil
+}
+
+// VaultNames returns the names of all vaults referenced in <secrets> elements of services.xml.
+func (s Services) VaultNames() []string {
+	dec := xml.NewDecoder(bytes.NewReader(s.rawXML.Bytes()))
+	var names []string
+	seen := map[string]bool{}
+	inSecrets := 0
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			break
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			if t.Name.Local == "secrets" {
+				inSecrets++
+			} else if inSecrets > 0 {
+				for _, attr := range t.Attr {
+					if attr.Name.Local == "vault" && attr.Value != "" && !seen[attr.Value] {
+						seen[attr.Value] = true
+						names = append(names, attr.Value)
+					}
+				}
+			}
+		case xml.EndElement:
+			if t.Name.Local == "secrets" && inSecrets > 0 {
+				inSecrets--
+			}
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
+func (s *Services) ContainsAnyTokenClient() bool {
+	for _, container := range s.Container {
+		for _, client := range container.Clients {
+			if client.Token != nil {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (r Resources) String() string {
@@ -194,10 +246,11 @@ func ParseNodeCount(s string) (int, int, error) {
 	parseErr := fmt.Errorf("invalid node count: %q", s)
 	min, max := 0, 0
 	n, err := strconv.Atoi(s)
-	if err == nil {
+	switch {
+	case err == nil:
 		min = n
 		max = n
-	} else if strings.HasPrefix(s, "[") && strings.HasSuffix(s, "]") {
+	case strings.HasPrefix(s, "[") && strings.HasSuffix(s, "]"):
 		parts := strings.Split(s[1:len(s)-1], ",")
 		if len(parts) != 2 {
 			return 0, 0, parseErr
@@ -210,7 +263,7 @@ func ParseNodeCount(s string) (int, int, error) {
 		if err != nil {
 			return 0, 0, parseErr
 		}
-	} else {
+	default:
 		return 0, 0, parseErr
 	}
 

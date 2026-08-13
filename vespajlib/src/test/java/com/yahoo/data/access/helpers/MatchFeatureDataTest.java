@@ -11,7 +11,9 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 import java.util.Map;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * @author arnej
@@ -95,6 +97,44 @@ public class MatchFeatureDataTest {
 
         assertEquals("{\"foo\":1.0,\"bar\":2.0,\"baz\":\"0x2A0011\",\"qux\":4.0,\"quux\":5.0}",
                 hit.toString());
+    }
+
+    @Test
+    void testFieldLookupAfterFiltering() {
+        // Create features and set values
+        List<String> names = List.of("a", "b", "c", "d");
+        var mf = new MatchFeatureData(names);
+        var hit = mf.addHit();
+        hit.set(0, 1.0);  // a = 1.0
+        hit.set(1, 2.0);  // b = 2.0
+        hit.set(2, 3.0);  // c = 3.0
+        hit.set(3, 4.0);  // d = 4.0
+
+        // Verify values before filtering
+        assertEquals(1.0, hit.field("a").asDouble(), 0.0);
+        assertEquals(2.0, hit.field("b").asDouble(), 0.0);
+        assertEquals(3.0, hit.field("c").asDouble(), 0.0);
+        assertEquals(4.0, hit.field("d").asDouble(), 0.0);
+
+        // Filter out "b" and "d"
+        var filter = new MatchFeatureFilter(List.of("b", "d"));
+        var filteredHit = hit.subsetFilter(filter);
+
+        // Verify filtered hit has correct field count
+        assertEquals(2, filteredHit.fieldCount());
+
+        // Verify field lookup returns correct values after filtering
+        var aField = filteredHit.field("a");
+        assertTrue(aField.valid());
+        assertEquals(1.0, aField.asDouble(), 0.0);
+
+        var cField = filteredHit.field("c");
+        assertTrue(cField.valid());
+        assertEquals(3.0, cField.asDouble(), 0.0);
+
+        // Filtered fields should return invalid
+        assertFalse(filteredHit.field("b").valid());
+        assertFalse(filteredHit.field("d").valid());
     }
 
 }

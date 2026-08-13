@@ -4,7 +4,7 @@ package ai.vespa.llm.clients;
 import ai.vespa.llm.InferenceParameters;
 import ai.vespa.llm.completion.Completion;
 import ai.vespa.llm.completion.Prompt;
-import com.yahoo.container.jdisc.secretstore.SecretStore;
+import ai.vespa.secret.Secrets;
 
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -22,7 +22,7 @@ public class MockLLMClient extends ConfigurableLanguageModel {
     private Prompt lastPrompt;
 
     public MockLLMClient(LlmClientConfig config,
-                         SecretStore secretStore,
+                         Secrets secretStore,
                          BiFunction<Prompt, InferenceParameters, String> generator,
                          ExecutorService executor) {
         super(config, secretStore);

@@ -16,9 +16,12 @@ package com.yahoo.schema.parser;
 import com.yahoo.config.application.api.DeployLogger;
 import com.yahoo.config.model.api.ModelContext;
 import com.yahoo.language.Linguistics;
+import com.yahoo.language.process.Chunker;
 import com.yahoo.language.process.Embedder;
+import com.yahoo.language.process.FieldGenerator;
 import com.yahoo.language.simple.SimpleLinguistics;
 import com.yahoo.search.query.ranking.Diversity;
+import com.yahoo.search.query.ranking.ElementGap;
 import com.yahoo.schema.DistributableResource;
 import com.yahoo.schema.OnnxModel;
 import com.yahoo.schema.RankProfile.DiversitySettings;
@@ -31,14 +34,11 @@ import com.yahoo.schema.document.MatchAlgorithm;
 import com.yahoo.schema.document.HnswIndexParams;
 import com.yahoo.schema.document.Sorting;
 import com.yahoo.schema.document.Stemming;
-import com.yahoo.schema.document.SDField;
-import com.yahoo.schema.FeatureNames;
+import com.yahoo.searchlib.ranking.features.FeatureNames;
 import com.yahoo.schema.fieldoperation.IndexingOperation;
 import com.yahoo.search.schema.RankProfile.InputType;
 import com.yahoo.searchlib.rankingexpression.FeatureList;
 import com.yahoo.searchlib.rankingexpression.Reference;
-import com.yahoo.searchlib.rankingexpression.evaluation.TensorValue;
-import com.yahoo.searchlib.rankingexpression.evaluation.Value;
 import com.yahoo.tensor.Tensor;
 import com.yahoo.tensor.IndexedTensor;
 import com.yahoo.tensor.MixedTensor;
@@ -49,7 +49,6 @@ import java.util.Optional;
 import java.util.Map;
 import java.util.List;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.logging.Level;
 
 /**
@@ -65,10 +64,7 @@ public class SchemaParser {
     private ModelContext.Properties properties;
 
     /** Creates a parser. */
-    public SchemaParser(SimpleCharStream stream,
-                              DeployLogger deployLogger,
-                              ModelContext.Properties properties)
-    {
+    public SchemaParser(SimpleCharStream stream, DeployLogger deployLogger) {
         this(stream);
         this.deployLogger = deployLogger;
         this.properties = properties;
@@ -82,22 +78,22 @@ public class SchemaParser {
      */
     @SuppressWarnings("deprecation")
     private IndexingOperation newIndexingOperation(boolean multiline) throws ParseException {
-        return newIndexingOperation(multiline, new SimpleLinguistics(), Embedder.throwsOnUse.asMap());
+        return newIndexingOperation(multiline, new SimpleLinguistics(), Chunker.throwsOnUse.asMap(), Embedder.throwsOnUse.asMap(), FieldGenerator.throwsOnUse.asMap());
     }
 
     /**
      * Consumes an indexing language script from the current input stream.
      *
-     * @param multiline Whether or not to allow multi-line expressions.
-     * @param linguistics What to use for tokenizing.
+     * @param multiline whether to allow multi-line expressions
+     * @param linguistics what to use for tokenizing
      */
-    private IndexingOperation newIndexingOperation(boolean multiline, Linguistics linguistics, Map<String, Embedder> embedders) throws ParseException {
+    private IndexingOperation newIndexingOperation(boolean multiline, Linguistics linguistics, Map<String, Chunker> chunkers, Map<String, Embedder> embedders, Map<String, FieldGenerator> generators) throws ParseException {
         SimpleCharStream input = (SimpleCharStream)token_source.input_stream;
         if (token.next != null) {
             input.backup(token.next.image.length());
         }
         try {
-            return IndexingOperation.fromStream(input, multiline, linguistics, embedders);
+            return IndexingOperation.fromStream(input, multiline, linguistics, chunkers, embedders, generators);
         } finally {
             token.next = null;
             jj_ntk = -1;
@@ -170,12 +166,16 @@ TOKEN :
 | < AS: "as" >
 | < INDEXING: "indexing" >
 | < SUMMARY_TO: "summary-to" >
+| < DOCUMENTID: "documentid" >
 | < DOCUMENT_SUMMARY: "document-summary" >
+| < ELEMENT_GAP: "element-gap" >
+| < INFINITY: "infinity" >
 | < RANK_TYPE: "rank-type" >
 | < WEIGHT: "weight" >
 | < TYPE: "type" >
 | < INDEX: "index" >
 | < INPUTS: "inputs">
+| < LINGUISTICS: "linguistics">
 | < MTOKEN: "token" >
 | < TEXT: "text" >
 | < WORD: "word" >
@@ -185,16 +185,23 @@ TOKEN :
 | < MAX_OCCURRENCES: "max-occurrences" >
 | < MAX_TOKEN_LENGTH: "max-token-length" >
 | < PREFIX: "prefix" >
+| < PROFILE: "profile" >
 | < SUBSTRING: "substring" >
 | < SUFFIX: "suffix" >
 | < CONSTANT: "constant">
 | < ONNX_MODEL: "onnx-model">
 | < SIGNIFICANCE: "significance">
 | < USE_MODEL: "use-model">
+| < WEAKAND: "weakand">
+| < STOPWORD_LIMIT: "stopword-limit">
+| < ALLOW_DROP_ALL: "allow-drop-all">
+| < ADJUST_TARGET: "adjust-target">
+| < FILTER_THRESHOLD: "filter-threshold">
 | < INTRAOP_THREADS: "intraop-threads">
 | < INTEROP_THREADS: "interop-threads">
 | < GPU_DEVICE: "gpu-device">
 | < EXECUTION_MODE: "execution-mode">
+| < OPTIMIZE_MODEL: "optimize-model">
 | < PARALLEL: "parallel">
 | < SEQUENTIAL: "sequential">
 | < MODEL: "model" >
@@ -289,6 +296,7 @@ TOKEN :
 | < ORDER: "order" >
 | < MAX_FILTER_COVERAGE: "max-filter-coverage" >
 | < MAX_HITS: "max-hits" >
+| < TOTAL_MAX_HITS: "total-max-hits" >
 | < FIRST_PHASE: "first-phase" >
 | < SECOND_PHASE: "second-phase" >
 | < GLOBAL_PHASE: "global-phase" >
@@ -310,10 +318,11 @@ TOKEN :
 | < MULTI_THREADED_INDEXING: "multi-threaded-indexing" >
 | < MATCHFEATURES_SL: "match-features" (" ")* ":" (~["}","\n"])* ("\n")? >
 | < MATCHFEATURES_ML: "match-features" (<SEARCHLIB_SKIP>)? "{" (~["}"])* "}" >
-| < MATCHFEATURES_ML_INHERITS: "match-features inherits " (<IDENTIFIER_WITH_DASH>) (<SEARCHLIB_SKIP>)? "{" (~["}"])* "}" >
+| < MATCHFEATURES_ML_INHERITS: "match-features inherits " (<IDENTIFIER_WITH_DASH> ("," (" ")* <IDENTIFIER_WITH_DASH>)* ) (<SEARCHLIB_SKIP>)? "{" (~["}"])* "}" >
+| < SELECT_ELEMENTS_BY_SL: "select-elements-by" (" ")* ":" (~["}","\n"])* ("\n")? >
 | < SUMMARYFEATURES_SL: "summary-features" (" ")* ":" (~["}","\n"])* ("\n")? >
 | < SUMMARYFEATURES_ML: "summary-features" (<SEARCHLIB_SKIP>)? "{" (~["}"])* "}" >
-| < SUMMARYFEATURES_ML_INHERITS: "summary-features inherits " (<IDENTIFIER_WITH_DASH>) (<SEARCHLIB_SKIP>)? "{" (~["}"])* "}" >
+| < SUMMARYFEATURES_ML_INHERITS: "summary-features inherits " (<IDENTIFIER_WITH_DASH> ("," (" ")* <IDENTIFIER_WITH_DASH>)* ) (<SEARCHLIB_SKIP>)? "{" (~["}"])* "}" >
 | < RANKFEATURES_SL: "rank-features" (" ")* ":" (~["}","\n"])* ("\n")? >
 | < RANKFEATURES_ML: "rank-features" (<SEARCHLIB_SKIP>)? "{" (~["}"])* "}" >
 | < EXPRESSION_SL: "expression" (" ")* ":" (("{"<BRACE_SL_LEVEL_1>)|<BRACE_SL_CONTENT>)* ("\n")? >
@@ -329,14 +338,20 @@ TOKEN :
 | < #SEARCHLIB_SKIP: ([" ","\f","\n","\r","\t"])+ >
 | < RANK_PROPERTIES: "rank-properties" >
 | < RERANK_COUNT: "rerank-count" >
+| < TOTAL_RERANK_COUNT: "total-rerank-count" >
 | < NUM_THREADS_PER_SEARCH: "num-threads-per-search" >
 | < MIN_HITS_PER_THREAD: "min-hits-per-thread" >
 | < NUM_SEARCH_PARTITIONS: "num-search-partitions" >
 | < TERMWISE_LIMIT: "termwise-limit" >
 | < POST_FILTER_THRESHOLD: "post-filter-threshold" >
 | < APPROXIMATE_THRESHOLD: "approximate-threshold" >
+| < FILTER_FIRST_THRESHOLD: "filter-first-threshold" >
+| < FILTER_FIRST_EXPLORATION: "filter-first-exploration" >
+| < EXPLORATION_SLACK: "exploration-slack" >
+| < PREFETCH_TENSORS: "prefetch-tensors" >
 | < TARGET_HITS_MAX_ADJUSTMENT_FACTOR: "target-hits-max-adjustment-factor" >
 | < KEEP_RANK_COUNT: "keep-rank-count" >
+| < TOTAL_KEEP_RANK_COUNT: "total-keep-rank-count" >
 | < RANK_SCORE_DROP_LIMIT: "rank-score-drop-limit" >
 | < CONSTANTS: "constants" >
 | < FILE: "file" >
@@ -418,11 +433,12 @@ ParsedSchema rootSchema() :
 void rootSchemaItem(ParsedSchema schema) : { }
 {
     ( document(schema)
+      | documentId(schema)
       | rawAsBase64(schema)
       | searchStemming(schema)
       | importField(schema)
       | rankingConstant(schema) // Deprecated: TODO: Vespa > 8: Emit warning
-      | rankProfile(schema)
+      | rankProfile(schema, null)
       | documentSummary(schema)
       | fieldOutsideDoc(schema)
       | indexOutsideDoc(schema)
@@ -597,8 +613,8 @@ ParsedField field() :
 {
     <FIELD> name = identifier() <TYPE> type = dataType()
     {
-        if (name != null && Schema.isReservedName(name.toLowerCase())) {
-            throw new IllegalArgumentException("Reserved name '" + name + "' can not be used as a field name.");
+        if (name != null && Schema.isReservedName(name.toLowerCase(java.util.Locale.ROOT))) {
+            throw new IllegalArgumentException("Reserved name '" + name + "' cannot be used as a field name.");
         }
         field = new ParsedField(name, type);
     }
@@ -816,8 +832,8 @@ void structFieldDefinition(ParsedStruct struct) :
 }
 {
     <FIELD> name = identifier() <TYPE> type = dataType() {
-        if (name != null && Schema.isReservedName(name.toLowerCase())) {
-            throw new IllegalArgumentException("Reserved name '" + name + "' can not be used as a field name.");
+        if (name != null && Schema.isReservedName(name.toLowerCase(java.util.Locale.ROOT))) {
+            throw new IllegalArgumentException("Reserved name '" + name + "' cannot be used as a field name.");
         }
         field = new ParsedField(name, type);
     }
@@ -839,8 +855,8 @@ void structField(ParsedField field) :
 }
 {
     <STRUCT_FIELD> name = identifier() {
-        if (name != null && Schema.isReservedName(name.toLowerCase())) {
-            throw new IllegalArgumentException("Reserved name '" + name + "' can not be used as a field name.");
+        if (name != null && Schema.isReservedName(name.toLowerCase(java.util.Locale.ROOT))) {
+            throw new IllegalArgumentException("Reserved name '" + name + "' cannot be used as a field name.");
         }
         structField = new ParsedField(name, null);
     }
@@ -859,18 +875,19 @@ void fieldBody(ParsedField field) : { }
       attribute(field) |
       bolding(field) |
       dictionary(field) |
+      fieldSorting(field) |
       fieldStemming(field) |
       id(field) |
-      summaryInField(field) |
       indexInsideField(field) |
       indexing(field) |
+      linguistics(field) |
       matchSettings(field.matchSettings()) |
       normalizing(field) |
       queryCommand(field) |
       rank(field) |
       rankType(field) |
-      fieldSorting(field) |
       structField(field) |
+      summaryInField(field) |
       summaryTo(field) |
       weight(field) |
       weightedset(field.getType()) )
@@ -915,6 +932,35 @@ void indexingOperation(ParsedField field, boolean multiLine) : { }
         IndexingOperation oldOp = newIndexingOperation(multiLine);
         ParsedIndexingOp newOp = new ParsedIndexingOp(oldOp.getScript());
         field.setIndexingOperation(newOp);
+    }
+}
+
+/**
+ * A linguistics block of a field.
+ */
+void linguistics(ParsedField field) :
+{
+    String indexProfile = null;
+    String searchProfile = null;
+}
+{
+    <LINGUISTICS> lbrace() <PROFILE> (
+      ( <COLON> indexProfile = identifier() (<NL>)* )
+      |
+      ( lbrace()
+          (
+              ( <INDEX>  <COLON> indexProfile  = identifier() (<NL>)* ) |
+              ( <SEARCH> <COLON> searchProfile = identifier() (<NL>)* )
+          )+
+        <RBRACE> (<NL>)*
+      )
+    )
+    <RBRACE>
+    {
+      if (searchProfile == null)
+          searchProfile = indexProfile;
+      field.setSearchLinguisticsProfile(searchProfile);
+      field.setIndexLinguisticsProfile(indexProfile);
     }
 }
 
@@ -1174,6 +1220,7 @@ void summaryInFieldLong(ParsedField field) :
 void summaryItem(ParsedSummaryField field) : { }
 {
     ( summaryTransform(field)
+      | summaryElementsSelection(field)
       | summaryBolding(field)
       | summarySourceList(field)
       | summaryDestinationList(field)
@@ -1188,10 +1235,32 @@ void summaryItem(ParsedSummaryField field) : { }
 void summaryTransform(ParsedSummaryField field) : { }
 {
     ( <DYNAMIC>              { field.setDynamic(); }
-     | <MATCHED_ELEMENTS_ONLY> { field.setMatchedElementsOnly(); }
      | (<FULL> | <STATIC>)   { field.setFull(); }
      | <TOKENS> { field.setTokens(); }
     )
+}
+
+void summaryElementsSelection(ParsedSummaryField field) : { }
+{
+    ( <MATCHED_ELEMENTS_ONLY> { field.setMatchedElementsOnly(); }
+      | summaryElementsBy(field)
+    )
+}
+
+void summaryElementsBy(ParsedSummaryField field) :
+{
+    String features;
+}
+{
+    ( <SELECT_ELEMENTS_BY_SL> { features = token.image.substring(token.image.indexOf(":") + 1).trim(); } )
+    {
+        var featureList = getFeatureList(features);
+        if (featureList.size() != 1) {
+            throw new IllegalArgumentException("select-elements-by: feature list must have 1 feature, got " +
+                                               featureList.size() + " features: " + featureList);
+        }
+        field.setSelectElementsBySummaryFeature(featureList.get(0).toString());
+    }
 }
 
 /**
@@ -1465,6 +1534,23 @@ void id(ParsedField field) :
 }
 
 /**
+ * Consumes the documentid setting.
+ *
+ * @param schema the schema object to add setting to
+ */
+void documentId(ParsedSchema schema) :
+{
+    boolean attribute = false;
+}
+{
+    <DOCUMENTID>
+    <COLON> ( ( <ATTRIBUTE> { attribute = true; } ) | ( <FROM_DISK> { attribute = false; } ) )
+    {
+        schema.enableDocumentIdAttribute(attribute);
+    }
+}
+
+/**
  * Consumes a document-summary block from within a schema block.
  *
  * @param schema the schema object to add content to
@@ -1650,6 +1736,7 @@ void onnxModelItem(OnnxModel onnxModel) :
 {
     String path = null;
     int num;
+    boolean enable;
 }
 {
     (
@@ -1660,6 +1747,7 @@ void onnxModelItem(OnnxModel onnxModel) :
         <INTEROP_THREADS> <COLON> num = integer() { onnxModel.setStatelessInterOpThreads(num); } |
         <EXECUTION_MODE> <COLON> ( <PARALLEL> { onnxModel.setStatelessExecutionMode("parallel"); }
                                   | <SEQUENTIAL> { onnxModel.setStatelessExecutionMode("sequential"); } ) |
+        <OPTIMIZE_MODEL> <COLON> enable = bool() { onnxModel.setOptimizeModel(enable); } |
         (<ONNX_INPUT_SL>) {
             String name = token.image.substring(5, token.image.lastIndexOf(":")).trim();
             if (name.startsWith("\"")) { name = name.substring(1, name.length() - 1); }
@@ -1728,14 +1816,14 @@ String rankingConstantErrorMessage(String name) : {}
  *
  * @param schema the schema object to add content to
  */
-void rankProfile(ParsedSchema schema) :
+void rankProfile(ParsedSchema schema, ParsedRankProfile outer) :
 {
     String name;
     ParsedRankProfile profile;
 }
 {
     ( <MODEL> | <RANK_PROFILE> ) name = identifierWithDash()
-    { profile = new ParsedRankProfile(name); }
+    { profile = new ParsedRankProfile(name, outer); }
     [inheritsRankProfile(profile)]
     lbrace() (rankProfileItem(schema, profile) (<NL>)*)* <RBRACE>
     {
@@ -1766,6 +1854,10 @@ void rankProfileItem(ParsedSchema schema, ParsedRankProfile profile) : { }
       | termwiseLimit(profile)
       | postFilterThreshold(profile)
       | approximateThreshold(profile)
+      | filterFirstThreshold(profile)
+      | filterFirstExploration(profile)
+      | explorationSlack(profile)
+      | prefetchTensors(profile)
       | targetHitsMaxAdjustmentFactor(profile)
       | rankFeatures(profile)
       | rankProperties(profile)
@@ -1777,7 +1869,10 @@ void rankProfileItem(ParsedSchema schema, ParsedRankProfile profile) : { }
       | summaryFeatures(profile)
       | onnxModelInProfile(profile)
       | strict(profile)
-      | significance(profile))
+      | significance(profile)
+      | weakand(profile)
+      | filterThreshold(profile))
+      | rankProfile(schema, profile)
 }
 
 /**
@@ -1885,17 +1980,19 @@ void matchPhase(ParsedRankProfile profile) :
 
 void matchPhaseItem(ParsedRankProfile profile, MatchPhaseSettings settings) :
 {
-    String str;
-    int num;
+    String string;
+    int count;
+    int totalCount;
     double multiplier;
     double coverage;
 }
 {
-    ( <ATTRIBUTE> <COLON> str = identifier() { settings.setAttribute(str); }
+    ( <ATTRIBUTE> <COLON> string = identifier() { settings.setAttribute(string); }
       | diversityDeprecated(profile)
-      | <ORDER> <COLON> ( <ASCENDING> { settings.setAscending(true); } 
+      | <ORDER> <COLON> ( <ASCENDING> { settings.setAscending(true); }
                           | <DESCENDING> { settings.setAscending(false); } )
-      | <MAX_HITS> <COLON> num = integer() { settings.setMaxHits(num); }
+      | <MAX_HITS> <COLON> count = integer() { settings.setMaxHits(count); }
+      | <TOTAL_MAX_HITS> <COLON> totalCount = integer() { settings.setTotalMaxHits(totalCount); }
       | <MAX_FILTER_COVERAGE> <COLON> coverage = floatValue() { settings.setMaxFilterCoverage(coverage); }
       | <EVALUATION_POINT> <COLON> multiplier = floatValue() { settings.setEvaluationPoint(multiplier); }
       | <PRE_POST_FILTER_TIPPING_POINT> <COLON> multiplier = floatValue() { settings.setPrePostFilterTippingPoint(multiplier); }
@@ -1966,11 +2063,13 @@ void firstPhaseItem(ParsedRankProfile profile) :
 {
     String expression;
     int keepRankCount;
+    int totalKeepRankCount;
     double dropLimit;
 }
 {
     ( expression = expression()                               { profile.setFirstPhaseRanking(expression); }
     | (<KEEP_RANK_COUNT> <COLON> keepRankCount = integer())     { profile.setKeepRankCount(keepRankCount); }
+    | (<TOTAL_KEEP_RANK_COUNT> <COLON> totalKeepRankCount = integer()) { profile.setTotalKeepRankCount(totalKeepRankCount); }
     | (<RANK_SCORE_DROP_LIMIT> <COLON> dropLimit = floatValue()) { profile.setRankScoreDropLimit(dropLimit); }
     )
 }
@@ -1994,11 +2093,13 @@ void secondPhaseItem(ParsedRankProfile profile) :
 {
     String expression;
     int rerankCount;
+    int totalRerankCount;
     double dropLimit;
 }
 {
     ( expression = expression()                       { profile.setSecondPhaseRanking(expression); }
     | (<RERANK_COUNT> <COLON> rerankCount = integer()) { profile.setRerankCount(rerankCount); }
+    | (<TOTAL_RERANK_COUNT> <COLON> totalRerankCount = integer()) { profile.setTotalRerankCount(totalRerankCount); }
     | (<RANK_SCORE_DROP_LIMIT> <COLON> dropLimit = floatValue()) { profile.setSecondPhaseRankScoreDropLimit(dropLimit); }
     )
 }
@@ -2022,10 +2123,12 @@ void globalPhaseItem(ParsedRankProfile profile) :
 {
     String expression;
     int rerankCount;
+    double dropLimit;
 }
 {
     ( expression = expression()                       { profile.setGlobalPhaseExpression(expression); }
     | (<RERANK_COUNT> <COLON> rerankCount = integer()) { profile.setGlobalPhaseRerankCount(rerankCount); }
+    | (<RANK_SCORE_DROP_LIMIT> <COLON> dropLimit = floatValue()) { profile.setGlobalPhaseRankScoreDropLimit(dropLimit); }
     )
 }
 
@@ -2125,10 +2228,9 @@ void summaryFeatures(ParsedRankProfile profile) :
       <SUMMARYFEATURES_ML> { features = token.image.substring(token.image.indexOf("{") + 1,
                                                               token.image.lastIndexOf("}")).trim(); } |
       <SUMMARYFEATURES_ML_INHERITS> {
-          int inheritsIndex = token.image.indexOf("inherits ");
-          String rest = token.image.substring(inheritsIndex + "inherits ".length());
-          profile.setInheritedSummaryFeatures(rest.substring(0, rest.indexOf(" ")).trim());
-          features = token.image.substring(token.image.indexOf("{") + 1, token.image.lastIndexOf("}")).trim();
+          MlInheritsSplit split = new MlInheritsSplit(token.image);
+          profile.setInheritedSummaryFeatures(split.inherits);
+          features = split.features;
       }
     )
     {
@@ -2161,6 +2263,53 @@ void significanceItem(ParsedRankProfile profile) :
     )
 }
 
+void weakand(ParsedRankProfile profile) :
+{}
+{
+    <WEAKAND> lbrace() (weakandItem(profile) (<NL>)*)* <RBRACE>
+    {}
+}
+
+void weakandItem(ParsedRankProfile profile) :
+{}
+{
+    ( weakandStopwordLimit(profile)
+      | weakandAllowDropAll(profile)
+      | weakandAdjustTarget(profile))
+}
+
+void weakandStopwordLimit(ParsedRankProfile profile) :
+{
+    double limit;
+}
+{
+    (<STOPWORD_LIMIT> <COLON> limit = floatValue()) { profile.setWeakandStopwordLimit(limit); }
+}
+
+void weakandAllowDropAll(ParsedRankProfile profile) :
+{
+    boolean value;
+}
+{
+    (<ALLOW_DROP_ALL> <COLON> value = bool()) { profile.setWeakandAllowDropAll(value); }
+}
+
+void weakandAdjustTarget(ParsedRankProfile profile) :
+{
+    double target;
+}
+{
+    (<ADJUST_TARGET> <COLON> target = floatValue()) { profile.setWeakandAdjustTarget(target); }
+}
+
+void filterThreshold(ParsedRankProfile profile) :
+{
+    double threshold;
+}
+{
+    (<FILTER_THRESHOLD> <COLON> threshold = floatValue()) { profile.setFilterThreshold(threshold); }
+}
+
 /**
  * Consumes a match-features block of a rank profile.
  *
@@ -2175,10 +2324,9 @@ void matchFeatures(ParsedRankProfile profile) :
       <MATCHFEATURES_ML> { features = token.image.substring(token.image.indexOf("{") + 1,
                                                               token.image.lastIndexOf("}")).trim(); } |
       <MATCHFEATURES_ML_INHERITS> {
-          int inheritsIndex = token.image.indexOf("inherits ");
-          String rest = token.image.substring(inheritsIndex + "inherits ".length());
-          profile.setInheritedMatchFeatures(rest.substring(0, rest.indexOf(" ")).trim());
-          features = token.image.substring(token.image.indexOf("{") + 1, token.image.lastIndexOf("}")).trim();
+          MlInheritsSplit split = new MlInheritsSplit(token.image);
+          profile.setInheritedMatchFeatures(split.inherits);
+          features = split.features;
       }
     )
     {
@@ -2289,6 +2437,58 @@ void approximateThreshold(ParsedRankProfile profile) :
 }
 
 /**
+ * This rule consumes a filter-first-threshold statement for a rank profile.
+ *
+ * @param profile the rank profile to modify
+ */
+void filterFirstThreshold(ParsedRankProfile profile) :
+{
+    double threshold;
+}
+{
+    (<FILTER_FIRST_THRESHOLD> <COLON> threshold = floatValue()) { profile.setFilterFirstThreshold(threshold); }
+}
+
+/**
+ * This rule consumes a filter-first-exploration statement for a rank profile.
+ *
+ * @param profile the rank profile to modify
+ */
+void filterFirstExploration(ParsedRankProfile profile) :
+{
+    double exploration;
+}
+{
+    (<FILTER_FIRST_EXPLORATION> <COLON> exploration = floatValue()) { profile.setFilterFirstExploration(exploration); }
+}
+
+/**
+ * This rule consumes an exploration-slack statement for a rank profile.
+ *
+ * @param profile the rank profile to modify
+ */
+void explorationSlack(ParsedRankProfile profile) :
+{
+    double slack;
+}
+{
+    (<EXPLORATION_SLACK> <COLON> slack = floatValue()) { profile.setExplorationSlack(slack); }
+}
+
+/**
+ * This rule consumes a prefetch-tensors statement for a rank profile.
+ *
+ * @param profile the rank profile to modify
+ */
+void prefetchTensors(ParsedRankProfile profile) :
+{
+    boolean value;
+}
+{
+    (<PREFETCH_TENSORS> <COLON> value = bool()) { profile.setPrefetchTensors(value); }
+}
+
+/**
  * This rule consumes a target-hits-max-adjustment-factor statement for a rank profile.
  *
  * @param profile the rank profile to modify
@@ -2387,8 +2587,36 @@ void fieldRankFilter(ParsedRankProfile profile) :
     String name;
 }
 {
-    <RANK> name = identifier() <COLON> <FILTER>
-    { profile.addFieldRankFilter(name, true); }
+    <RANK> name = identifier()
+    ( ( <COLON> <FILTER> ) { profile.addFieldRankFilter(name, true); }
+    | ( lbrace() ( fieldRankItem(profile, name) ( <NL> )* )* <RBRACE> )
+    )
+}
+
+void fieldRankItem(ParsedRankProfile profile, String field) :
+{
+    double filterThreshold;
+    ElementGap elementGap;
+}
+{
+    (   <FILTER_THRESHOLD> <COLON> filterThreshold = floatValue()
+            { profile.addFieldRankFilterThreshold(field, filterThreshold); }
+    |   <ELEMENT_GAP> <COLON> elementGap = elementGapValue()
+            { profile.addFieldRankElementGap(field, elementGap); } )
+}
+
+ElementGap elementGapValue() :
+{
+    int gap;
+    ElementGap elementGap;
+}
+{
+    (   gap = integer() { elementGap = ElementGap.of(gap); }
+    |   <INFINITY> { elementGap = ElementGap.empty(); }
+    )
+    {
+        return elementGap;
+    }
 }
 
 /**
@@ -2474,7 +2702,7 @@ String constantTensorErrorMessage(String rankProfileName, Reference name) : {}
 
 /**
  * Parses a tensor written in a tensor literal form,
- * https://docs.vespa.ai/en/reference/tensor.html#tensor-literal-form
+ * https://docs.vespa.ai/en/reference/ranking/tensor.html#tensor-literal-form
  */
 Tensor tensorValue(TensorType type) :
 {
@@ -2695,6 +2923,8 @@ String identifierWithDash() :
     ( identifier = identifier() { return identifier; } )
     |
     ( <IDENTIFIER_WITH_DASH>
+    | <ADJUST_TARGET>
+    | <ALLOW_DROP_ALL>
     | <APPROXIMATE_THRESHOLD>
     | <CREATE_IF_NONEXISTENT>
     | <CUTOFF_FACTOR>
@@ -2702,15 +2932,21 @@ String identifierWithDash() :
     | <DENSE_POSTING_LIST_THRESHOLD>
     | <DISTANCE_METRIC>
     | <DOCUMENT_SUMMARY>
+    | <ELEMENT_GAP>
     | <ENABLE_BIT_VECTORS>
     | <ENABLE_BM25>
     | <ENABLE_ONLY_BIT_VECTOR>
     | <EVALUATION_POINT>
     | <EXACT_TERMINATOR>
     | <EXECUTION_MODE>
+    | <EXPLORATION_SLACK>
+    | <PREFETCH_TENSORS>
     | <FAST_ACCESS>
     | <FAST_RANK>
     | <FAST_SEARCH>
+    | <FILTER_FIRST_EXPLORATION>
+    | <FILTER_FIRST_THRESHOLD>
+    | <FILTER_THRESHOLD>
     | <FIRST_PHASE>
     | <FROM_DISK>
     | <GLOBAL_PHASE>
@@ -2751,10 +2987,14 @@ String identifierWithDash() :
     | <REMOVE_IF_ZERO>
     | <RERANK_COUNT>
     | <SECOND_PHASE>
+    | <STOPWORD_LIMIT>
     | <STRUCT_FIELD>
     | <SUMMARY_TO>
     | <TARGET_HITS_MAX_ADJUSTMENT_FACTOR>
     | <TERMWISE_LIMIT>
+    | <TOTAL_MAX_HITS>
+    | <TOTAL_KEEP_RANK_COUNT>
+    | <TOTAL_RERANK_COUNT>
     | <UPPER_BOUND>
     | <USE_MODEL>
     ) { return token.image; }
@@ -2788,6 +3028,7 @@ String identifier() : { }
       | <DIRECT>
       | <DIVERSITY>
       | <DOCUMENT>
+      | <DOCUMENTID>
       | <DOUBLE_KEYWORD>
       | <FLOAT_KEYWORD>
       | <LONG_KEYWORD>
@@ -2811,10 +3052,12 @@ String identifier() : { }
       | <IMPORT>
       | <INDEX>
       | <INDEXING>
+      | <INFINITY>
       | <INHERITS>
       | <INLINE>
       | <INPUTS>
       | <INTEGER>
+      | <LINGUISTICS>
       | <LITERAL>
       | <LOCALE>
       | <LONG>
@@ -2839,6 +3082,7 @@ String identifier() : { }
       | <PARALLEL>
       | <PREFIX>
       | <PRIMARY>
+      | <PROFILE>
       | <PROPERTIES>
       | <QUATERNARY>
       | <QUERY>
@@ -2855,11 +3099,11 @@ String identifier() : { }
       | <SSOVERRIDE>
       | <SSTITLE>
       | <SSURL>
+      | <SIGNIFICANCE>
       | <STATIC>
       | <STEMMING>
       | <STRENGTH>
       | <STRICT>
-      | <SIGNIFICANCE>
       | <STRING>
       | <STRUCT>
       | <SUBSTRING>
@@ -2876,6 +3120,7 @@ String identifier() : { }
       | <UNCASED>
       | <URI>
       | <VARIABLE>
+      | <WEAKAND>
       | <WEIGHT>
       | <WEIGHTEDSET>
       | <WORD>

@@ -2,14 +2,12 @@
 package com.yahoo.prelude.fastsearch;
 
 import com.yahoo.collections.TinyIdentitySet;
-import com.yahoo.fs4.DocsumPacket;
 import com.yahoo.prelude.query.CompositeItem;
 import com.yahoo.prelude.query.GeoLocationItem;
 import com.yahoo.prelude.query.Item;
 import com.yahoo.prelude.query.NullItem;
 import com.yahoo.prelude.query.textualrepresentation.TextualQueryRepresentation;
 import com.yahoo.prelude.querytransform.QueryRewrite;
-import com.yahoo.processing.IllegalInputException;
 import com.yahoo.protect.Validator;
 import com.yahoo.search.Query;
 import com.yahoo.search.Result;
@@ -20,7 +18,7 @@ import com.yahoo.search.result.Hit;
 import com.yahoo.searchlib.aggregation.Grouping;
 
 import java.util.ArrayList;
-import java.util.Iterator;
+import java.util.Locale;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -45,9 +43,9 @@ public abstract class VespaBackend {
     /** Default docsum class. null means "unset" and is the default value */
     private final String defaultDocsumClass;
 
-    /** Returns an iterator which returns all hits below this result **/
-    private static Iterator<Hit> hitIterator(Result result) {
-        return result.hits().unorderedDeepIterator();
+    /** Iterate over all hits below this result */
+    protected static Iterable<Hit> iterableHits(Result result) {
+        return () -> result.hits().unorderedDeepIterator();
     }
 
     /** The name of this source */
@@ -86,9 +84,7 @@ public abstract class VespaBackend {
     protected abstract void doPartialFill(Result result, String summaryClass);
 
     private boolean hasLocation(Item tree) {
-        if (tree instanceof GeoLocationItem) {
-            return true;
-        }
+        if (tree instanceof GeoLocationItem) return true;
         if (tree instanceof CompositeItem composite) {
             for (Item child : composite.items()) {
                 if (hasLocation(child)) return true;
@@ -119,7 +115,6 @@ public abstract class VespaBackend {
         if (query.getRanking().getListFeatures()) return true;
 
         // (Don't just add other checks here as there is a return false above)
-
         return false;
     }
 
@@ -129,28 +124,24 @@ public abstract class VespaBackend {
         if (query.getModel().getRestrict().size() == 1) {
             String docTypeName = (String)query.getModel().getRestrict().toArray()[0];
             DocumentDatabase db = documentDbs.get(docTypeName);
-            if (db != null) {
-                return db;
-            }
+            if (db != null) return db;
         }
         return defaultDocumentDb;
     }
 
-    private void resolveDocumentDatabase(Query query) {
-        DocumentDatabase docDb = getDocumentDatabase(query);
-        if (docDb != null) {
-            query.getModel().setDocumentDb(docDb.schema().name());
-        }
+    private DocumentDatabase resolveDocumentDatabase(Query query) {
+        DocumentDatabase documentDb = getDocumentDatabase(query);
+        if (documentDb != null)
+            query.getModel().setDocumentDb(documentDb.schema().name());
+        return documentDb;
     }
 
     protected void transformQuery(Query query) { }
 
     public Result search(String schema, Query query) {
-        // query root should not be null here
         Item root = query.getModel().getQueryTree().getRoot();
-        if (root == null || root instanceof NullItem) {
+        if (root == null || root instanceof NullItem)
             return new Result(query, ErrorMessage.createNullQuery(query.getUri().toString()));
-        }
 
         if ( ! getDocumentDatabase(query).schema().rankProfiles().containsKey(query.getRanking().getProfile()))
             return new Result(query, ErrorMessage.createInvalidQueryParameter(getDocumentDatabase(query).schema() +
@@ -181,12 +172,12 @@ public abstract class VespaBackend {
         return result;
     }
 
+    // split by query
     private static List<Result> partitionHits(Result result, String summaryClass) {
         List<Result> parts = new ArrayList<>();
         TinyIdentitySet<Query> queryMap = new TinyIdentitySet<>(4);
 
-        for (Iterator<Hit> i = hitIterator(result); i.hasNext(); ) {
-            Hit hit = i.next();
+        for (Hit hit : iterableHits(result)) {
             if (hit instanceof FastHit fastHit) {
                 if ( ! fastHit.isFilled(summaryClass)) {
                     Query q = fastHit.getQuery();
@@ -207,32 +198,36 @@ public abstract class VespaBackend {
         return parts;
     }
 
-    //TODO Add schema here too.
+    // TODO: Add schema here too.
     public void fill(Result result, String summaryClass) {
         if (result.isFilled(summaryClass)) return; // TODO: Checked in the superclass - remove
 
         List<Result> parts = partitionHits(result, summaryClass);
         if (!parts.isEmpty()) { // anything to fill at all?
             for (Result r : parts) {
-                doPartialFill(r, ensureLegalSummaryClass(r.getQuery(), summaryClass));
-                mergeErrorsInto(result, r);
+                if (summaryClass != null && summaryClass.isEmpty())
+                    summaryClass = null;
+                Optional<String> summaryError = validateSummaryClass(summaryClass, r.getQuery());
+                if (summaryError.isPresent()) {
+                    result.hits().addError(ErrorMessage.createInvalidQueryParameter(summaryError.get()));
+                }
+                else {
+                    doPartialFill(r, summaryClass);
+                    mergeErrorsInto(result, r);
+                }
             }
             result.hits().setSorted(false);
             result.analyzeHits();
         }
     }
-    protected String ensureLegalSummaryClass(Query query, String summaryClass) {
-        if (summaryClass != null) {
-            if (summaryClass.isEmpty()) {
-                return null;
-            } else {
-                var db = getDocumentDatabase(query);
-                if (db != null && ! db.getDocsumDefinitionSet().hasDocsum(summaryClass)) {
-                    throw new IllegalInputException("invalid presentation.summary=" + summaryClass);
-                }
-            }
+
+    protected Optional<String> validateSummaryClass(String summaryClass, Query query) {
+        if (summaryClass != null && ! summaryClass.isEmpty()) {
+            var db = getDocumentDatabase(query);
+            if (db != null)
+                return new PartialSummaryHandler(db).validateSummaryClass(summaryClass, query);
         }
-        return summaryClass;
+        return Optional.empty();
     }
 
     private void mergeErrorsInto(Result destination, Result source) {
@@ -243,7 +238,7 @@ public abstract class VespaBackend {
         if ((query.getTrace().getLevel()<level) || !query.getTrace().getQuery()) return;
 
         StringBuilder s = new StringBuilder();
-        s.append(sourceName).append(" ").append(phase.name().toLowerCase()).append(" to dispatch: ")
+        s.append(sourceName).append(" ").append(phase.name().toLowerCase(Locale.ROOT)).append(" to dispatch: ")
                 .append("query=[")
                 .append(query.getModel().getQueryTree().getRoot().toString())
                 .append("]");
@@ -319,82 +314,6 @@ public abstract class VespaBackend {
         if (query.getTrace().isTraceable(level + 2) && query.getTrace().getQuery()) {
             query.trace("YQL+ representation: " + query.yqlRepresentation(), level + 2);
         }
-    }
-
-    static class FillHitResult {
-        final boolean ok;
-        final String error;
-        FillHitResult(boolean ok) {
-            this(ok, null);
-        }
-        FillHitResult(boolean ok, String error) {
-            this.ok = ok;
-            this.error = error;
-        }
-    }
-
-    private FillHitResult fillHit(FastHit hit, DocsumPacket packet, String summaryClass) {
-        if (packet != null) {
-            byte[] docsumdata = packet.getData();
-            if (docsumdata.length > 0) {
-                return new FillHitResult(true, decodeSummary(summaryClass, hit, docsumdata));
-            }
-        }
-        return new FillHitResult(false);
-    }
-
-    static protected class FillHitsResult {
-        public final int skippedHits; // Number of hits not producing a summary.
-        public final String error; // Optional error message
-        FillHitsResult(int skippedHits, String error) {
-            this.skippedHits = skippedHits;
-            this.error = error;
-        }
-    }
-    /**
-     * Fills the hits.
-     *
-     * @return the number of hits that we did not return data for, and an optional error message.
-     *         when things are working normally we return 0.
-     */
-     protected FillHitsResult fillHits(Result result, DocsumPacket[] packets, String summaryClass) {
-        int skippedHits = 0;
-        String lastError = null;
-        int packetIndex = 0;
-        for (Iterator<Hit> i = hitIterator(result); i.hasNext();) {
-            Hit hit = i.next();
-
-            if (hit instanceof FastHit fastHit && ! hit.isFilled(summaryClass)) {
-                DocsumPacket docsum = packets[packetIndex];
-
-                packetIndex++;
-                FillHitResult fr = fillHit(fastHit, docsum, summaryClass);
-                if ( ! fr.ok ) {
-                    skippedHits++;
-                }
-                if (fr.error != null) {
-                    result.hits().addError(ErrorMessage.createTimeout(fr.error));
-                    skippedHits++;
-                    lastError = fr.error;
-                }
-            }
-        }
-        result.hits().setSorted(false);
-        return new FillHitsResult(skippedHits, lastError);
-    }
-
-    private String decodeSummary(String summaryClass, FastHit hit, byte[] docsumdata) {
-        DocumentDatabase db = getDocumentDatabase(hit.getQuery());
-        hit.setField(Hit.SDDOCNAME_FIELD, db.schema().name());
-        return decodeSummary(summaryClass, hit, docsumdata, db.getDocsumDefinitionSet());
-    }
-
-    private static String decodeSummary(String summaryClass, FastHit hit, byte[] docsumdata, DocsumDefinitionSet docsumSet) {
-        String error = docsumSet.lazyDecode(summaryClass, docsumdata, hit);
-        if (error == null) {
-            hit.setFilled(summaryClass);
-        }
-        return error;
     }
 
     public void shutDown() { }

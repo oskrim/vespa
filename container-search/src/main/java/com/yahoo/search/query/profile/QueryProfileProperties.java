@@ -15,7 +15,7 @@ import com.yahoo.search.query.profile.types.ConversionContext;
 import com.yahoo.search.query.profile.types.FieldDescription;
 import com.yahoo.search.query.profile.types.QueryProfileFieldType;
 import com.yahoo.search.query.profile.types.QueryProfileType;
-import com.yahoo.tensor.Tensor;
+import com.yahoo.search.query.properties.IllegalAssignmentException;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -30,6 +30,7 @@ import java.util.Map;
  */
 public class QueryProfileProperties extends Properties {
 
+    private static final String APPLICATION = "application";
     private static final String ENVIRONMENT = "environment";
     private static final String REGION = "region";
     private static final String INSTANCE = "instance";
@@ -72,6 +73,7 @@ public class QueryProfileProperties extends Properties {
         this.embedders = embedders;
         this.zoneInfo = zoneInfo;
         this.zoneContext = Map.of(
+                APPLICATION, zoneInfo.application().application(),
                 ENVIRONMENT, zoneInfo.zone().environment().name(),
                 REGION, zoneInfo.zone().region(),
                 INSTANCE, zoneInfo.application().instance());
@@ -163,14 +165,8 @@ public class QueryProfileProperties extends Properties {
             }
         }
         catch (IllegalArgumentException e) {
-            throw new IllegalInputException("Could not set '" + name + "' to '" + toShortString(value) + "'", e);
+            throw new IllegalAssignmentException(name, value, e);
         }
-    }
-
-    private String toShortString(Object value) {
-        if (value == null) return "null";
-        if ( ! (value instanceof Tensor)) return value.toString();
-        return ((Tensor)value).toAbbreviatedString();
     }
 
     private Object convertByType(CompoundName name, Object value, Map<String, String> context) {

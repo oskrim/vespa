@@ -9,8 +9,7 @@ namespace search::queryeval {
 /**
  * A simple implementation of the Rank search operation.
  **/
-class RankSearch : public MultiSearch
-{
+class RankSearch : public MultiSearch {
 protected:
     void doSeek(uint32_t docid) override;
 
@@ -20,10 +19,12 @@ protected:
      *
      * @param children the search objects we are rank'ing
      **/
-    RankSearch(Children children) : MultiSearch(std::move(children)) { }
+    RankSearch(Children children) : MultiSearch(std::move(children)) {}
+    ~RankSearch() override;
 
 public:
     static SearchIterator::UP create(ChildrenIterators children, bool strict);
+    void get_element_ids(uint32_t docid, std::vector<uint32_t>& element_ids) override;
 };
 
-}
+} // namespace search::queryeval

@@ -14,12 +14,13 @@ import com.yahoo.config.model.api.ServiceInfo;
 import com.yahoo.config.model.api.ValidationParameters;
 import com.yahoo.config.model.deploy.TestProperties;
 import com.yahoo.config.model.test.MockApplicationPackage;
+import com.yahoo.config.provision.AzName;
 import com.yahoo.config.provision.Capacity;
 import com.yahoo.config.provision.ClusterMembership;
 import com.yahoo.config.provision.ClusterSpec;
 import com.yahoo.config.provision.HostSpec;
 import com.yahoo.config.provision.NodeResources;
-import com.yahoo.config.provision.ProvisionLogger;
+import com.yahoo.config.provision.ProvisionContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -28,7 +29,10 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * @author Ulf Lilleengen
@@ -59,7 +63,7 @@ public class VespaModelFactoryTest {
         });
     }
 
-    // Uses a MockApplicationPackage that throws throws UnsupportedOperationException (rethrown as RuntimeException) when validating
+    // Uses a MockApplicationPackage that throws UnsupportedOperationException (rethrown as RuntimeException) when validating
     @Test
     void testThatFactoryModelValidationFails() {
         assertThrows(RuntimeException.class, () -> {
@@ -94,13 +98,13 @@ public class VespaModelFactoryTest {
                         "    </container>\n" +
                         "</services>";
 
-        HostProvisioner provisionerToOverride = (cluster, capacity, logger) ->
-                List.of(new HostSpec(hostName,
-                                     NodeResources.unspecified(), NodeResources.unspecified(), NodeResources.unspecified(),
-                                     ClusterMembership.from(ClusterSpec.request(ClusterSpec.Type.container, new ClusterSpec.Id(routingClusterName)).vespaVersion("6.42").build(), 0),
-                                     Optional.empty(), Optional.empty(), Optional.empty()));
-
-        ModelContext modelContext = createMockModelContext(null, services, provisionerToOverride, routingClusterName);
+        var host = new HostSpec(hostName,
+                                NodeResources.unspecified(), NodeResources.unspecified(), NodeResources.unspecified(),
+                                ClusterMembership.from(ClusterSpec.request(ClusterSpec.Type.container, new ClusterSpec.Id(routingClusterName)).vespaVersion("6.42").build(), 0),
+                                Optional.empty(), Optional.empty(), Optional.empty(),
+                                AzName.defaultName());
+        var mockProvisioner = new MockProvisioner(List.of(host));
+        ModelContext modelContext = createMockModelContext(null, services, mockProvisioner, routingClusterName);
         Model model = VespaModelFactory.createTestFactory().createModel(modelContext);
 
         List<HostInfo> allocatedHosts = new ArrayList<>(model.getHosts());
@@ -133,6 +137,21 @@ public class VespaModelFactoryTest {
 
     ApplicationPackage createApplicationPackageThatFailsWhenValidating() {
         return new MockApplicationPackage.Builder().withEmptyHosts().withEmptyServices().failOnValidateXml().build();
+    }
+
+    static class MockProvisioner implements HostProvisioner {
+
+        private final List<HostSpec> hosts;
+
+        public MockProvisioner(List<HostSpec> hosts) {
+            this.hosts = hosts;
+        }
+
+        @Override
+        public List<HostSpec> prepare(ClusterSpec cluster, Capacity capacity, ProvisionContext context) {
+            return hosts;
+        }
+
     }
 
 }

@@ -16,7 +16,6 @@ import com.yahoo.vespa.config.server.PortRangeAllocator;
 import com.yahoo.vespa.config.server.SuperModelManager;
 import com.yahoo.vespa.config.server.SuperModelRequestHandler;
 import com.yahoo.vespa.config.server.TestConfigDefinitionRepo;
-import com.yahoo.vespa.config.server.application.OrchestratorMock;
 import com.yahoo.vespa.config.server.filedistribution.FileDirectory;
 import com.yahoo.vespa.config.server.filedistribution.FileServer;
 import com.yahoo.vespa.config.server.host.HostRegistry;
@@ -24,6 +23,7 @@ import com.yahoo.vespa.config.server.monitoring.Metrics;
 import com.yahoo.vespa.config.server.rpc.security.NoopRpcAuthorizer;
 import com.yahoo.vespa.config.server.tenant.TenantRepository;
 import com.yahoo.vespa.config.server.tenant.TestTenantRepository;
+import com.yahoo.vespa.flags.InMemoryFlagSource;
 import org.junit.rules.TemporaryFolder;
 
 import java.io.IOException;
@@ -101,7 +101,6 @@ public class RpcTester implements AutoCloseable {
         applicationRepository = new ApplicationRepository.Builder()
                 .withTenantRepository(tenantRepository)
                 .withConfigserverConfig(configserverConfig)
-                .withOrchestrator(new OrchestratorMock())
                 .build();
     }
 
@@ -129,7 +128,7 @@ public class RpcTester implements AutoCloseable {
                                                                   new MemoryGenerationCounter())),
                                             Metrics.createTestMetrics(),
                                             hostRegistry,
-                                            new FileServer(config, new FileDirectory(temporaryFolder.newFolder())),
+                                            new FileServer(config, new InMemoryFlagSource(), new FileDirectory(temporaryFolder.newFolder())),
                                             new NoopRpcAuthorizer(),
                                             new RpcRequestHandlerProvider());
         rpcServer.setUpGetConfigHandlers();

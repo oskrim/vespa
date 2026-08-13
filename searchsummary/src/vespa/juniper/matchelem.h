@@ -4,6 +4,7 @@
 #pragma once
 
 #include "querynode.h"
+
 #include <set>
 #include <string>
 
@@ -12,21 +13,15 @@ class key_occ;
 class MatchCandidate;
 
 /* Sequential ordering of elements */
-template <typename _Elem>
-struct sequential_elem
-{
-    inline bool operator()(_Elem m1, _Elem m2) const
-    {
-        return m1->starttoken() < m2->starttoken();
-    }
+template <typename _Elem> struct sequential_elem {
+    inline bool operator()(_Elem m1, _Elem m2) const { return m1->starttoken() < m2->starttoken(); }
 };
-using keylist = std::set<key_occ*, sequential_elem<key_occ*> >;
+using keylist = std::set<key_occ*, sequential_elem<key_occ*>>;
 
-class MatchElement
-{
+class MatchElement {
 public:
     MatchElement(off_t startpos, off_t starttoken);
-    virtual ~MatchElement() {}
+    virtual ~MatchElement() = default;
     virtual void set_valid() = 0; // Mark this element and its subelements as valid
     virtual void add_to_keylist(keylist& kl) = 0;
     virtual void dump(std::string& s) = 0;
@@ -45,10 +40,10 @@ public:
     // Set if this match element is part of a valid match
     inline bool valid() const { return _valid; }
 
-    virtual MatchCandidate* Complex() { return NULL; }
-protected:
-    off_t _starttoken;  // The token number at which this element starts
-    off_t _startpos;    // The byte number (byte pos) at which this element starts
-    bool  _valid;       // tag set if this match element is part of a valid match
-};
+    virtual MatchCandidate* Complex() { return nullptr; }
 
+protected:
+    off_t _starttoken; // The token number at which this element starts
+    off_t _startpos;   // The byte number (byte pos) at which this element starts
+    bool  _valid;      // tag set if this match element is part of a valid match
+};

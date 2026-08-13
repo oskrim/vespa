@@ -34,10 +34,12 @@ public final class DocsumDefinitionSet {
     }
 
     public DocsumDefinitionSet(Collection<DocumentSummary> docsumDefinitions) {
-        this.definitionsByName = docsumDefinitions.stream()
-                                                  .map(DocsumDefinition::new)
-                                                  .collect(Collectors.toUnmodifiableMap(DocsumDefinition::name,
-                                                                                        summary -> summary));
+        var map = docsumDefinitions.stream()
+                .map(DocsumDefinition::new)
+                .collect(Collectors.toConcurrentMap(DocsumDefinition::name,
+                                                    summary -> summary));
+        map.computeIfAbsent("[all]", k -> new DocsumDefinition(k, map.get("default"), map.values()));
+        this.definitionsByName = Map.copyOf(map);
     }
 
     /**
@@ -46,7 +48,7 @@ public final class DocsumDefinitionSet {
      * @throws ConfigurationException if the requested summary class is not found and there is none called "default"
      */
     public DocsumDefinition getDocsum(String summaryClass) {
-        if (summaryClass == null)
+        if (summaryClass == null || summaryClass.isEmpty())
             summaryClass = "default";
         DocsumDefinition ds = definitionsByName.get(summaryClass);
         if (ds == null)
@@ -60,7 +62,7 @@ public final class DocsumDefinitionSet {
 
     /** Do we have a summary definition with the given name */
     public boolean hasDocsum(String summaryClass) {
-        if (summaryClass == null)
+        if (summaryClass == null || summaryClass.isEmpty())
             summaryClass = "default";
         return definitionsByName.containsKey(summaryClass);
     }

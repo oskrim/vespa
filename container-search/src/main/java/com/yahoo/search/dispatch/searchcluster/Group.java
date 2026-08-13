@@ -1,7 +1,6 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.search.dispatch.searchcluster;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.logging.Logger;
 
@@ -20,6 +19,7 @@ public class Group {
 
     private final int id;
     private final List<Node> nodes;
+    private final String availabilityZone;
 
     // Using volatile to ensure visibility for reader.
     // All updates are done in a single writer thread
@@ -27,17 +27,17 @@ public class Group {
     private volatile boolean hasFullCoverage = true;
     private volatile long activeDocuments = 0;
     private volatile long targetActiveDocuments = 0;
-    private volatile boolean isBlockingWrites = false;
     private volatile boolean isBalanced = true;
 
     public Group(int id, List<Node> nodes) {
         this.id = id;
         this.nodes = List.copyOf(nodes);
+        this.availabilityZone = nodes.isEmpty() ? "default" : nodes.get(0).availabilityZone();
 
-        int idx = 0;
+        int index = 0;
         for (var node: nodes) {
-            node.setPathIndex(idx);
-            idx++;
+            node.setPathIndex(index);
+            index++;
         }
     }
 
@@ -46,6 +46,12 @@ public class Group {
      * NOTE: This is a contiguous index from 0, NOT necessarily the group id assigned by the user or node repo.
      */
     public int id() { return id; }
+
+    /** Returns the name of the availability zone this group is allocated in. */
+    public String availabilityZone() { return availabilityZone; }
+
+    /** Returns the number of nodes in this. */
+    public int size() { return nodes.size(); }
 
     /** Returns the nodes in this group as an immutable list */
     public List<Node> nodes() { return nodes; }
@@ -58,23 +64,33 @@ public class Group {
         return hasSufficientCoverage;
     }
 
-    void setHasSufficientCoverage(boolean sufficientCoverage) {
+    public void setHasSufficientCoverage(boolean sufficientCoverage) {
         hasSufficientCoverage = sufficientCoverage;
     }
 
-    public int workingNodes() {
-        return (int) nodes.stream().filter(node -> node.isWorking() == Boolean.TRUE).count();
+    public List<Node> workingNodes() {
+        return nodes.stream().filter(node -> node.isWorking() == Boolean.TRUE).toList();
     }
 
+    public int workingNodesCount() {
+        return workingNodes().size();
+    }
+
+    /**
+     * Returns whether all nodes in this group are working.
+     */
+    public boolean allNodesWorking() {
+        return workingNodesCount() == size();
+    }
+
+    /** Called every time, and only when, we have received a ping response from every node in the group. */
     public void aggregateNodeValues() {
-        List<Node> workingNodes = new ArrayList<>(nodes);
-        workingNodes.removeIf(node -> node.isWorking() != Boolean.TRUE);
-        long activeDocs = workingNodes.stream().mapToLong(Node::getActiveDocuments).sum();
+        List<Node> workingNodes = workingNodes();
+        long activeDocs = calculateActiveDocs(workingNodes);
         activeDocuments = activeDocs;
         targetActiveDocuments = workingNodes.stream().mapToLong(Node::getTargetActiveDocuments).sum();
-        isBlockingWrites = nodes.stream().anyMatch(Node::isBlockingWrites);
         int numWorkingNodes = workingNodes.size();
-        if (numWorkingNodes > 0) {
+        if (numWorkingNodes > 1) {
             long average = activeDocs / numWorkingNodes;
             long skew = workingNodes.stream().mapToLong(node -> Math.abs(node.getActiveDocuments() - average)).sum();
             boolean balanced = skew <= activeDocs * maxContentSkew;
@@ -91,14 +107,23 @@ public class Group {
         }
     }
 
-    /** Returns the active documents on this group. If unknown, 0 is returned. */
-    long activeDocuments() { return activeDocuments; }
+    private static long calculateActiveDocs(List<Node> workingNodes) {
+        return workingNodes.stream()
+                           .mapToLong(Node::getActiveDocuments)
+                           .sum();
+    }
 
-    /** Returns the target active documents on this group. If unknown, 0 is returned. */
-    long targetActiveDocuments() { return targetActiveDocuments; }
+    /**
+     * Returns the active documents in this group.
+     * If we have not yet received this information from <i>all</i> nodes in the group, 0 is returned.
+     */
+    public long activeDocuments() { return activeDocuments; }
 
-    /** Returns whether any node in this group is currently blocking write operations */
-    public boolean isBlockingWrites() { return isBlockingWrites; }
+    /**
+     * Returns the target active documents in this group.
+     * If we have not yet received this information from <i>all</i> nodes in the group, 0 is returned.
+     */
+    public long targetActiveDocuments() { return targetActiveDocuments; }
 
     /** Returns whether the nodes in the group have about the same number of documents */
     public boolean isBalanced() { return isBalanced; }
@@ -113,6 +138,15 @@ public class Group {
         boolean previousState = hasFullCoverage;
         hasFullCoverage = hasFullCoverageNow;
         return previousState != hasFullCoverageNow;
+    }
+
+    /**
+     * Returns true if - given the two group's status - it's strictly preferable to route a request to this group
+     * over the given group.
+     */
+    public boolean isPreferableTo(Group other) {
+        if (this.hasSufficientCoverage() && !other.hasSufficientCoverage()) return true;
+        return false;
     }
 
     @Override

@@ -2,6 +2,7 @@
 package com.yahoo.schema.processing;
 
 import com.yahoo.config.model.application.provider.BaseDeployLogger;
+import com.yahoo.config.model.deploy.TestProperties;
 import com.yahoo.config.model.test.MockApplicationPackage;
 import com.yahoo.document.DataType;
 import com.yahoo.schema.Index;
@@ -184,8 +185,9 @@ public class IndexingScriptRewriterTestCase extends AbstractSchemaTestCase {
         sdoc.addField(unprocessedField);
         Schema schema = new Schema("test", MockApplicationPackage.createEmpty());
         schema.addDocument(sdoc);
-        new Processing().process(schema, new BaseDeployLogger(), new RankProfileRegistry(),
-                                 new QueryProfiles(), true, false, Set.of());
+        new Processing(new TestProperties())
+                .process(schema, new BaseDeployLogger(), new RankProfileRegistry(),
+                         new QueryProfiles(), true, false, Set.of());
         return unprocessedField.getIndexingScript();
     }
 
@@ -215,7 +217,7 @@ public class IndexingScriptRewriterTestCase extends AbstractSchemaTestCase {
     }
 
     private static SummaryField createSummaryField(SDField field, String name, boolean dynamic) {
-        SummaryField summaryField = new SummaryField(name, field.getDataType());
+        SummaryField summaryField = new SummaryField(name, field.getDataType(), field);
         if (dynamic) {
             summaryField.setTransform(SummaryTransform.DYNAMICTEASER);
         }

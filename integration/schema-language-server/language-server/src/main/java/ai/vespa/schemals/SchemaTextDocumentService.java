@@ -2,6 +2,7 @@ package ai.vespa.schemals;
 
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CancellationException;
@@ -47,21 +48,24 @@ import org.eclipse.lsp4j.TextDocumentIdentifier;
 import org.eclipse.lsp4j.TextDocumentItem;
 import org.eclipse.lsp4j.TextEdit;
 import org.eclipse.lsp4j.WorkspaceEdit;
-import org.eclipse.lsp4j.jsonrpc.CancelChecker;
 import org.eclipse.lsp4j.jsonrpc.CompletableFutures;
 import org.eclipse.lsp4j.jsonrpc.messages.Either;
 import org.eclipse.lsp4j.jsonrpc.messages.Either3;
 import org.eclipse.lsp4j.services.TextDocumentService;
 
 import ai.vespa.schemals.common.ClientLogger;
+import ai.vespa.schemals.common.FileUtils;
 import ai.vespa.schemals.context.EventContextCreator;
 import ai.vespa.schemals.context.EventDocumentContext;
+import ai.vespa.schemals.context.EventFormattingContext;
+import ai.vespa.schemals.context.EventRangeFormattingContext;
 import ai.vespa.schemals.context.InvalidContextException;
 import ai.vespa.schemals.index.SchemaIndex;
+import ai.vespa.schemals.lsp.common.completion.CommonCompletion;
 import ai.vespa.schemals.lsp.schema.codeaction.SchemaCodeAction;
-import ai.vespa.schemals.lsp.schema.completion.SchemaCompletion;
 import ai.vespa.schemals.lsp.schema.definition.SchemaDefinition;
 import ai.vespa.schemals.lsp.schema.documentsymbols.SchemaDocumentSymbols;
+import ai.vespa.schemals.lsp.schema.formatting.SchemaFormatting;
 import ai.vespa.schemals.lsp.schema.hover.SchemaHover;
 import ai.vespa.schemals.lsp.schema.references.SchemaReferences;
 import ai.vespa.schemals.lsp.schema.rename.SchemaPrepareRename;
@@ -69,8 +73,8 @@ import ai.vespa.schemals.lsp.schema.rename.SchemaRename;
 import ai.vespa.schemals.lsp.schema.semantictokens.SchemaSemanticTokens;
 import ai.vespa.schemals.lsp.yqlplus.codelens.YQLPlusCodeLens;
 import ai.vespa.schemals.lsp.yqlplus.semantictokens.YQLPlusSemanticTokens;
-import ai.vespa.schemals.schemadocument.SchemaDocumentScheduler;
 import ai.vespa.schemals.schemadocument.DocumentManager.DocumentType;
+import ai.vespa.schemals.schemadocument.SchemaDocumentScheduler;
 
 /**
  * SchemaTextDocumentService handles incomming requests from the client.
@@ -94,13 +98,13 @@ public class SchemaTextDocumentService implements TextDocumentService {
             try {
 
                 ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
-                PrintStream errorLogger = new PrintStream(outputStream);
+                PrintStream errorLogger = new PrintStream(outputStream, true, StandardCharsets.UTF_8);
                 Either<List<CompletionItem>, CompletionList> result =
-                    Either.forLeft(SchemaCompletion.getCompletionItems(eventContextCreator.createContext(completionParams), errorLogger));
+                    Either.forLeft(CommonCompletion.getCompletionItems(eventContextCreator.createContext(completionParams), errorLogger));
 
                 if (outputStream.size() > 0) {
-                    schemaMessageHandler.logMessage(MessageType.Error, 
-                        "Completion failed with errors: " + outputStream.toString() 
+                    schemaMessageHandler.logMessage(MessageType.Error,
+                        "Completion failed with errors: " + outputStream.toString(StandardCharsets.UTF_8)
                     );
                 }
                 return result;
@@ -194,13 +198,31 @@ public class SchemaTextDocumentService implements TextDocumentService {
     }
 
     @Override
-    public CompletableFuture<List<? extends TextEdit>> formatting(DocumentFormattingParams documentFormattingParams) {
-        return null;
+    public CompletableFuture<List<? extends TextEdit>> formatting(DocumentFormattingParams params) {
+        return CompletableFutures.computeAsync((cancelChecker) -> {
+            try {
+                EventFormattingContext context = eventContextCreator.createContext(params);
+                return SchemaFormatting.computeFormattingEdits(context);
+            } catch (InvalidContextException ignore) {
+            } catch (Exception e) {
+                logger.error("Error during formatting request: " + e.getMessage());
+            }
+            return List.of();
+        });
     }
 
     @Override
-    public CompletableFuture<List<? extends TextEdit>> rangeFormatting(DocumentRangeFormattingParams documentRangeFormattingParams) {
-        return null;
+    public CompletableFuture<List<? extends TextEdit>> rangeFormatting(DocumentRangeFormattingParams params) {
+        return CompletableFutures.computeAsync((cancelChecker) -> {
+            try {
+                EventRangeFormattingContext context = eventContextCreator.createContext(params);
+                return SchemaFormatting.computeRangeFormattingEdits(context);
+            } catch (InvalidContextException ignore) {
+            } catch (Exception e) {
+                logger.error("Error during range formatting request: " + e.getMessage());
+            }
+            return List.of();
+        });
     }
 
     @Override
@@ -250,27 +272,22 @@ public class SchemaTextDocumentService implements TextDocumentService {
 
         var contentChanges = params.getContentChanges();
         for (int i = 0; i < contentChanges.size(); i++) {
+            String fileURI = FileUtils.decodeURL(document.getUri());
             try {
-                scheduler.updateFile(document.getUri(), contentChanges.get(i).getText());
+                scheduler.updateFile(fileURI, contentChanges.get(i).getText());
             } catch(Exception e) {
-                ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
-                PrintStream logger = new PrintStream(outputStream);
-
-                e.printStackTrace(logger);
-
-                schemaMessageHandler.logMessage(MessageType.Error, 
-                    "Updating file " + document.getUri() + " failed with error: " + outputStream.toString() 
-                );
+                logger.error("Updating file " + fileURI + " failed with error: " + ClientLogger.errorToString(e));
             }
         }
     }
+
 
     @Override
     public void didClose(DidCloseTextDocumentParams params) {
         TextDocumentIdentifier documentIdentifier = params.getTextDocument();
         SchemaDocumentScheduler scheduler = eventContextCreator.scheduler;
 
-        scheduler.closeDocument(documentIdentifier.getUri());
+        scheduler.closeDocument(FileUtils.decodeURL(documentIdentifier.getUri()));
     }
 
     @Override
@@ -301,7 +318,7 @@ public class SchemaTextDocumentService implements TextDocumentService {
             } catch (CancellationException ignore) {
                 // Ignore cancellation exception
             } catch (Exception e) {
-                logger.error(e.getMessage());;
+                logger.error(e);
             }
 
             return new SemanticTokens(new ArrayList<>());
@@ -318,14 +335,14 @@ public class SchemaTextDocumentService implements TextDocumentService {
 
             try {
 
-                return SchemaHover.getHover(eventContextCreator.createContext(params));
+                return SchemaHover.getHover(eventContextCreator.createContext(params), SchemaLanguageServer.getDefaultDocumentationPath());
 
             } catch (InvalidContextException ex) {
                 // ignore
             } catch (CancellationException ignore) {
                 // Ignore
             } catch (Exception e) {
-                logger.error(e.getMessage());
+                logger.error(e);
             }
 
             return null; 

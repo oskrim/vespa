@@ -7,6 +7,7 @@ import com.yahoo.vespa.objects.ObjectPredicate;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 
 /**
  * @author Simon Thoresen Hult
@@ -17,16 +18,24 @@ public abstract class OutputExpression extends Expression {
     private final String fieldName;
 
     public OutputExpression(String image, String fieldName) {
-        super(UnresolvedDataType.INSTANCE);
         this.image = image;
         this.fieldName = fieldName;
     }
 
+    @Override
+    public boolean isMutating() { return false; }
+
     public String getFieldName() { return fieldName; }
 
     @Override
-    protected void doVerify(VerificationContext context) {
-        context.tryOutputType(fieldName, context.getCurrentType(), this);
+    public DataType setInputType(DataType inputType, TypeContext context) {
+        return super.setInputType(inputType, context.getFieldType(fieldName, this), context);
+    }
+
+    @Override
+    public DataType setOutputType(DataType outputType, TypeContext context) {
+        super.setOutputType(outputType, context);
+        return context.getFieldType(fieldName, this);
     }
 
     @Override
@@ -35,10 +44,7 @@ public abstract class OutputExpression extends Expression {
     }
 
     @Override
-    public DataType createdOutputType() { return null; }
-
-    @Override
-    public DataType getInputType(VerificationContext context) {
+    public DataType getInputType(TypeContext context) {
         return context.getFieldType(fieldName, this);
     }
 
@@ -50,7 +56,7 @@ public abstract class OutputExpression extends Expression {
     @Override
     public boolean equals(Object obj) {
         if (!(obj instanceof OutputExpression rhs)) return false;
-        if (!equals(fieldName, rhs.fieldName)) return false;
+        if (!Objects.equals(fieldName, rhs.fieldName)) return false;
         return true;
     }
 

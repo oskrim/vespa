@@ -9,17 +9,17 @@ namespace {
 struct Untaintable : Taintable {
     Taint taint;
 
-    const Taint &tainted() const override { return taint; }
-    ~Untaintable() {}
+    const Taint& tainted() const override { return taint; }
+    ~Untaintable() override;
 };
+
+Untaintable::~Untaintable() = default;
 
 Untaintable untaintable;
 
-} // namespace vbench::<unnamed>
+} // namespace
 
-const Taintable &
-Taintable::nil()
-{
+const Taintable& Taintable::nil() {
     return untaintable;
 }
 

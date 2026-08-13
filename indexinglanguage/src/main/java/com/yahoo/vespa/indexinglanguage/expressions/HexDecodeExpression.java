@@ -13,13 +13,16 @@ public final class HexDecodeExpression extends Expression {
 
     private static final BigInteger ULONG_MAX = new BigInteger("18446744073709551616");
 
-    public HexDecodeExpression() {
-        super(DataType.STRING);
+    @Override
+    public DataType setInputType(DataType inputType, TypeContext context) {
+        super.setInputType(inputType, DataType.STRING, context);
+        return DataType.LONG;
     }
 
     @Override
-    protected void doVerify(VerificationContext context) {
-        context.setCurrentType(createdOutputType());
+    public DataType setOutputType(DataType outputType, TypeContext context) {
+        super.setOutputType(DataType.LONG, outputType, null, context);
+        return DataType.STRING;
     }
 
     @Override
@@ -43,9 +46,6 @@ public final class HexDecodeExpression extends Expression {
         }
         context.setCurrentValue(new LongFieldValue(output.longValue()));
     }
-
-    @Override
-    public DataType createdOutputType() { return DataType.LONG; }
 
     @Override
     public String toString() { return "hexdecode"; }

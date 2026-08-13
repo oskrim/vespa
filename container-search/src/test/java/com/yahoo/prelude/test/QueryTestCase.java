@@ -19,7 +19,12 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 /**
  * Tests for query class
@@ -72,12 +77,12 @@ public class QueryTestCase {
     @Test
     void testOrQueryWithDefaultIndexWeakAndParsing() {
         Query q = newQuery("/search?query=(fOObar foobar) kanoo&type=weakAnd&default-index=def");
-        assertEquals("WEAKAND(100) (OR def:fOObar def:foobar) def:kanoo", q.getModel().getQueryTree().getRoot().toString());
+        assertEquals("WEAKAND (OR def:fOObar def:foobar) def:kanoo", q.getModel().getQueryTree().getRoot().toString());
     }
     @Test
     void testOrPhraseQueryWithDefaultIndexWeakAndParsing() {
         Query q = newQuery("/search?query=(\"fOObar\" foobar) kanoo&type=weakAnd&default-index=def");
-        assertEquals("WEAKAND(100) (OR def:fOObar def:foobar) def:kanoo", q.getModel().getQueryTree().getRoot().toString());
+        assertEquals("WEAKAND (OR def:fOObar def:foobar) def:kanoo", q.getModel().getQueryTree().getRoot().toString());
     }
 
     @Test
@@ -177,21 +182,21 @@ public class QueryTestCase {
     void testInvalidSortFunction() {
         assertQueryError(
                 "?query=test&sortspec=-ucca(name,en_US)",
-                "Could not set 'ranking.sorting' to '-ucca(name,en_US)': Unknown sort function 'ucca'");
+                "Could not set 'ranking.sorting': Unknown sort function 'ucca' in '-ucca(name,en_US)'");
     }
 
     @Test
     void testMissingSortFunction() {
         assertQueryError(
                 "?query=test&sortspec=-(name)",
-                "Could not set 'ranking.sorting' to '-(name)': No sort function specified");
+                "Could not set 'ranking.sorting': No sort function specified in '-(name)'");
     }
 
     @Test
     void testInvalidUcaStrength() {
         assertQueryError(
                 "?query=test&sortspec=-uca(name,en_US,tertary)",
-                "Could not set 'ranking.sorting' to '-uca(name,en_US,tertary)': Unknown collation strength: 'tertary'");
+                "Could not set 'ranking.sorting': Unknown collation strength: 'tertary' in '-uca(name,en_US,tertary)'");
     }
 
     public void checkSortSpecUcaUSOptional(String spec) {
@@ -221,11 +226,9 @@ public class QueryTestCase {
     /** Test using the defaultindex feature */
     @Test
     void testDefaultIndex() {
-        Query q = newQuery("?query=hi hello keyword:kanoo " +
-                "default:munkz \"phrases too\"&default-index=def");
-        assertEquals("WEAKAND(100) def:hi def:hello keyword:kanoo " +
-                "default:munkz def:\"phrases too\"",
-                q.getModel().getQueryTree().getRoot().toString());
+        Query q = newQuery("?query=hi hello keyword:kanoo default:munkz \"phrases too\"&default-index=def");
+        assertEquals("WEAKAND def:hi def:hello keyword:kanoo default:munkz def:\"phrases too\"",
+                     q.getModel().getQueryTree().getRoot().toString());
     }
 
     /** Test that GET parameter names are case in-sensitive */
@@ -243,56 +246,56 @@ public class QueryTestCase {
     void testNegativeHitValue() {
         assertQueryError(
                 "?query=test&hits=-1",
-                "Could not set 'hits' to '-1': 'hits' must be a positive number, not -1");
+                "Could not set 'hits': 'hits' must be a positive number, not -1");
     }
 
     @Test
     void testNaNHitValue() {
         assertQueryError(
                 "?query=test&hits=NaN",
-                "Could not set 'hits' to 'NaN': 'NaN' is not a valid integer");
+                "Could not set 'hits': 'NaN' is not a valid integer");
     }
 
     @Test
     void testNoneHitValue() {
         assertQueryError(
                 "?query=test&hits=(none)",
-                "Could not set 'hits' to '(none)': '(none)' is not a valid integer");
+                "Could not set 'hits': '(none)' is not a valid integer");
     }
 
     @Test
     void testNegativeOffsetValue() {
         assertQueryError(
                 "?query=test&offset=-1",
-                "Could not set 'offset' to '-1': 'offset' must be a positive number, not -1");
+                "Could not set 'offset': 'offset' must be a positive number, not -1");
     }
 
     @Test
     void testNaNOffsetValue() {
         assertQueryError(
                 "?query=test&offset=NaN",
-                "Could not set 'offset' to 'NaN': 'NaN' is not a valid integer");
+                "Could not set 'offset': 'NaN' is not a valid integer");
     }
 
     @Test
     void testNoneOffsetValue() {
         assertQueryError(
                 "?query=test&offset=(none)",
-                "Could not set 'offset' to '(none)': '(none)' is not a valid integer");
+                "Could not set 'offset': '(none)' is not a valid integer");
     }
 
     @Test
     void testNoneHitsNegativeOffsetValue() {
         assertQueryError(
                 "?query=test&hits=(none)",
-                "Could not set 'hits' to '(none)': '(none)' is not a valid integer");
+                "Could not set 'hits': '(none)' is not a valid integer");
     }
 
     @Test
     void testFeedbackIsTransferredToResult() {
         assertQueryError(
                 "?query=test&hits=(none)",
-                "Could not set 'hits' to '(none)': '(none)' is not a valid integer");
+                "Could not set 'hits': '(none)' is not a valid integer");
     }
 
     @Test
@@ -355,10 +358,10 @@ public class QueryTestCase {
     @Test
     void testCopy() {
         Query qs = newQuery("?query=test&rankfeature.something=2");
-        assertEquals("WEAKAND(100) test", qs.getModel().getQueryTree().toString());
-        assertEquals((int) qs.properties().getInteger("rankfeature.something"), 2);
+        assertEquals("WEAKAND test", qs.getModel().getQueryTree().toString());
+        assertEquals(2, (int) qs.properties().getInteger("rankfeature.something"));
         Query qp = new Query(qs);
-        assertEquals("WEAKAND(100) test", qp.getModel().getQueryTree().getRoot().toString());
+        assertEquals("WEAKAND test", qp.getModel().getQueryTree().getRoot().toString());
         assertFalse(qp.getRanking().getFeatures().isEmpty());
         assertEquals(2.0, qp.getRanking().getFeatures().getDouble("something").getAsDouble(), 0.000001);
     }

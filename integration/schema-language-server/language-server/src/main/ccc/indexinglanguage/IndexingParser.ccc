@@ -2,14 +2,6 @@ PARSER_CLASS=IndexingParser;
 PARSER_PACKAGE=ai.vespa.schemals.parser.indexinglanguage;
 FAULT_TOLERANT=true;
 SMART_NODE_CREATION=false; // Will create a tree node for every rule
-/* Legacy JavaCC options
-options {
-    CACHE_TOKENS = false;
-    DEBUG_PARSER = false;
-    ERROR_REPORTING = true;
-    USER_CHAR_STREAM = true;
-}
-*/
 
 // --------------------------------------------------------------------------------
 //
@@ -32,7 +24,9 @@ INJECT IndexingParser:
     import com.yahoo.text.StringUtilities;
     import com.yahoo.vespa.indexinglanguage.expressions.*;
     import com.yahoo.vespa.indexinglanguage.linguistics.AnnotatorConfig;
+    import com.yahoo.language.process.Chunker;
     import com.yahoo.language.process.Embedder;
+    import com.yahoo.language.process.FieldGenerator;
     import com.yahoo.language.Linguistics;
 {
 /**
@@ -40,10 +34,12 @@ INJECT IndexingParser:
  *
  * Ported to CongoCC by Magnus Eide-Fredriksen
  */
-    private String defaultFieldName;
-    private Linguistics linguistics;
-    private Map<String, Embedder> embedders;
-    private AnnotatorConfig annotatorCfg;
+    private String defaultFieldName = "default";
+    private Linguistics linguistics = new com.yahoo.language.simple.SimpleLinguistics();
+    private Components<Chunker> chunkers = new Components.Ignored(Chunker.FailingChunker.factory());
+    private Components<Embedder> embedders = new Components.Ignored(Embedder.FailingEmbedder.factory());
+    private Components<FieldGenerator> generators = new Components.Ignored(FieldGenerator.FailingFieldGenerator.factory());
+    private AnnotatorConfig globalAnnotatorConfig = new com.yahoo.vespa.indexinglanguage.linguistics.AnnotatorConfig();
 
     private PrintStream logger = new PrintStream(
         new OutputStream() {
@@ -56,7 +52,6 @@ INJECT IndexingParser:
     public IndexingParser(PrintStream logger, String inputSource, CharSequence content) {
         this(inputSource, content);
         this.logger = logger;
-        this.embedders = new HashMap<String, Embedder>();
     }
 
     public IndexingParser setDefaultFieldName(String fieldName) {
@@ -70,12 +65,22 @@ INJECT IndexingParser:
     }
 
     public IndexingParser setEmbedders(Map<String, Embedder> embedders) {
-        this.embedders = embedders;
+        this.embedders = new Components.Map<Embedder>(embedders, Embedder.FailingEmbedder.factory());
+        return this;
+    }
+    
+    public IndexingParser setGenerators(Map<String, FieldGenerator> generators) {
+        this.generators = new Components.Map<FieldGenerator>(generators, FieldGenerator.FailingFieldGenerator.factory());
         return this;
     }
 
-    public IndexingParser setAnnotatorConfig(AnnotatorConfig cfg) {
-        annotatorCfg = cfg;
+    public IndexingParser setChunkers(Map<String, Chunker> chunkers) {
+        this.chunkers = new Components.Map<Chunker>(chunkers, Chunker.FailingChunker.factory());
+        return this;
+    }
+
+    public IndexingParser setGlobalAnnotatorConfig(AnnotatorConfig config) {
+        globalAnnotatorConfig = config;
         return this;
     }
 
@@ -178,6 +183,7 @@ TOKEN :
     <BUSY_WAIT: "busy_wait"> |
     <CASE: "case"> |
     <CASE_DEFAULT: "default"> |
+    <CHUNK: "chunk"> |
     <CLEAR_STATE: "clear_state"> |
     <CREATE_IF_NON_EXISTENT: "create_if_non_existent"> |
     <ECHO: "echo"> |
@@ -186,7 +192,10 @@ TOKEN :
     <EXACT: "exact"> |
     <FLATTEN: "flatten"> |
     <FOR_EACH: "for_each"> |
+    <GENERATE: "generate"> |
     <GET_FIELD: "get_field"> |
+    <GET_LANGUAGE: "get_language"> |
+    <GET_VALUE: "get_value"> |
     <GET_VAR: "get_var"> |
     <GUARD: "guard"> |
     <HASH: "hash"> |
@@ -197,6 +206,7 @@ TOKEN :
     <INDEX: "index"> |
     <INPUT: "input"> |
     <JOIN: "join"> |
+    <KEEP_CASE: "keep-case"> |
     <LOWER_CASE: "lowercase"> |
     <MAX_LENGTH: "max-length"> |
     <MAX_OCCURRENCES: "max-occurrences"> |
@@ -207,6 +217,7 @@ TOKEN :
     <OPTIMIZE_PREDICATE: "optimize_predicate"> |
     <PACK_BITS: "pack_bits"> |
     <PASSTHROUGH: "passthrough"> |
+    <PROFILE: "profile"> |
     <RANDOM: "random"> |
     <REMOVE_IF_ZERO: "remove_if_zero"> |
     <SELECT_INPUT: "select_input"> |
@@ -221,16 +232,17 @@ TOKEN :
     <THIS: "this"> |
     <TOKENIZE: "tokenize"> |
     <TO_ARRAY: "to_array"> |
+    <TO_BOOL: "to_bool"> |
     <TO_BYTE: "to_byte"> |
     <TO_DOUBLE: "to_double"> |
+    <TO_EPOCH_SECOND: "to_epoch_second"> |
     <TO_FLOAT: "to_float"> |
     <TO_INT: "to_int"> |
     <TO_LONG: "to_long"> |
     <TO_POS: "to_pos"> |
-    <TO_EPOCH_SECOND: "to_epoch_second"> |
     <TO_STRING: "to_string"> |
+    <TO_URI: "to_uri"> |
     <TO_WSET: "to_wset"> |
-    <TO_BOOL: "to_bool"> |
     <TRIM: "trim"> |
     <ZCURVE: "zcurve"> |
     <TRUE: "true" > |
@@ -334,13 +346,17 @@ Expression value() :
       val = base64EncodeExp()       |
       val = binarizeExp()           |
       val = busy_waitExp()          |
+      val = chunkExp()              |
       val = clearStateExp()         |
       val = echoExp()               |
       val = embedExp()              |
       val = exactExp()              |
       val = flattenExp()            |
       val = forEachExp()            |
+      val = generateExp()           |
       val = getFieldExp()           |
+      val = getLanguageExp()        |
+      val = getValueExp()           |
       val = getVarExp()             |
       val = guardExp()              |
       val = hashExp()               |
@@ -372,16 +388,17 @@ Expression value() :
       val = thisExp()               |
       val = tokenizeExp()           |
       val = toArrayExp()            |
+      val = toBoolExp()             |
       val = toByteExp()             |
       val = toDoubleExp()           |
+      val = toEpochSecondExp()      |
       val = toFloatExp()            |
       val = toIntExp()              |
       val = toLongExp()             |
       val = toPosExp()              |
-      val = toEpochSecondExp()      |
       val = toStringExp()           |
+      val = toUriExp()              |
       val = toWsetExp()             |
-      val = toBoolExp()             |
       val = trimExp()               |
       val = literalBoolExp()        |
       val = zcurveExp()             |
@@ -425,6 +442,20 @@ Expression busy_waitExp() : { }
     { return new BusyWaitExpression(); }
 ;
 
+Expression chunkExp() :
+{
+    String chunkerId = "";
+    List<String> arguments = new ArrayList<String>();
+}
+
+    (
+      <CHUNK> [ SCAN(identifierStr) => (chunkerId = identifierStr()) ] arguments = arguments()
+    )
+    {
+        return new ChunkExpression(chunkers, chunkerId, arguments);
+    }
+;
+
 Expression clearStateExp() : { }
  
     ( <CLEAR_STATE> )
@@ -440,27 +471,24 @@ Expression echoExp() : { }
 Expression embedExp() :
 {
     String embedderId = "";
-    String embedderArgument;
-    List<String> embedderArguments = new ArrayList<String>();
+    List<String> arguments = new ArrayList<String>();
 }
  
     (
-      <EMBED> [ SCAN((identifierStr)+) => (embedderId = identifierStr()) ]
-      ( SCAN((identifierStr)+) => (embedderArgument = identifierStr()) { embedderArguments.add(embedderArgument); } )*
+      <EMBED> [ SCAN(identifierStr) => (embedderId = identifierStr()) ] arguments = arguments()
     )
     {
-        // return new EmbedExpression(embedders, embedderId, embedderArguments);
-        return null;
+        return new EmbedExpression(linguistics, embedders, embedderId, arguments);
     }
 ;
 
 Expression exactExp() :
 {
-    int maxTokenLength = annotatorCfg.getMaxTokenLength();
+    AnnotatorConfig config = globalAnnotatorConfig;
 }
  
-    ( <EXACT>  [ <MAX_TOKEN_LENGTH> <COLON> maxTokenLength = integerValue() ] )
-    { return new ExactExpression(maxTokenLength); }
+    ( <EXACT> [ config = annotatorConfig() ] )
+    { return new ExactExpression(config); }
 ;
 
 Expression flattenExp() : { }
@@ -478,13 +506,42 @@ Expression forEachExp() :
     { return new ForEachExpression(val); }
 ;
 
+Expression generateExp() :
+{
+    String generatorId = "";
+    List<String> arguments = new ArrayList<String>();
+}
+
+    (
+      <GENERATE> [ SCAN(identifierStr) => (generatorId = identifierStr()) ] arguments = arguments()
+    )
+    {
+        return new GenerateExpression(linguistics, generators, generatorId, arguments);
+    }
+;
+
 Expression getFieldExp() :
 {
-    String val;
+    String val = null;
 }
  
-    ( <GET_FIELD> val = identifierStr() )
+    ( <GET_FIELD> val = ( identifierStr() | integerValue() ) )
     { return new GetFieldExpression(val); }
+;
+
+Expression getLanguageExp() : { }
+
+    ( <GET_LANGUAGE> )
+    { return new GetLanguageExpression(); }
+;
+
+Expression getValueExp() :
+{
+    String key;
+}
+
+    ( <GET_VALUE> key = valueString() )
+    { return new GetValueExpression(key); }
 ;
 
 Expression getVarExp() :
@@ -729,27 +786,30 @@ Expression thisExp() : { }
 
 Expression tokenizeExp() :
 {
-    AnnotatorConfig cfg = annotatorCfg;
+    AnnotatorConfig config = globalAnnotatorConfig;
 }
  
-    ( <TOKENIZE> [ cfg = tokenizeCfg() ] )
-    { return new TokenizeExpression(linguistics, cfg); }
+    ( <TOKENIZE> [ config = annotatorConfig() ] )
+    { return new TokenizeExpression(linguistics, config); }
 ;
 
-AnnotatorConfig tokenizeCfg() :
+AnnotatorConfig annotatorConfig() :
 {
-    AnnotatorConfig val = new AnnotatorConfig(annotatorCfg);
-    String str = "SHORTEST";
+    AnnotatorConfig val = new AnnotatorConfig(globalAnnotatorConfig);
+    String stemMode = "SHORTEST";
+    String profile;
     Integer maxLength;
     Integer maxTermOccurrences;
     Integer maxTokenLength;
 }
  
-    ( <STEM> ( <COLON> str = stringLiteral() ) ? { val.setStemMode(str); } |
+    ( <STEM> ( <COLON> stemMode = stringLiteral() ) ? { val.setStemMode(stemMode); } |
+      <PROFILE> <COLON> profile = stringLiteral() { val.setProfile(profile); } |
       <MAX_LENGTH> <COLON>  maxLength = integerValue() { val.setMaxTokenizeLength(maxLength); } |
       <MAX_OCCURRENCES> <COLON>  maxTermOccurrences = integerValue() { val.setMaxTermOccurrences(maxTermOccurrences); } |
       <MAX_TOKEN_LENGTH> <COLON> maxTokenLength = integerValue() { val.setMaxTokenLength(maxTokenLength); } |
-      <NORMALIZE> { val.setRemoveAccents(true); } )+
+      <NORMALIZE> { val.setRemoveAccents(true); } |
+      <KEEP_CASE> { val.setLowercase(false); } )+
     { return val; }
 ;
 
@@ -757,6 +817,12 @@ Expression toArrayExp() : { }
  
     ( <TO_ARRAY> )
     { return new ToArrayExpression(); }
+;
+
+Expression toBoolExp() : { }
+
+    ( <TO_BOOL> )
+    { return new ToBoolExpression(); }
 ;
 
 Expression toByteExp() : { }
@@ -769,6 +835,12 @@ Expression toDoubleExp() : { }
  
     ( <TO_DOUBLE> )
     { return new ToDoubleExpression(); }
+;
+
+Expression toEpochSecondExp() : { }
+
+    ( <TO_EPOCH_SECOND> )
+    { return new ToEpochSecondExpression(); }
 ;
 
 Expression toFloatExp() : { }
@@ -795,16 +867,16 @@ Expression toPosExp() : { }
     { return new ToPositionExpression(); }
 ;
 
-Expression toEpochSecondExp() : { }
- 
-    ( <TO_EPOCH_SECOND> )
-    { return new ToEpochSecondExpression(); }
-;
-
 Expression toStringExp() : { }
  
     ( <TO_STRING> )
     { return new ToStringExpression(); }
+;
+
+Expression toUriExp() : { }
+
+    ( <TO_URI> )
+    { return new ToUriExpression(); }
 ;
 
 Expression toWsetExp() :
@@ -816,12 +888,6 @@ Expression toWsetExp() :
     ( <TO_WSET> ( <CREATE_IF_NON_EXISTENT> { createIfNonExistent = true; } |
                   <REMOVE_IF_ZERO>         { removeIfZero = true;        } )* )
     { return new ToWsetExpression(createIfNonExistent, removeIfZero); }
-;
-
-Expression toBoolExp() : { }
- 
-    ( <TO_BOOL> )
-    { return new ToBoolExpression(); }
 ;
 
 Expression trimExp() : { }
@@ -848,11 +914,34 @@ Expression executionValueExp() : { }
     { return new ExecutionValueExpression(); }
 ;
 
+/** A possibly empty list of arguments that can be strings or numbers. */
+List<String> arguments() :
+{
+    String argument;
+    NumericFieldValue numericArgument;
+    List<String> arguments = new ArrayList<String>();
+}
+    ( valueString() )*
+    { return arguments; }
+;
+
+/** A number, identifier, or quoted string */
+String valueString() :
+{
+    String value;
+    NumericFieldValue numericValue;
+}
+(
+    ( numericValue = numericValue() { return numericValue.getNumber().toString(); } ) |
+    ( value = stringLiteral() { return value; } ) |
+    ( value = identifierStr() { return value; } )
+)
+;
+
 String identifierStr() :
 {
     String val;
 }
- 
     ( val = stringLiteral()      |
       ( <ATTRIBUTE>              |
         <BASE64_DECODE>          |
@@ -861,6 +950,7 @@ String identifierStr() :
         <BUSY_WAIT>              |
         <CASE>                   |
         <CASE_DEFAULT>           |
+        <CHUNK>                  |
         <CLEAR_STATE>            |
         <CREATE_IF_NON_EXISTENT> |
         <ECHO>                   |
@@ -869,7 +959,10 @@ String identifierStr() :
         <EMBED>                  |
         <FLATTEN>                |
         <FOR_EACH>               |
+        <GENERATE>               |
         <GET_FIELD>              |
+        <GET_LANGUAGE>           |
+        <GET_VALUE>              |
         <GET_VAR>                |
         <GUARD>                  |
         <HASH>                   |
@@ -888,6 +981,7 @@ String identifierStr() :
         <NOW>                    |
         <OPTIMIZE_PREDICATE>     |
         <PASSTHROUGH>            |
+        <PROFILE>                |
         <RANDOM>                 |
         <REMOVE_IF_ZERO>         |
         <SELECT_INPUT>           |
@@ -901,14 +995,17 @@ String identifierStr() :
         <SWITCH>                 |
         <THIS>                   |
         <TO_ARRAY>               |
+        <TO_BOOL>                |
+        <TO_BYTE>                |
         <TO_DOUBLE>              |
+        <TO_EPOCH_SECOND>        |
         <TO_FLOAT>               |
         <TO_INT>                 |
         <TO_LONG>                |
         <TO_POS>                 |
         <TO_STRING>              |
+        <TO_URI>                 |
         <TO_WSET>                |
-        <TO_BOOL>                |
         <TOKENIZE>               |
         <TRIM>                   |
         <TRUE>                   |
@@ -916,7 +1013,6 @@ String identifierStr() :
         <ZCURVE>                 ) { val = lastConsumedToken.toString(); } )
     { return val; }
 ;
-
 
 String fieldName() :
 {

@@ -1,18 +1,18 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
-#include <vespa/vespalib/testkit/test_kit.h>
 #include <vespa/messagebus/blob.h>
 #include <vespa/messagebus/blobref.h>
+#include <vespa/vespalib/gtest/gtest.h>
 
 using mbus::Blob;
 using mbus::BlobRef;
 
-Blob makeBlob(const char *txt) {
+Blob makeBlob(const char* txt) {
     Blob b(strlen(txt) + 1);
     strcpy(b.data(), txt);
     return b;
 }
 
-BlobRef makeBlobRef(const Blob &b) {
+BlobRef makeBlobRef(const Blob& b) {
     return BlobRef(b.data(), b.size());
 }
 
@@ -24,7 +24,7 @@ BlobRef returnBlobRef(BlobRef br) {
     return br;
 }
 
-TEST("blob_test") {
+TEST(BlobTest, blob_test) {
 
     // create a blob
     Blob b = makeBlob("test");
@@ -56,16 +56,16 @@ TEST("blob_test") {
 
     // destructive copy of blob
     Blob b2 = returnBlob(std::move(b));
-    EXPECT_EQUAL(0u, b.size());
-    EXPECT_TRUE(b.data() == 0);
+    EXPECT_EQ(0u, b.size());
+    EXPECT_TRUE(b.data() == nullptr);
     EXPECT_TRUE(b2.size() == strlen("test") + 1);
     EXPECT_TRUE(strcmp("test", b2.data()) == 0);
 
     b.swap(b2);
-    EXPECT_EQUAL(0u, b2.size());
-    EXPECT_TRUE(b2.data() == 0);
+    EXPECT_EQ(0u, b2.size());
+    EXPECT_TRUE(b2.data() == nullptr);
     EXPECT_TRUE(b.size() == strlen("test") + 1);
     EXPECT_TRUE(strcmp("test", b.data()) == 0);
 }
 
-TEST_MAIN() { TEST_RUN_ALL(); }
+GTEST_MAIN_RUN_ALL_TESTS()

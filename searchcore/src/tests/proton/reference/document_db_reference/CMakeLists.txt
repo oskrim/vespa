@@ -3,8 +3,10 @@ vespa_add_executable(searchcore_document_db_reference_test_app TEST
     SOURCES
     document_db_reference_test.cpp
     DEPENDS
+    searchcore_test
     searchcore_reference
     searchcore_attribute
     searchlib_test
+    GTest::gtest
 )
 vespa_add_test(NAME searchcore_document_db_reference_test_app COMMAND searchcore_document_db_reference_test_app)

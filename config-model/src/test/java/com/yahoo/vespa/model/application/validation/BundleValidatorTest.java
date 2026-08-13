@@ -3,6 +3,7 @@ package com.yahoo.vespa.model.application.validation;
 
 import com.yahoo.config.application.api.DeployLogger;
 import com.yahoo.config.model.deploy.DeployState;
+import com.yahoo.config.model.deploy.TestDeployState;
 import com.yahoo.vespa.model.application.validation.AbstractBundleValidator.JarContext;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -30,7 +31,7 @@ public class BundleValidatorTest {
         // Valid jar file
         JarFile ok = createTemporaryJarFile(tempDir, "ok");
         BundleValidator bundleValidator = new BundleValidator();
-        bundleValidator.validateJarFile(contextOf(DeployState.createTestState()), ok);
+        bundleValidator.validateJarFile(contextOf(TestDeployState.create()), ok);
 
         // No manifest
         validateWithException("nomanifest", "Non-existing or invalid manifest in nomanifest.jar");
@@ -40,7 +41,7 @@ public class BundleValidatorTest {
         try {
             JarFile jarFile = createTemporaryJarFile(tempDir, jarName);
             BundleValidator bundleValidator = new BundleValidator();
-            bundleValidator.validateJarFile(contextOf(DeployState.createTestState()), jarFile);
+            bundleValidator.validateJarFile(contextOf(TestDeployState.create()), jarFile);
             assert (false);
         } catch (IllegalArgumentException e) {
             assertEquals(exceptionMessage, e.getMessage());
@@ -67,15 +68,15 @@ public class BundleValidatorTest {
         String output = buffer.toString();
         assertTrue(output
                 .contains("JAR file 'import-warnings.jar' imports the packages [org.json] from 'org.json:json'. \n" +
-                        "This bundle is no longer provided on Vespa 8 - see https://docs.vespa.ai/en/vespa8-release-notes.html#container-runtime."));
+                        "This bundle is no longer provided on Vespa 8 - see https://docs.vespa.ai/en/reference/release-notes/vespa8.html#container-runtime."));
         assertTrue(output
                 .contains("JAR file 'import-warnings.jar' imports the packages [org.eclipse.jetty.client.api] from 'jetty'. \n" +
-                        "The Jetty bundles are no longer provided on Vespa 8 - see https://docs.vespa.ai/en/vespa8-release-notes.html#container-runtime."));
+                        "The Jetty bundles are no longer provided on Vespa 8 - see https://docs.vespa.ai/en/reference/release-notes/vespa8.html#container-runtime."));
     }
 
     static DeployState createDeployState(StringBuffer buffer) {
         DeployLogger logger = (__, message) -> buffer.append(message).append('\n');
-        return DeployState.createTestState(logger);
+        return TestDeployState.create(logger);
     }
 
     static JarFile createTemporaryJarFile(File tempDir, String testArtifact) throws IOException {

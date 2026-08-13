@@ -7,19 +7,31 @@ import java.util.Optional;
 import java.util.Set;
 
 import org.eclipse.lsp4j.Diagnostic;
+import org.eclipse.lsp4j.DiagnosticSeverity;
+import org.eclipse.lsp4j.Range;
 
+import ai.vespa.schemals.common.SchemaDiagnostic;
+import ai.vespa.schemals.common.SchemaDiagnostic.DiagnosticCode;
 import ai.vespa.schemals.context.ParseContext;
 import ai.vespa.schemals.index.Symbol;
 import ai.vespa.schemals.index.Symbol.SymbolStatus;
 import ai.vespa.schemals.index.Symbol.SymbolType;
+import ai.vespa.schemals.parser.ast.onnxModelInSchema;
+import ai.vespa.schemals.parser.rankingexpression.ast.rankPropertyFeature;
 import ai.vespa.schemals.parser.rankingexpression.ast.unaryFunctionName;
 import ai.vespa.schemals.schemadocument.resolvers.RankExpression.BuiltInFunctions;
+import ai.vespa.schemals.schemadocument.resolvers.RankExpression.FunctionSignature;
 import ai.vespa.schemals.schemadocument.resolvers.RankExpression.GenericFunction;
+import ai.vespa.schemals.schemadocument.resolvers.RankExpression.SpecificFunction;
+import ai.vespa.schemals.schemadocument.resolvers.RankExpression.argument.Argument;
+import ai.vespa.schemals.schemadocument.resolvers.RankExpression.argument.ArgumentUtils;
+import ai.vespa.schemals.schemadocument.resolvers.RankExpression.argument.IntegerArgument;
+import ai.vespa.schemals.tree.CSTUtils;
+import ai.vespa.schemals.tree.Node;
+import ai.vespa.schemals.tree.Node.LanguageType;
 import ai.vespa.schemals.tree.SchemaNode;
-import ai.vespa.schemals.tree.SchemaNode.LanguageType;
 import ai.vespa.schemals.tree.rankingexpression.RankNode;
 import ai.vespa.schemals.tree.rankingexpression.RankNode.RankNodeType;
-import ai.vespa.schemals.tree.rankingexpression.RankNode.ReturnType;
 
 /**
  * RankExpressionSymbolResolver goes through unresolved symbols in rank expression, to check if they are calling built in functions and tries
@@ -33,43 +45,32 @@ public class RankExpressionSymbolResolver {
      * @param node        The schema node to resolve the rank expression references in.
      * @param context     The parse context.
      */
-    public static List<Diagnostic> resolveRankExpressionReferences(SchemaNode node, ParseContext context) {
-        List<Diagnostic> diagnostics = new ArrayList<>();
-
+    public static void resolveRankExpressionReferences(SchemaNode node, ParseContext context, List<Diagnostic> diagnostics) {
         if (node.getLanguageType() == LanguageType.RANK_EXPRESSION) {
-
-            diagnostics.addAll(resolveRankExpression(node, context));
-
+            resolveRankExpression(node, context, diagnostics);
         } else {
-            for (SchemaNode child : node) {
-                diagnostics.addAll(resolveRankExpressionReferences(child, context));
+            for (Node child : node) {
+                resolveRankExpressionReferences(child.getSchemaNode(), context, diagnostics);
             }
         }
-
-        return diagnostics;
     }
 
-    public static List<Diagnostic> resolveRankExpression(SchemaNode schemaNode, ParseContext context) {
-        List<Diagnostic> diagnostics = new ArrayList<>();
-
+    public static void resolveRankExpression(SchemaNode schemaNode, ParseContext context, List<Diagnostic> diagnostics) {
         List<RankNode> rankNodes = RankNode.createTree(schemaNode);
 
         for (RankNode node : rankNodes) {
-            diagnostics.addAll(traverseRankExpressionTree(node, context));
+            traverseRankExpressionTree(node, context, diagnostics);
         }
-
-        return diagnostics;
     }
 
-    private static List<Diagnostic> traverseRankExpressionTree(RankNode node, ParseContext context) {
-        List<Diagnostic> diagnostics = new ArrayList<>();
-
-        for (RankNode child : node) {
-            diagnostics.addAll(traverseRankExpressionTree(child, context));
-        }
-
+    private static void traverseRankExpressionTree(RankNode node, ParseContext context, List<Diagnostic> diagnostics) {
         // All feature nodes has a symbol before the traversal
         if (node.hasSymbol()) {
+            if (node.getSymbolType() == SymbolType.FOREACH) {
+                // Return: handles own children
+                resolveForeach(node, context, diagnostics);
+                return;
+            }
 
             if (node.getSymbolStatus() == SymbolStatus.UNRESOLVED) {
                 resolveReference(node, context, diagnostics);
@@ -80,12 +81,18 @@ public class RankExpressionSymbolResolver {
             }
 
             if (node.getSymbolStatus() == SymbolStatus.UNRESOLVED) {
-                findBuiltInFunction(node, context, diagnostics);
+                if (node.getSchemaNode().getParent().isASTInstance(rankPropertyFeature.class)) {
+                    findRankPropertyFeature(node, context, diagnostics);
+                } else {
+                    findBuiltInFunction(node, context, diagnostics);
+                }
             }
-
         }
 
-        return diagnostics;
+        for (RankNode child : node) {
+            traverseRankExpressionTree(child, context, diagnostics);
+        }
+
     }
 
     public static final Set<Class<?>> builtInTokenizedFunctions = new HashSet<>() {{
@@ -113,7 +120,7 @@ public class RankExpressionSymbolResolver {
                 node.removeSymbol();
                 return;
             }
-            if (node.size() > 0)node = node.get(0);
+            if (node.size() > 0)node = node.get(0).getSchemaNode();
             else break;
         }
     }
@@ -123,21 +130,56 @@ public class RankExpressionSymbolResolver {
             return;
         }
 
+        if (node.getSchemaNode().getParent().isASTInstance(rankPropertyFeature.class)) {
+            return;
+        }
+
         String identifier = node.getSymbol().getShortIdentifier();
 
         GenericFunction functionHandler = BuiltInFunctions.rankExpressionBuiltInFunctions.get(identifier);
         if (functionHandler == null) return;
         
-        node.setReturnType(ReturnType.DOUBLE);
         node.getSymbol().setType(SymbolType.FUNCTION);
         node.getSymbol().setStatus(SymbolStatus.BUILTIN_REFERENCE);
 
         Optional<SchemaNode> functionProperty = node.getProperty();
-        if (functionProperty.isPresent()) {
-            removeSymbolFromIndex(context, functionProperty.get());
+        functionProperty.ifPresent(property -> removeSymbolFromIndex(context, property));
+
+        diagnostics.addAll(functionHandler.handleArgumentList(context, node, false));
+    }
+
+    private static void findRankPropertyFeature(RankNode node, ParseContext context, List<Diagnostic> diagnostics) {
+        String identifier = node.getSymbol().getShortIdentifier();
+
+        GenericFunction functionHandler = BuiltInFunctions.rankExpressionBuiltInFunctions.get(identifier);
+        if (functionHandler == null) {
+            // If no builtin feature is found, the property doesn't really have any effect.
+            // Remove symbol reference, but display a warning
+            removeSymbolFromIndex(context, node.getSchemaNode());
+
+            Range range = node.getRange();
+
+            // Limit range to first identifier if possible to avoid crashing diagnostics
+            if (node.getSchemaNode().size() > 0)
+                range = node.getSchemaNode().get(0).getRange();
+
+            diagnostics.add(new SchemaDiagnostic.Builder()
+                    .setRange(range)
+                    .setMessage("No feature with the name " + identifier + " was found. Property has no effect.")
+                    .setSeverity(DiagnosticSeverity.Warning)
+                    .build());
+
+            return;
         }
 
-        diagnostics.addAll(functionHandler.handleArgumentList(context, node));
+        node.getSymbol().setType(SymbolType.FUNCTION);
+        node.getSymbol().setStatus(SymbolStatus.BUILTIN_REFERENCE);
+
+        // TODO: Check valid config properties
+        Optional<SchemaNode> functionProperty = node.getProperty();
+        functionProperty.ifPresent(property -> removeSymbolFromIndex(context, property));
+
+        diagnostics.addAll(functionHandler.handleArgumentList(context, node, true));
     }
 
     private static final List<SymbolType> possibleTypes = new ArrayList<>() {{
@@ -147,6 +189,10 @@ public class RankExpressionSymbolResolver {
         add(SymbolType.TENSOR_DIMENSION_MAPPED);
         add(SymbolType.TENSOR_DIMENSION_INDEXED);
     }};
+
+    private static boolean isInsideOnnxModelInSchema(Node node) {
+        return CSTUtils.findASTClassAncestor(node, onnxModelInSchema.class) != null;
+    }
 
     private static void resolveReference(RankNode referenceNode, ParseContext context, List<Diagnostic> diagnostics) {
 
@@ -162,6 +208,15 @@ public class RankExpressionSymbolResolver {
         Symbol reference = referenceNode.getSymbol();
 
         Optional<Symbol> definition = Optional.empty();
+
+        if (isInsideOnnxModelInSchema(referenceNode.getSchemaNode())) {
+            // onnx-model blocks outside any rank-profile are problematic,
+            // because they can reference functions from a rank-profile (outside scope).
+            // We don't have any good way of handling it, but onnx-model outside a profile 
+            // is deprecated anyways.
+            reference.setStatus(SymbolStatus.INVALID);
+            return;
+        }
 
         if (!referenceNode.getArgumentListExists()) {
             // This can be a parameter
@@ -209,5 +264,114 @@ public class RankExpressionSymbolResolver {
         symbol.setType(SymbolType.PARAMETER);
         symbol.setStatus(SymbolStatus.REFERENCE);
         context.schemaIndex().insertSymbolReference(possibleDefinition.get(0), symbol);
+    }
+
+    private static void resolveForeach(RankNode node, ParseContext context, List<Diagnostic> diagnostics) {
+        // The handler does all the 'easy' checks.
+        // However, the third argument of foreach is quite special.
+        // 1. It has to be a pure rank feature (not arbitrary rank expression). 
+        //    At least according to docs.
+        // 2. The iterator variable is **string replaced** by the literal value.
+        //    This means that, for example, a feature expecting an integer literal 
+        //    can also accept the foreach iterator variable.
+        // The strategy is then to validate arguments as usual *unless* the argument is the foreach iteration variable.
+
+        GenericFunction foreachHandler = BuiltInFunctions.rankExpressionBuiltInFunctions.get("foreach");
+        diagnostics.addAll(foreachHandler.handleArgumentList(context, node, false));
+
+        if (node.getChildren().size() < 3) {
+            // Incomplete parse
+            return;
+        }
+
+        RankNode featureExpression = node.getChildren().get(2);
+
+        if (featureExpression.getChildren().isEmpty()) {
+            // Incomplete parse
+            return;
+        }
+
+        RankNode featureNode = featureExpression.getChildren().get(0);
+
+        // This catches some, but not all possible errors
+        if (featureNode.getType() != RankNodeType.FEATURE || featureExpression.getChildren().size() != 1) {
+            diagnostics.add(new SchemaDiagnostic.Builder()
+                .setRange(featureNode.getRange())
+                .setMessage("The foreach argument 'feature' must be a rank feature, not an arbitrary expression. To use ranking expressions inside foreach, use 'rankingExpression(\"<expression>\")'.")
+                .setSeverity(DiagnosticSeverity.Error)
+                .setCode(DiagnosticCode.FOREACH_INVALID)
+                .build()
+            );
+            return;
+        }
+        String identifier = featureNode.getSymbol().getShortIdentifier();
+        GenericFunction functionHandler = BuiltInFunctions.rankExpressionBuiltInFunctions.get(identifier);
+        if (functionHandler == null) {
+            if (BuiltInFunctions.simpleBuiltInFunctionsSet.contains(identifier)) {
+                featureNode.getSymbol().setType(SymbolType.FUNCTION);
+                featureNode.getSymbol().setStatus(SymbolStatus.BUILTIN_REFERENCE);
+                return;
+            }
+
+            diagnostics.add(new SchemaDiagnostic.Builder()
+                .setRange(featureNode.getSymbolNode().getRange())
+                .setMessage("Unknown ranking feature '" + identifier + "'.")
+                .setSeverity(DiagnosticSeverity.Error)
+                .setCode(DiagnosticCode.FOREACH_INVALID)
+                .build()
+            );
+            return;
+        }
+
+        featureNode.getSymbol().setType(SymbolType.FUNCTION);
+        featureNode.getSymbol().setStatus(SymbolStatus.BUILTIN_REFERENCE);
+
+        // The rest is a manual argument check on the foreach feature
+
+        Optional<SchemaNode> property = featureNode.getProperty();
+        Optional<String> propertyString = property.isPresent() ? 
+            Optional.of(property.get().getText()) : Optional.empty();
+
+        Optional<FunctionSignature> signature = functionHandler.findFunctionSignature(featureNode.getChildren(), propertyString);
+
+        // May fail to find signature due to iteration variable cluttering. In that case, safest to just ignore.
+        if (signature.isEmpty()) {
+            return;
+        }
+
+        Optional<Symbol> iteratorSymbol = ArgumentUtils.findRankNodeSymbol(node.getChildren().get(1));
+        String iterationTerm = node.getChildren().get(0).getSchemaNode().getText();
+        boolean iteratorIsInt = iterationTerm.equals("terms");
+
+        List<Argument> acceptedArguments = signature.get().getArgumentList();
+        List<RankNode> gotArguments = featureNode.getChildren();
+        for (int i = 0; i < gotArguments.size(); ++i) {
+            int j = Math.min(i, acceptedArguments.size() - 1);
+            RankNode argNode = gotArguments.get(i);
+            Argument arg = acceptedArguments.get(j);
+            Optional<Symbol> suppliedSymbol = ArgumentUtils.findRankNodeSymbol(argNode);
+
+            if (suppliedSymbol.isPresent() 
+                && iteratorSymbol.isPresent()
+                && iteratorSymbol.get().getShortIdentifier().equals(suppliedSymbol.get().getShortIdentifier())) {
+
+                // In this case, most argument types should be unchecked since we don't know what hides behind the iterator variable.
+
+                if (arg instanceof IntegerArgument && !iteratorIsInt) {
+                    diagnostics.add(new SchemaDiagnostic.Builder()
+                        .setRange(argNode.getRange())
+                        .setMessage("Integer argument required, but '" + iteratorSymbol.get().getShortIdentifier() + "' iterates over strings.")
+                        .setSeverity(DiagnosticSeverity.Error)
+                        .setCode(DiagnosticCode.FOREACH_INVALID)
+                        .build());
+                }
+            } else {
+                arg.parseArgument(context, argNode)
+                   .ifPresent(diagnostic -> diagnostics.add(diagnostic));
+            }
+        }
+
+        Optional<SpecificFunction> specificFunction = functionHandler.instantiate(context, signature.get(), featureNode, false, diagnostics);
+        specificFunction.ifPresent(instantiation -> featureNode.setFunctionSignature(instantiation));
     }
 }

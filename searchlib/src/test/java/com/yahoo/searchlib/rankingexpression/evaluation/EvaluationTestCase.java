@@ -56,6 +56,15 @@ public class EvaluationTestCase {
     }
 
     @Test
+    public void testNamedStringValue() {
+        NamedStringValue value = new NamedStringValue("label", "title-terms");
+        assertEquals("label:title-terms", value.asString());
+
+        value.freeze();
+        assertTrue(value.asMutable() instanceof NamedStringValue);
+    }
+
+    @Test
     public void testEvaluationOrder() {
         EvaluationTester tester = new EvaluationTester();
         tester.assertEvaluates(-4, "1 + -2 + -3");
@@ -114,6 +123,14 @@ public class EvaluationTestCase {
         tester.assertEvaluates(3.5, "if(0.0, 2.5, 3.5)");
         tester.assertEvaluates(2.5, "if(1.0-1.1, 2.5, 3.5)");
         tester.assertEvaluates(3.5, "if(1.0-1.0, 2.5, 3.5)");
+
+        // Switch expressions
+        tester.assertEvaluates(0.5, "switch(one) { case 1: one_half, case 2: a_quarter, default: 0 }");
+        tester.assertEvaluates(0.25, "switch(2) { case 1: one_half, case 2: a_quarter, default: 0 }");
+        tester.assertEvaluates(0, "switch(3) { case 1: one_half, case 2: a_quarter, default: 0 }");
+        tester.assertEvaluates(1, "switch(foo) { case \"foo\": 1, case \"bar\": 2, default: 0 }");
+        tester.assertEvaluates(2, "switch(\"bar\") { case \"foo\": 1, case \"bar\": 2, default: 0 }");
+        tester.assertEvaluates(0, "switch(\"baz\") { case \"foo\": 1, case \"bar\": 2, default: 0 }");
 
         // Conditionals with branch probabilities
         RankingExpression e = tester.assertEvaluates(3.5, "if(1.0-1.0, 2.5, 3.5, 0.3)");
@@ -215,6 +232,58 @@ public class EvaluationTestCase {
         tester.assertEvaluates("tensor<double>(a{},x[2]):{foo:[3,5],bar:[9,11]}",
                                "map_subspaces(tensor0, f(t)(tensor(x[2])(t{x:(x)}+t{x:(x+1)})))",
                                "tensor<float>(a{},x[3]):{foo:[1,2,3],bar:[4,5,6]}");
+    }
+
+    @Test
+    public void testFilterSubspaces() {
+        EvaluationTester tester = new EvaluationTester();
+        // identity lambda is often used
+        tester.assertEvaluates("tensor(a{},x[2]):{foo:[2,3],bar:[1,0]}",
+                               "filter_subspaces(tensor0, f(t)(t))",
+                               "tensor(a{},x[2]):{foo:[2,3],bar:[1,0]}");
+        // check with cell type
+        tester.assertEvaluates("tensor<float>(a{},x[2]):{foo:[2,3]}",
+                               "filter_subspaces(tensor0, f(t)(t * 5))",
+                               "tensor<float>(a{},x[2]):{foo:[2,3],bar:[0,0]}");
+        // check no cell type decay
+        tester.assertEvaluates("tensor<int8>(a{},x[2]):{foo:[2,3]}",
+                               "filter_subspaces(tensor0, f(t)(t>1))",
+                               "tensor<int8>(a{},x[2]):{foo:[2,3],bar:[1,0]}");
+    }
+
+    @Test
+    public void testCellOrder() {
+        EvaluationTester tester = new EvaluationTester();
+        // simple mapped
+        tester.assertEvaluates("tensor(p{}):{a:2,b:4,c:0,d:1,e:3}",
+                               "cell_order(tensor0, max)",
+                               "tensor(p{}):{a:7,b:-3,c:12,d:11,e:-1}");
+        // with cell type decay & dense
+        tester.assertEvaluates("tensor<float>(x[5]):[2,4,0,1,3]",
+                               "cell_order(tensor0, max)",
+                               "tensor<int8>(x[5]):[7,-3,42,13,-1]");
+        // check that "min" works as well
+        tester.assertEvaluates("tensor(p{}):{a:2,b:0,c:4,d:3,e:1}",
+                               "cell_order(tensor0, min)",
+                               "tensor(p{}):{a:7,b:-3,c:12,d:11,e:-1}");
+    }
+
+    @Test
+    public void testTop() {
+        EvaluationTester tester = new EvaluationTester();
+        // simple mapped
+        tester.assertEvaluates("tensor(p{}):{a:7,c:12,d:11}",
+                               "top(3, tensor0)",
+                               "tensor(p{}):{a:7,b:-3,c:12,d:11,e:-1}");
+        // with expressions
+        tester.assertEvaluates("tensor(p{}):{b:6,e:2}",
+                               "top(sum(tensor0)+1, tensor1 * -2)",
+                               "tensor(x[2]):[-1,2]",
+                               "tensor(p{}):{a:7,b:-3,c:12,d:11,e:-1}");
+        // check that "top" also works as identifier
+        tester.assertEvaluates("tensor(top[2]):[0.25,0.75]",
+                               "l1_normalize(tensor0, top)",
+                               "tensor(top[2]):[1,3]");
     }
 
     @Test

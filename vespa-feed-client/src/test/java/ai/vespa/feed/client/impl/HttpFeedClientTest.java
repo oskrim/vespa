@@ -38,6 +38,7 @@ class HttpFeedClientTest {
         AtomicReference<BiFunction<DocumentId, HttpRequest, CompletableFuture<HttpResponse>>> dispatch = new AtomicReference<>();
         class MockRequestStrategy implements RequestStrategy {
             @Override public OperationStats stats() { throw new UnsupportedOperationException(); }
+            @Override public void resetStats() { throw new UnsupportedOperationException(); }
             @Override public FeedClient.CircuitBreaker.State circuitBreakerState() { return FeedClient.CircuitBreaker.State.CLOSED; }
             @Override public void destroy() { throw new UnsupportedOperationException(); }
             @Override public void await() { throw new UnsupportedOperationException(); }
@@ -229,7 +230,7 @@ class HttpFeedClientTest {
             try {
                 assertNull(request.body());
                 assertEquals("POST", request.method());
-                assertEquals("/document/v1/feeder/handshake/docid/dummy?dryRun=true&timeout=15000ms", request.pathAndQuery());
+                assertEquals("/document/v1/feeder/handshake/docid/dummy?dryRun=true&timeout=30000ms", request.pathAndQuery());
                 vessel.complete(response.get());
             }
             catch (Throwable t) {

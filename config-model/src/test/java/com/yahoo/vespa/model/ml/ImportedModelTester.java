@@ -4,7 +4,6 @@ package com.yahoo.vespa.model.ml;
 import ai.vespa.rankingexpression.importer.configmodelview.MlModelImporter;
 import ai.vespa.rankingexpression.importer.lightgbm.LightGBMImporter;
 import ai.vespa.rankingexpression.importer.onnx.OnnxImporter;
-import ai.vespa.rankingexpression.importer.tensorflow.TensorFlowImporter;
 import ai.vespa.rankingexpression.importer.vespa.VespaImporter;
 import ai.vespa.rankingexpression.importer.xgboost.XGBoostImporter;
 import com.yahoo.config.FileReference;
@@ -17,6 +16,7 @@ import com.yahoo.config.model.api.OnnxModelCost.Calculator;
 import com.yahoo.config.model.api.OnnxModelCost.ModelInfo;
 import com.yahoo.config.model.api.OnnxModelOptions;
 import com.yahoo.config.model.deploy.DeployState;
+import com.yahoo.config.model.deploy.TestDeployState;
 import com.yahoo.io.GrowableByteBuffer;
 import com.yahoo.io.IOUtils;
 import com.yahoo.path.Path;
@@ -46,8 +46,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 public class ImportedModelTester {
 
-    private final List<MlModelImporter> importers = List.of(new TensorFlowImporter(),
-                                                            new OnnxImporter(),
+    private final List<MlModelImporter> importers = List.of(new OnnxImporter(),
                                                             new LightGBMImporter(),
                                                             new XGBoostImporter(),
                                                             new VespaImporter());
@@ -58,7 +57,7 @@ public class ImportedModelTester {
     public final Calculator calculator = new MockCalculator();
 
     public ImportedModelTester(String modelName, Path applicationDir) {
-        this(modelName, applicationDir, new DeployState.Builder());
+        this(modelName, applicationDir, TestDeployState.createBuilder());
     }
 
     public ImportedModelTester(String modelName, Path applicationDir, DeployState.Builder deployStateBuilder) {

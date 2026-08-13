@@ -7,6 +7,7 @@ import com.yahoo.component.Version;
 import com.yahoo.concurrent.InThreadExecutorService;
 import com.yahoo.concurrent.StripedExecutor;
 import com.yahoo.config.model.api.OnnxModelCost;
+import com.yahoo.config.model.api.Provisioned;
 import com.yahoo.config.model.test.MockApplicationPackage;
 import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.ApplicationName;
@@ -19,6 +20,7 @@ import com.yahoo.vespa.config.server.MockSecretStore;
 import com.yahoo.vespa.config.server.ServerCache;
 import com.yahoo.vespa.config.server.TestConfigDefinitionRepo;
 import com.yahoo.vespa.config.server.application.Application;
+import com.yahoo.vespa.config.server.application.InheritableApplications;
 import com.yahoo.vespa.config.server.application.ApplicationVersions;
 import com.yahoo.vespa.config.server.application.TenantApplications;
 import com.yahoo.vespa.config.server.application.TenantApplicationsTest;
@@ -42,7 +44,6 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.ExpectedException;
 import org.junit.rules.TemporaryFolder;
-import org.mockito.Mock;
 import org.xml.sax.SAXException;
 import java.io.IOException;
 import java.time.Clock;
@@ -109,15 +110,17 @@ public class TenantRepositoryTest {
         TenantApplications applicationRepo = tenantRepository.getTenant(tenant1).getApplicationRepo();
         ApplicationId id = ApplicationId.from(tenant1, ApplicationName.defaultName(), InstanceName.defaultName());
         applicationRepo.createApplication(id);
-        try (var transaction = new CuratorTransaction(curator)) {
-            applicationRepo.createWriteActiveTransaction(transaction, id, 4).commit();
+        try (var applicationLock = applicationRepo.lock(id);
+             var transaction = new CuratorTransaction(curator)) {
+            applicationRepo.appendActivateOperations(applicationLock, id, 4, transaction).commit();
         }
-        applicationRepo.activateApplication(ApplicationVersions.from(new Application(new VespaModel(MockApplicationPackage.createEmpty()),
-                                                                                     new ServerCache(),
-                                                                                     4L,
-                                                                                     new Version(1, 2, 3),
-                                                                                     MetricUpdater.createTestUpdater(),
-                                                                                     id)),
+        applicationRepo.activateApplication(ApplicationVersions.fromList(List.of(new Application(new VespaModel(MockApplicationPackage.createEmpty()),
+                                                                                                 new ServerCache(),
+                                                                                                 4L,
+                                                                                                 new Version(1, 2, 3),
+                                                                                                 MetricUpdater.createTestUpdater(),
+                                                                                                 id)),
+                                                                         new Provisioned()),
                                             4);
         assertEquals(1, listener.activated.get());
     }
@@ -220,10 +223,9 @@ public class TenantRepositoryTest {
                   Metrics.createTestMetrics(),
                   new StripedExecutor<>(new InThreadExecutorService()),
                   new StripedExecutor<>(new InThreadExecutorService()),
-                  new FileDistributionFactory(configserverConfig, new FileDirectory(configserverConfig)),
+                  new FileDistributionFactory(configserverConfig, new FileDirectory(configserverConfig), new InMemoryFlagSource()),
                   flagSource,
                   new InThreadExecutorService(),
-                  mockSecretStore,
                   HostProvisionerProvider.empty(),
                   configserverConfig,
                   new ConfigServerDB(configserverConfig),
@@ -235,7 +237,8 @@ public class TenantRepositoryTest {
                   new MockTenantListener(),
                   new ZookeeperServerConfig.Builder().myid(0).build(),
                   OnnxModelCost.disabled(),
-                  List.of(new DefaultEndpointCertificateSecretStore(mockSecretStore)));
+                  List.of(new DefaultEndpointCertificateSecretStore(mockSecretStore)),
+                  InheritableApplications.empty());
         }
 
         @Override

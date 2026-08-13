@@ -3,35 +3,31 @@ package com.yahoo.vespa.indexinglanguage;
 
 import com.yahoo.document.DataType;
 import com.yahoo.document.Field;
-import com.yahoo.document.datatypes.*;
+import com.yahoo.document.datatypes.Array;
+import com.yahoo.document.datatypes.FieldValue;
+import com.yahoo.document.datatypes.MapFieldValue;
+import com.yahoo.document.datatypes.StructuredFieldValue;
+import com.yahoo.document.datatypes.WeightedSet;
 
-import java.util.*;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Map;
 
 /**
  * @author Simon Thoresen Hult
  */
 public abstract class FieldValueConverter {
 
-    @SuppressWarnings({ "unchecked" })
+    @SuppressWarnings({ "rawtypes", "unchecked" })
     public final FieldValue convert(FieldValue value) {
-        if (value == null) {
-            return null;
-        }
-        if (shouldConvert(value)) {
-            return doConvert(value);
-        }
-        if (value instanceof Array) {
-            return convertArray((Array)value);
-        }
-        if (value instanceof MapFieldValue) {
-            return convertMap((MapFieldValue)value);
-        }
-        if (value instanceof WeightedSet) {
-            return convertWset((WeightedSet)value);
-        }
-        if (value instanceof StructuredFieldValue) {
-            return convertStructured((StructuredFieldValue)value);
-        }
+        if (value == null) return null;
+        if (shouldConvert(value)) return doConvert(value);
+        if (value instanceof Array arrayValue) return convertArray(arrayValue);
+        if (value instanceof MapFieldValue mapValue) return convertMap(mapValue);
+        if (value instanceof WeightedSet weightedSetValue) return convertWset(weightedSetValue);
+        if (value instanceof StructuredFieldValue structuredFieldValue) return convertStructured(structuredFieldValue);
         return value;
     }
 

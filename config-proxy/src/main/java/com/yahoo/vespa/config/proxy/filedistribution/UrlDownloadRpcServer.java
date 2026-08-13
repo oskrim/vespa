@@ -6,14 +6,15 @@ import com.yahoo.jrt.Method;
 import com.yahoo.jrt.Request;
 import com.yahoo.jrt.StringValue;
 import com.yahoo.jrt.Supervisor;
-import com.yahoo.net.URI;
 import com.yahoo.security.tls.Capability;
 import com.yahoo.text.Utf8;
+import com.yahoo.vespa.config.util.ConfigUtils;
 import com.yahoo.vespa.defaults.Defaults;
 import com.yahoo.yolean.Exceptions;
-import net.jpountz.xxhash.XXHashFactory;
 
 import java.io.File;
+import java.net.MalformedURLException;
+import java.net.URI;
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.util.Objects;
@@ -33,7 +34,7 @@ import static java.util.logging.Level.WARNING;
 /**
  * An RPC server that handles URL download requests.
  *
- * @author lesters
+ * @author Lester Solbakken
  */
 class UrlDownloadRpcServer {
 
@@ -46,10 +47,11 @@ class UrlDownloadRpcServer {
 
     UrlDownloadRpcServer(Supervisor supervisor) {
         this.rootDownloadDir = defaultDownloadDirectory;
-        supervisor.addMethod(new Method("url.waitFor", "s", "s", this::download)
+        supervisor.addMethod(new Method("url.waitFor", "s*", "s", this::download)
                                     .requireCapabilities(Capability.CONFIGPROXY__FILEDISTRIBUTION_API)
                                     .methodDesc("get path to url download")
                                     .paramDesc(0, "url", "url")
+                                    .paramDesc(1, "auth_token", "auth token (optional)") // TODO: Return back to give a proper name
                                     .returnDesc(0, "path", "path to file"));
     }
 
@@ -70,9 +72,16 @@ class UrlDownloadRpcServer {
 
     private void downloadFile(Request req) {
         String url = req.parameters().get(0).asString();
+        String authHeader = req.parameters().size() > 1 ? req.parameters().get(1).asString() : null;
+
         File downloadDir = new File(rootDownloadDir, urlToDirName(url));
-        Downloader downloader = downloader(url);
-        if (downloader.alreadyDownloaded(downloader, downloadDir)) {
+        UrlDownloader downloader;
+        try {
+            downloader = downloader(url, new DownloadOptions(authHeader));
+        } catch (MalformedURLException e) {
+            throw new RuntimeException(e);
+        }
+        if (downloader.alreadyDownloaded(downloadDir)) {
             log.log(Level.INFO, "URL '" + url + "' already downloaded");
             req.returnValues().add(new StringValue(new File(downloadDir, downloader.fileName()).getAbsolutePath()));
             req.returnRequest();
@@ -81,7 +90,7 @@ class UrlDownloadRpcServer {
 
         try {
             Files.createDirectories(downloadDir.toPath());
-            Optional<File> file = downloader.downloadFile(url, downloadDir);
+            Optional<File> file = downloader.download(downloadDir);
             if (file.isPresent())
                 req.returnValues().add(new StringValue(file.get().getAbsolutePath()));
             else
@@ -94,13 +103,13 @@ class UrlDownloadRpcServer {
         req.returnRequest();
     }
 
-    private static Downloader downloader(String url) {
-        Objects.requireNonNull(url, "url cannot be null");
-        URI uri = new URI(url);
-        return switch (uri.getScheme()) {
-            case "http", "https" -> new UrlDownloader();
-            case "s3" -> new S3Downloader();
-            default -> throw new IllegalArgumentException("Unsupported scheme '" + uri.getScheme() + "'");
+    private static UrlDownloader downloader(String urlString, DownloadOptions options) throws MalformedURLException {
+        Objects.requireNonNull(urlString, "url cannot be null");
+        URI uri = URI.create(urlString);
+        String scheme = uri.getScheme();
+        return switch (scheme) {
+            case "http", "https" -> new UrlDownloader(uri, options);
+            default -> throw new IllegalArgumentException("Unsupported scheme '" + scheme + "'");
         };
     }
 
@@ -111,7 +120,7 @@ class UrlDownloadRpcServer {
     }
 
     private static String urlToDirName(String uri) {
-        return String.valueOf(XXHashFactory.fastestJavaInstance().hash64().hash(ByteBuffer.wrap(Utf8.toBytes(uri)), 0));
+        return ConfigUtils.getXxhash64(ByteBuffer.wrap(Utf8.toBytes(uri)));
     }
 
 }

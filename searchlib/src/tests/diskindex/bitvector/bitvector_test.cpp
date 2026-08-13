@@ -1,11 +1,12 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
-#include <vespa/searchlib/index/field_length_info.h>
+#include <vespa/searchcommon/common/schema.h>
 #include <vespa/searchlib/diskindex/bitvectordictionary.h>
 #include <vespa/searchlib/diskindex/fieldwriter.h>
 #include <vespa/searchlib/index/dummyfileheadercontext.h>
-#include <vespa/searchcommon/common/schema.h>
+#include <vespa/searchlib/index/field_length_info.h>
 #include <vespa/vespalib/gtest/gtest.h>
+
 #include <filesystem>
 
 using namespace search::index;
@@ -13,43 +14,34 @@ using search::index::schema::DataType;
 
 namespace search::diskindex {
 
-struct FieldWriterWrapper
-{
+struct FieldWriterWrapper {
     FieldWriter _writer;
 
     FieldWriterWrapper(uint32_t docIdLimit, uint64_t numWordIds, std::string_view path);
-    FieldWriterWrapper & newWord(std::string_view word);
-    FieldWriterWrapper & add(uint32_t docId);
+    FieldWriterWrapper& newWord(std::string_view word);
+    FieldWriterWrapper& add(uint32_t docId);
 
-    bool open(const Schema &schema, const uint32_t indexId,
-              const TuneFileSeqWrite &tuneFileWrite, const common::FileHeaderContext &fileHeaderContext);
+    bool open(const Schema& schema, const uint32_t indexId, const TuneFileSeqWrite& tuneFileWrite,
+              const common::FileHeaderContext& fileHeaderContext);
 };
 
-
 FieldWriterWrapper::FieldWriterWrapper(uint32_t docIdLimit, uint64_t numWordIds, std::string_view path)
-    : _writer(docIdLimit, numWordIds, path)
-{
+    : _writer(docIdLimit, numWordIds, path) {
     std::filesystem::create_directory(std::filesystem::path(path));
 }
 
-bool
-FieldWriterWrapper::open(const Schema &schema, const uint32_t indexId,
-                         const TuneFileSeqWrite &tuneFileWrite, const common::FileHeaderContext &fileHeaderContext)
-{
-    return _writer.open(64, 10000, false, false, schema, indexId, FieldLengthInfo(), tuneFileWrite, fileHeaderContext);
+bool FieldWriterWrapper::open(const Schema& schema, const uint32_t indexId, const TuneFileSeqWrite& tuneFileWrite,
+                              const common::FileHeaderContext& fileHeaderContext) {
+    return _writer.open(64, 10000, 0, false, false, schema, indexId, FieldLengthInfo(), tuneFileWrite,
+                        fileHeaderContext);
 }
 
-FieldWriterWrapper &
-FieldWriterWrapper::newWord(std::string_view word)
-{
+FieldWriterWrapper& FieldWriterWrapper::newWord(std::string_view word) {
     _writer.newWord(word);
     return *this;
 }
 
-
-FieldWriterWrapper &
-FieldWriterWrapper::add(uint32_t docId)
-{
+FieldWriterWrapper& FieldWriterWrapper::add(uint32_t docId) {
     DocIdAndFeatures daf;
     daf.set_doc_id(docId);
     daf.elements().emplace_back(0);
@@ -64,26 +56,20 @@ struct TestParam {
     bool readmmap;
 };
 
-std::ostream& operator<<(std::ostream& os, const TestParam& param)
-{
+std::ostream& operator<<(std::ostream& os, const TestParam& param) {
     os << (param.directio ? "directio" : "normal") << (param.readmmap ? "mmap" : "read");
     return os;
 }
 
-class BitVectorTest : public ::testing::TestWithParam<TestParam>
-{
+class BitVectorTest : public ::testing::TestWithParam<TestParam> {
 protected:
-    Schema _schema;
+    Schema   _schema;
     uint32_t _indexId;
     BitVectorTest();
     ~BitVectorTest() override;
 };
 
-BitVectorTest::BitVectorTest()
-    : ::testing::TestWithParam<TestParam>(),
-      _schema(),
-      _indexId(0)
-{
+BitVectorTest::BitVectorTest() : ::testing::TestWithParam<TestParam>(), _schema(), _indexId(0) {
     _schema.addIndexField(Schema::IndexField("f1", DataType::STRING));
 }
 
@@ -93,10 +79,9 @@ INSTANTIATE_TEST_SUITE_P(BitVectorMultiTest, BitVectorTest,
                          ::testing::Values(TestParam{false, false}, TestParam{true, false}, TestParam{false, true}),
                          ::testing::PrintToStringParamName());
 
-TEST_P(BitVectorTest, require_that_dictionary_handles_no_entries)
-{
-    TuneFileSeqWrite tuneFileWrite;
-    TuneFileRandRead tuneFileRead;
+TEST_P(BitVectorTest, require_that_dictionary_handles_no_entries) {
+    TuneFileSeqWrite       tuneFileWrite;
+    TuneFileRandRead       tuneFileRead;
     DummyFileHeaderContext fileHeaderContext;
 
     if (GetParam().directio) {
@@ -114,18 +99,17 @@ TEST_P(BitVectorTest, require_that_dictionary_handles_no_entries)
     EXPECT_TRUE(fww._writer.close());
 
     BitVectorDictionary dict;
-    BitVectorKeyScope bvScope(BitVectorKeyScope::PERFIELD_WORDS);
+    BitVectorKeyScope   bvScope(BitVectorKeyScope::PERFIELD_WORDS);
     EXPECT_TRUE(dict.open("dump/1/", tuneFileRead, bvScope));
     EXPECT_EQ(5u, dict.getDocIdLimit());
     EXPECT_EQ(0u, dict.getEntries().size());
-    EXPECT_FALSE(dict.lookup(1));
-    EXPECT_FALSE(dict.lookup(2));
+    EXPECT_FALSE(dict.lookup(1).valid());
+    EXPECT_FALSE(dict.lookup(2).valid());
 }
 
-TEST_P(BitVectorTest, require_that_dictionary_handles_multiple_entries)
-{
-    TuneFileSeqWrite tuneFileWrite;
-    TuneFileRandRead tuneFileRead;
+TEST_P(BitVectorTest, require_that_dictionary_handles_multiple_entries) {
+    TuneFileSeqWrite       tuneFileWrite;
+    TuneFileRandRead       tuneFileRead;
     DummyFileHeaderContext fileHeaderContext;
 
     if (GetParam().directio) {
@@ -163,7 +147,7 @@ TEST_P(BitVectorTest, require_that_dictionary_handles_multiple_entries)
     EXPECT_TRUE(fww._writer.close());
 
     BitVectorDictionary dict;
-    BitVectorKeyScope bvScope(BitVectorKeyScope::PERFIELD_WORDS);
+    BitVectorKeyScope   bvScope(BitVectorKeyScope::PERFIELD_WORDS);
     EXPECT_TRUE(dict.open("dump/2/", tuneFileRead, bvScope));
     EXPECT_EQ(64u, dict.getDocIdLimit());
     EXPECT_EQ(2u, dict.getEntries().size());
@@ -176,25 +160,27 @@ TEST_P(BitVectorTest, require_that_dictionary_handles_multiple_entries)
     EXPECT_EQ(5u, e._wordNum);
     EXPECT_EQ(23u, e._numDocs);
 
-    EXPECT_FALSE(dict.lookup(2));
-    EXPECT_FALSE(dict.lookup(3));
-    EXPECT_FALSE(dict.lookup(4));
-    EXPECT_FALSE(dict.lookup(6));
+    EXPECT_FALSE(dict.lookup(2).valid());
+    EXPECT_FALSE(dict.lookup(3).valid());
+    EXPECT_FALSE(dict.lookup(4).valid());
+    EXPECT_FALSE(dict.lookup(6).valid());
 
-    BitVector::UP bv1act = dict.lookup(1);
+    auto bv1lr = dict.lookup(1);
+    EXPECT_TRUE(bv1lr.valid());
+    auto bv1act = dict.read_bitvector(bv1lr);
     EXPECT_TRUE(bv1act);
     EXPECT_TRUE(*bv1exp == *bv1act);
 
-    BitVector::UP bv5act = dict.lookup(5);
+    auto bv5lr = dict.lookup(5);
+    EXPECT_TRUE(bv5lr.valid());
+    auto bv5act = dict.read_bitvector(bv5lr);
     EXPECT_TRUE(bv5act);
     EXPECT_TRUE(*bv5exp == *bv5act);
 }
 
-}
+} // namespace search::diskindex
 
-int
-main(int argc, char* argv[])
-{
+int main(int argc, char* argv[]) {
     ::testing::InitGoogleTest(&argc, argv);
     if (argc > 0) {
         search::index::DummyFileHeaderContext::setCreator(argv[0]);

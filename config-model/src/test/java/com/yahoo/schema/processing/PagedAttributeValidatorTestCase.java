@@ -11,7 +11,9 @@ import java.util.Optional;
 import static com.yahoo.config.model.test.TestUtil.joinLines;
 import static com.yahoo.schema.ApplicationBuilder.createFromString;
 import static com.yahoo.schema.ApplicationBuilder.createFromStrings;
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 public class PagedAttributeValidatorTestCase {
 
@@ -112,7 +114,7 @@ public class PagedAttributeValidatorTestCase {
         assertEquals(1, logger.warnings.size());
         assertEquals("For schema 'test', field 'pos': " +
                 "The 'paged' attribute setting in combination with HNSW indexing is strongly discouraged, see " +
-                "https://docs.vespa.ai/en/attributes.html#paged-attributes-disadvantages for details",
+                "https://docs.vespa.ai/en/content/attributes.html#paged-attributes-disadvantages for details",
                 logger.warnings.get(0));
     }
 

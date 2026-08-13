@@ -18,19 +18,24 @@ public final class JoinExpression extends Expression {
     private final String delimiter;
 
     public JoinExpression(String delimiter) {
-        super(UnresolvedDataType.INSTANCE);
         this.delimiter = delimiter;
     }
 
     public String getDelimiter() { return delimiter; }
 
     @Override
-    protected void doVerify(VerificationContext context) {
-        DataType input = context.getCurrentType();
-        if (!(input instanceof ArrayDataType)) {
-            throw new VerificationException(this, "Expected Array input, got " + input.getName());
-        }
-        context.setCurrentType(createdOutputType());
+    public DataType setInputType(DataType inputType, TypeContext context) {
+        super.setInputType(inputType, context);
+        if (inputType == null) return null;
+        if ( ! (inputType instanceof ArrayDataType))
+            throw new VerificationException(this, "Expected Array input, got type " + inputType.getName());
+        return DataType.STRING;
+    }
+
+    @Override
+    public DataType setOutputType(DataType outputType, TypeContext context) {
+        super.setOutputType(DataType.STRING, outputType, null, context);
+        return getInputType(context); // Cannot deduce since any array type is accepted
     }
 
     @SuppressWarnings({ "unchecked" })
@@ -48,9 +53,6 @@ public final class JoinExpression extends Expression {
         }
         context.setCurrentValue(new StringFieldValue(output.toString()));
     }
-
-    @Override
-    public DataType createdOutputType() { return DataType.STRING; }
 
     @Override
     public String toString() {

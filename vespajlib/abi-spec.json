@@ -1,4 +1,32 @@
 {
+  "com.yahoo.data.JsonProducer" : {
+    "superClass" : "java.lang.Object",
+    "interfaces" : [ ],
+    "attributes" : [
+      "public",
+      "interface",
+      "abstract"
+    ],
+    "methods" : [
+      "public abstract java.lang.StringBuilder writeJson(java.lang.StringBuilder)",
+      "public java.lang.String toJson()"
+    ],
+    "fields" : [ ]
+  },
+  "com.yahoo.data.XmlProducer" : {
+    "superClass" : "java.lang.Object",
+    "interfaces" : [ ],
+    "attributes" : [
+      "public",
+      "interface",
+      "abstract"
+    ],
+    "methods" : [
+      "public abstract java.lang.StringBuilder writeXML(java.lang.StringBuilder)",
+      "public java.lang.String toXML()"
+    ],
+    "fields" : [ ]
+  },
   "com.yahoo.data.access.ArrayTraverser" : {
     "superClass" : "java.lang.Object",
     "interfaces" : [ ],
@@ -28,7 +56,8 @@
   "com.yahoo.data.access.Inspector" : {
     "superClass" : "java.lang.Object",
     "interfaces" : [
-      "com.yahoo.data.access.Inspectable"
+      "com.yahoo.data.access.Inspectable",
+      "com.yahoo.data.disclosure.DataSource"
     ],
     "attributes" : [
       "public",
@@ -57,7 +86,8 @@
       "public abstract com.yahoo.data.access.Inspector entry(int)",
       "public abstract com.yahoo.data.access.Inspector field(java.lang.String)",
       "public abstract java.lang.Iterable entries()",
-      "public abstract java.lang.Iterable fields()"
+      "public abstract java.lang.Iterable fields()",
+      "public void emit(com.yahoo.data.disclosure.DataSink)"
     ],
     "fields" : [ ]
   },
@@ -278,7 +308,8 @@
       "public java.lang.String asString()",
       "public java.lang.String asString(java.lang.String)",
       "public byte[] asUtf8()",
-      "public byte[] asUtf8(byte[])"
+      "public byte[] asUtf8(byte[])",
+      "public void emit(com.yahoo.data.disclosure.DataSink)"
     ],
     "fields" : [ ]
   },
@@ -333,8 +364,10 @@
       "public void <init>(java.lang.String, java.io.Reader)",
       "public java.lang.String getName()",
       "public java.io.Reader getReader()",
+      "public int hashCode()",
+      "public boolean equals(java.lang.Object)",
       "public java.lang.String toString()",
-      "public static java.io.Reader nullReader()",
+      "public static java.io.Reader of(java.lang.CharSequence)",
       "public int read(java.nio.CharBuffer)",
       "public int read()",
       "public int read(char[])",
@@ -346,7 +379,20 @@
       "public void reset()",
       "public void close()",
       "public long transferTo(java.io.Writer)",
-      "public static void closeAll(java.util.List)"
+      "public static void closeAll(java.util.List)",
+      "public static java.io.Reader nullReader()"
+    ],
+    "fields" : [ ]
+  },
+  "com.yahoo.net.AcceptHeaderMatcher" : {
+    "superClass" : "java.lang.Object",
+    "interfaces" : [ ],
+    "attributes" : [
+      "public"
+    ],
+    "methods" : [
+      "public void <init>(java.lang.String)",
+      "public varargs java.util.List preferredExactMediaTypes(java.lang.String[])"
     ],
     "fields" : [ ]
   },
@@ -932,6 +978,21 @@
     ],
     "fields" : [ ]
   },
+  "com.yahoo.tensor.Label" : {
+    "superClass" : "java.lang.Object",
+    "interfaces" : [ ],
+    "attributes" : [
+      "public",
+      "interface",
+      "abstract"
+    ],
+    "methods" : [
+      "public abstract long asNumeric()",
+      "public abstract java.lang.String asString()",
+      "public abstract boolean isEqualTo(com.yahoo.tensor.Label)"
+    ],
+    "fields" : [ ]
+  },
   "com.yahoo.tensor.MappedTensor$Builder" : {
     "superClass" : "java.lang.Object",
     "interfaces" : [
@@ -1077,6 +1138,7 @@
     ],
     "methods" : [
       "public void <init>(int)",
+      "public com.yahoo.tensor.PartialAddress$Builder add(java.lang.String, com.yahoo.tensor.Label)",
       "public com.yahoo.tensor.PartialAddress$Builder add(java.lang.String, long)",
       "public com.yahoo.tensor.PartialAddress$Builder add(java.lang.String, java.lang.String)",
       "public com.yahoo.tensor.PartialAddress build()"
@@ -1091,8 +1153,10 @@
     ],
     "methods" : [
       "public java.lang.String dimension(int)",
+      "public com.yahoo.tensor.Label objectLabel(java.lang.String)",
       "public long numericLabel(java.lang.String)",
       "public java.lang.String label(java.lang.String)",
+      "public com.yahoo.tensor.Label objectLabel(int)",
       "public java.lang.String label(int)",
       "public int size()",
       "public com.yahoo.tensor.TensorAddress asAddress(com.yahoo.tensor.TensorType)",
@@ -1281,6 +1345,7 @@
       "public void <init>(com.yahoo.tensor.TensorType)",
       "public com.yahoo.tensor.TensorAddress$Builder add(java.lang.String)",
       "public com.yahoo.tensor.TensorAddress$Builder add(java.lang.String, java.lang.String)",
+      "public com.yahoo.tensor.TensorAddress$Builder add(java.lang.String, com.yahoo.tensor.Label)",
       "public com.yahoo.tensor.TensorAddress$Builder add(java.lang.String, int)",
       "public com.yahoo.tensor.TensorAddress$Builder add(java.lang.String, long)",
       "public com.yahoo.tensor.TensorAddress$Builder copy()",
@@ -1317,6 +1382,7 @@
       "public static varargs com.yahoo.tensor.TensorAddress of(long[])",
       "public static varargs com.yahoo.tensor.TensorAddress of(int[])",
       "public abstract int size()",
+      "public abstract com.yahoo.tensor.Label objectLabel(int)",
       "public abstract java.lang.String label(int)",
       "public abstract long numericLabel(int)",
       "public abstract com.yahoo.tensor.TensorAddress withLabel(int, long)",
@@ -1329,6 +1395,20 @@
       "public com.yahoo.tensor.TensorAddress fullAddressOf(java.util.List, int[])",
       "public com.yahoo.tensor.TensorAddress mappedPartialAddress(com.yahoo.tensor.TensorType, java.util.List)",
       "public bridge synthetic int compareTo(java.lang.Object)"
+    ],
+    "fields" : [ ]
+  },
+  "com.yahoo.tensor.TensorDataSource" : {
+    "superClass" : "java.lang.Object",
+    "interfaces" : [
+      "com.yahoo.data.disclosure.DataSource"
+    ],
+    "attributes" : [
+      "public"
+    ],
+    "methods" : [
+      "public void <init>(com.yahoo.tensor.Tensor, com.yahoo.tensor.serialization.JsonFormat$EncodeOptions)",
+      "public void emit(com.yahoo.data.disclosure.DataSink)"
     ],
     "fields" : [ ]
   },
@@ -1692,6 +1772,45 @@
     ],
     "fields" : [ ]
   },
+  "com.yahoo.tensor.functions.CellOrder$Order" : {
+    "superClass" : "java.lang.Enum",
+    "interfaces" : [ ],
+    "attributes" : [
+      "public",
+      "final",
+      "enum"
+    ],
+    "methods" : [
+      "public static com.yahoo.tensor.functions.CellOrder$Order[] values()",
+      "public static com.yahoo.tensor.functions.CellOrder$Order valueOf(java.lang.String)",
+      "public java.lang.String toString()"
+    ],
+    "fields" : [
+      "public static final enum com.yahoo.tensor.functions.CellOrder$Order MAX",
+      "public static final enum com.yahoo.tensor.functions.CellOrder$Order MIN"
+    ]
+  },
+  "com.yahoo.tensor.functions.CellOrder" : {
+    "superClass" : "com.yahoo.tensor.functions.PrimitiveTensorFunction",
+    "interfaces" : [ ],
+    "attributes" : [
+      "public"
+    ],
+    "methods" : [
+      "public void <init>(com.yahoo.tensor.functions.TensorFunction, com.yahoo.tensor.functions.CellOrder$Order)",
+      "public static com.yahoo.tensor.TensorType outputType(com.yahoo.tensor.TensorType)",
+      "public com.yahoo.tensor.functions.TensorFunction argument()",
+      "public com.yahoo.tensor.functions.CellOrder$Order order()",
+      "public java.util.List arguments()",
+      "public com.yahoo.tensor.functions.TensorFunction withArguments(java.util.List)",
+      "public com.yahoo.tensor.functions.PrimitiveTensorFunction toPrimitive()",
+      "public com.yahoo.tensor.TensorType type(com.yahoo.tensor.evaluation.TypeContext)",
+      "public com.yahoo.tensor.Tensor evaluate(com.yahoo.tensor.evaluation.EvaluationContext)",
+      "public java.lang.String toString(com.yahoo.tensor.functions.ToStringContext)",
+      "public int hashCode()"
+    ],
+    "fields" : [ ]
+  },
   "com.yahoo.tensor.functions.CompositeTensorFunction" : {
     "superClass" : "com.yahoo.tensor.functions.TensorFunction",
     "interfaces" : [ ],
@@ -1826,6 +1945,25 @@
       "public com.yahoo.tensor.functions.TensorFunction withArguments(java.util.List)",
       "public com.yahoo.tensor.functions.PrimitiveTensorFunction toPrimitive()",
       "public final com.yahoo.tensor.TensorType type(com.yahoo.tensor.evaluation.TypeContext)",
+      "public java.lang.String toString(com.yahoo.tensor.functions.ToStringContext)",
+      "public int hashCode()"
+    ],
+    "fields" : [ ]
+  },
+  "com.yahoo.tensor.functions.FilterSubspaces" : {
+    "superClass" : "com.yahoo.tensor.functions.PrimitiveTensorFunction",
+    "interfaces" : [ ],
+    "attributes" : [
+      "public"
+    ],
+    "methods" : [
+      "public void <init>(com.yahoo.tensor.functions.TensorFunction, java.lang.String, com.yahoo.tensor.functions.TensorFunction)",
+      "public com.yahoo.tensor.functions.TensorFunction argument()",
+      "public java.util.List arguments()",
+      "public com.yahoo.tensor.functions.TensorFunction withArguments(java.util.List)",
+      "public com.yahoo.tensor.functions.PrimitiveTensorFunction toPrimitive()",
+      "public com.yahoo.tensor.TensorType type(com.yahoo.tensor.evaluation.TypeContext)",
+      "public com.yahoo.tensor.Tensor evaluate(com.yahoo.tensor.evaluation.EvaluationContext)",
       "public java.lang.String toString(com.yahoo.tensor.functions.ToStringContext)",
       "public int hashCode()"
     ],
@@ -2943,6 +3081,23 @@
     ],
     "fields" : [ ]
   },
+  "com.yahoo.tensor.functions.Top" : {
+    "superClass" : "com.yahoo.tensor.functions.CompositeTensorFunction",
+    "interfaces" : [ ],
+    "attributes" : [
+      "public"
+    ],
+    "methods" : [
+      "public void <init>(com.yahoo.tensor.functions.TensorFunction, com.yahoo.tensor.functions.TensorFunction)",
+      "public com.yahoo.tensor.TensorType type(com.yahoo.tensor.evaluation.TypeContext)",
+      "public java.util.List arguments()",
+      "public com.yahoo.tensor.functions.TensorFunction withArguments(java.util.List)",
+      "public com.yahoo.tensor.functions.PrimitiveTensorFunction toPrimitive()",
+      "public java.lang.String toString(com.yahoo.tensor.functions.ToStringContext)",
+      "public int hashCode()"
+    ],
+    "fields" : [ ]
+  },
   "com.yahoo.tensor.functions.XwPlusB" : {
     "superClass" : "com.yahoo.tensor.functions.CompositeTensorFunction",
     "interfaces" : [ ],
@@ -3323,6 +3478,7 @@
     ],
     "methods" : [
       "public void <init>()",
+      "public static java.lang.String toHex(byte[])",
       "public static java.lang.String escape(java.lang.String)",
       "public static java.lang.String escape(java.lang.String, char)",
       "public static java.lang.String unescape(java.lang.String)",
@@ -3351,6 +3507,27 @@
       "public static java.lang.String truncate(java.lang.String, int)",
       "public static java.lang.String substringByCodepoints(java.lang.String, int, int)",
       "public static varargs java.lang.String format(java.lang.String, java.lang.Object[])"
+    ],
+    "fields" : [ ]
+  },
+  "com.yahoo.text.UnicodeString" : {
+    "superClass" : "java.lang.Object",
+    "interfaces" : [ ],
+    "attributes" : [
+      "public"
+    ],
+    "methods" : [
+      "public void <init>(java.lang.String)",
+      "public com.yahoo.text.UnicodeString substring(int, int)",
+      "public int skip(int, int)",
+      "public int nextIndex(int)",
+      "public int nextCodePoint(int)",
+      "public int length()",
+      "public int codePointCount()",
+      "public int codePointAt(int)",
+      "public java.lang.String toString()",
+      "public boolean equals(java.lang.Object)",
+      "public int hashCode()"
     ],
     "fields" : [ ]
   },
@@ -3388,7 +3565,11 @@
       "public static int encode(int, byte[], int)",
       "public static void encode(int, java.nio.ByteBuffer)",
       "public static int encode(int, java.io.OutputStream)",
-      "public static int codePointAsUtf8Length(int)"
+      "public static int codePointAsUtf8Length(int)",
+      "public static java.io.FileReader createReader(java.io.File)",
+      "public static java.io.FileReader createReader(java.lang.String)",
+      "public static java.io.FileWriter createWriter(java.io.File)",
+      "public static java.io.FileWriter createWriter(java.lang.String)"
     ],
     "fields" : [ ]
   },
@@ -3803,6 +3984,19 @@
     ],
     "fields" : [ ]
   },
+  "com.yahoo.yolean.Exceptions$SupplierThrowingInterruptedException" : {
+    "superClass" : "java.lang.Object",
+    "interfaces" : [ ],
+    "attributes" : [
+      "public",
+      "interface",
+      "abstract"
+    ],
+    "methods" : [
+      "public abstract java.lang.Object get()"
+    ],
+    "fields" : [ ]
+  },
   "com.yahoo.yolean.Exceptions" : {
     "superClass" : "java.lang.Object",
     "interfaces" : [ ],
@@ -3813,15 +4007,17 @@
       "public void <init>()",
       "public static java.lang.String toMessageString(java.lang.Throwable)",
       "public static java.util.Optional findCause(java.lang.Throwable, java.lang.Class)",
+      "public static java.util.Optional findRootCause(java.lang.Throwable, java.lang.Class)",
       "public static void uncheck(com.yahoo.yolean.Exceptions$RunnableThrowingIOException)",
-      "public static void uncheckInterrupted(com.yahoo.yolean.Exceptions$RunnableThrowingInterruptedException)",
-      "public static void uncheckInterruptedAndRestoreFlag(com.yahoo.yolean.Exceptions$RunnableThrowingInterruptedException)",
       "public static varargs void uncheck(com.yahoo.yolean.Exceptions$RunnableThrowingIOException, java.lang.String, java.lang.String[])",
       "public static void uncheckAndIgnore(com.yahoo.yolean.Exceptions$RunnableThrowingIOException, java.lang.Class)",
       "public static java.util.function.Function uncheck(com.yahoo.yolean.Exceptions$FunctionThrowingIOException)",
       "public static java.lang.Object uncheck(com.yahoo.yolean.Exceptions$SupplierThrowingIOException)",
       "public static varargs java.lang.Object uncheck(com.yahoo.yolean.Exceptions$SupplierThrowingIOException, java.lang.String, java.lang.String[])",
       "public static java.lang.Object uncheckAndIgnore(com.yahoo.yolean.Exceptions$SupplierThrowingIOException, java.lang.Class)",
+      "public static void uncheckInterrupted(com.yahoo.yolean.Exceptions$RunnableThrowingInterruptedException)",
+      "public static void uncheckInterruptedAndRestoreFlag(com.yahoo.yolean.Exceptions$RunnableThrowingInterruptedException)",
+      "public static java.lang.Object uncheckInterrupted(com.yahoo.yolean.Exceptions$SupplierThrowingInterruptedException)",
       "public static java.lang.RuntimeException throwUnchecked(java.lang.Throwable)"
     ],
     "fields" : [ ]
@@ -4105,6 +4301,7 @@
     "methods" : [
       "public void <init>(java.util.function.Function)",
       "public void <init>(java.lang.String, java.util.function.Function)",
+      "public void <init>(java.lang.String, java.lang.String, java.util.function.Function)",
       "public void setApiKey(java.lang.String)",
       "public java.util.Optional getApiKey()",
       "public void setEndpoint(java.lang.String)",
@@ -4112,9 +4309,24 @@
       "public java.util.Optional get(java.lang.String)",
       "public java.util.Optional getDouble(java.lang.String)",
       "public java.util.Optional getInt(java.lang.String)",
-      "public void ifPresent(java.lang.String, java.util.function.Consumer)"
+      "public java.util.Optional getLong(java.lang.String)",
+      "public void ifPresent(java.lang.String, java.util.function.Consumer)",
+      "public ai.vespa.llm.InferenceParameters withDefaultOptions(java.util.function.Function)"
     ],
-    "fields" : [ ]
+    "fields" : [
+      "public static final java.lang.String OPTION_MODEL",
+      "public static final java.lang.String OPTION_TEMPERATURE",
+      "public static final java.lang.String OPTION_MAX_TOKENS",
+      "public static final java.lang.String OPTION_TOP_K",
+      "public static final java.lang.String OPTION_TOP_P",
+      "public static final java.lang.String OPTION_N_PREDICT",
+      "public static final java.lang.String OPTION_REPEAT_PENALTY",
+      "public static final java.lang.String OPTION_FREQUENCY_PENALTY",
+      "public static final java.lang.String OPTION_PRESENCE_PENALTY",
+      "public static final java.lang.String OPTION_SEED",
+      "public static final java.lang.String OPTION_JSON_SCHEMA",
+      "public static final java.lang.String OPTION_REASONING_EFFORT"
+    ]
   },
   "ai.vespa.llm.LanguageModel" : {
     "superClass" : "java.lang.Object",
@@ -4138,22 +4350,8 @@
     ],
     "methods" : [
       "public void <init>(int, java.lang.String)",
+      "public void <init>(int, java.lang.String, java.lang.Throwable)",
       "public int code()"
-    ],
-    "fields" : [ ]
-  },
-  "ai.vespa.llm.client.openai.OpenAiClient" : {
-    "superClass" : "java.lang.Object",
-    "interfaces" : [
-      "ai.vespa.llm.LanguageModel"
-    ],
-    "attributes" : [
-      "public"
-    ],
-    "methods" : [
-      "public void <init>()",
-      "public java.util.List complete(ai.vespa.llm.completion.Prompt, ai.vespa.llm.InferenceParameters)",
-      "public java.util.concurrent.CompletableFuture completeAsync(ai.vespa.llm.completion.Prompt, ai.vespa.llm.InferenceParameters, java.util.function.Consumer)"
     ],
     "fields" : [ ]
   },
@@ -4173,7 +4371,12 @@
       "public static final enum ai.vespa.llm.completion.Completion$FinishReason length",
       "public static final enum ai.vespa.llm.completion.Completion$FinishReason stop",
       "public static final enum ai.vespa.llm.completion.Completion$FinishReason none",
-      "public static final enum ai.vespa.llm.completion.Completion$FinishReason error"
+      "public static final enum ai.vespa.llm.completion.Completion$FinishReason other",
+      "public static final enum ai.vespa.llm.completion.Completion$FinishReason error",
+      "public static final enum ai.vespa.llm.completion.Completion$FinishReason discard",
+      "public static final enum ai.vespa.llm.completion.Completion$FinishReason tool_calls",
+      "public static final enum ai.vespa.llm.completion.Completion$FinishReason content_filter",
+      "public static final enum ai.vespa.llm.completion.Completion$FinishReason function_call"
     ]
   },
   "ai.vespa.llm.completion.Completion" : {

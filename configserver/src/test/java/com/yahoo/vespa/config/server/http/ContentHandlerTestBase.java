@@ -26,11 +26,11 @@ public abstract class ContentHandlerTestBase extends SessionHandlerTest {
     public void require_that_content_can_be_retrieved() throws IOException {
         assertContent("/test.txt", "foo\n");
         assertContent("/foo/", generateResultArray("foo/bar/", "foo/test1.json", "foo/test2.txt"), "application/json");
-        assertContent("/foo", generateResultArray("foo/"), "application/json");
+        assertContent("/foo", generateResultArray("foo/bar/", "foo/test1.json", "foo/test2.txt"), "application/json");
         assertContent("/foo/test1.json", "bar\n", "application/json");
         assertContent("/foo/test2.txt", "baz\n");
         assertContent("/foo/bar/", generateResultArray("foo/bar/file-without-extension", "foo/bar/test.jar"), "application/json");
-        assertContent("/foo/bar", generateResultArray("foo/bar/"), "application/json");
+        assertContent("/foo/bar", generateResultArray("foo/bar/file-without-extension", "foo/bar/test.jar"), "application/json");
         assertContent("/foo/bar/file-without-extension", "content");
         assertBinaryContent("/foo/bar/test.jar", "56f62ad750881d2f8276136896ff84fb", "application/java-archive");
         assertContent("/foo/?recursive=true", generateResultArray("foo/bar/", "foo/bar/file-without-extension", "foo/bar/test.jar", "foo/test1.json", "foo/test2.txt"), "application/json");
@@ -65,7 +65,7 @@ public abstract class ContentHandlerTestBase extends SessionHandlerTest {
         assertStatus("/foo/?return=status&recursive=true",
                 "[{\"status\":\"new\",\"md5\":\"\",\"name\":\"" + baseUrl + "foo/bar\"}," +
                         "{\"status\":\"new\",\"md5\":\"9a0364b9e99bb480dd25e1f0284c8555\",\"name\":\"" + baseUrl + "foo/bar/file-without-extension\"}," +
-                        "{\"status\":\"new\",\"md5\":\"dd9f9fbaf9adb96fd7be2f9bbe562714\",\"name\":\"" + baseUrl + "foo/bar/test.jar\"}," +
+                        "{\"status\":\"new\",\"md5\":\"56f62ad750881d2f8276136896ff84fb\",\"name\":\"" + baseUrl + "foo/bar/test.jar\"}," +
                         "{\"status\":\"new\",\"md5\":\"c157a79031e1c40f85931829bc5fc552\",\"name\":\"" + baseUrl + "foo/test1.json\"}," +
                         "{\"status\":\"new\",\"md5\":\"258622b1688250cb619f3c9ccaefb7eb\",\"name\":\"" + baseUrl + "foo/test2.txt\"}]");
     }

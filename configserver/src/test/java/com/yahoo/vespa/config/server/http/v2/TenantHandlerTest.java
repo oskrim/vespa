@@ -10,7 +10,6 @@ import com.yahoo.container.jdisc.HttpRequestBuilder;
 import com.yahoo.jdisc.http.HttpRequest.Method;
 import com.yahoo.restapi.RestApiTestDriver;
 import com.yahoo.vespa.config.server.ApplicationRepository;
-import com.yahoo.vespa.config.server.application.OrchestratorMock;
 import com.yahoo.vespa.config.server.session.PrepareParams;
 import com.yahoo.vespa.config.server.tenant.TenantRepository;
 import com.yahoo.vespa.config.server.tenant.TestTenantRepository;
@@ -56,7 +55,6 @@ public class TenantHandlerTest {
                 .build();
         applicationRepository = new ApplicationRepository.Builder()
                 .withTenantRepository(tenantRepository)
-                .withOrchestrator(new OrchestratorMock())
                 .withConfigserverConfig(configserverConfig)
                 .build();
         handler = new TenantHandler(RestApiTestDriver.createHandlerTestContext(), applicationRepository);
@@ -123,10 +121,10 @@ public class TenantHandlerTest {
     public void testDeleteTenantWithActiveApplications() throws IOException {
         tenantRepository.addTenant(a);
         ApplicationId applicationId = ApplicationId.from(a, ApplicationName.from("foo"), InstanceName.defaultName());
-        applicationRepository.deploy(testApp, new PrepareParams.Builder().applicationId(applicationId).build());
+        applicationRepository.prepareAndActivate(testApp, new PrepareParams.Builder().applicationId(applicationId).build());
 
         assertResponse(DELETE, "/application/v2/tenant/a",
-                       "{\"error-code\":\"BAD_REQUEST\",\"message\":\"Cannot delete tenant 'a', it has active applications: [a.foo]\"}");
+                       "{\"error-code\":\"BAD_REQUEST\",\"message\":\"Cannot delete tenant 'a', it has active applications: [a.foo.default]\"}");
     }
 
     @Test

@@ -9,10 +9,10 @@ namespace search::docsummary {
 class ResultConfig;
 
 /*
- * Class for writing document summaries with content from another field.
+ * Class for writing document summaries with content from another field. If the field is a multi-value field
+ * then the selected_elements parameter to insert_field defines what elements to print.
  */
-class CopyDFW : public DocsumFieldWriter
-{
+class CopyDFW : public DocsumFieldWriter {
 private:
     std::string _input_field_name;
 
@@ -21,7 +21,8 @@ public:
     ~CopyDFW() override;
 
     bool isGenerated() const override { return false; }
-    void insertField(uint32_t docid, const IDocsumStoreDocument* doc, GetDocsumsState& state, vespalib::slime::Inserter &target) const override;
+    void insert_field(uint32_t docid, const IDocsumStoreDocument* doc, GetDocsumsState& state,
+                      search::common::ElementIds selected_elements, vespalib::slime::Inserter& target) const override;
 };
 
-}
+} // namespace search::docsummary

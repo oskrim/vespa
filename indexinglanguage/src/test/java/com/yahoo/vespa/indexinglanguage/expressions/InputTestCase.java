@@ -1,15 +1,21 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.indexinglanguage.expressions;
 
-import com.yahoo.document.*;
+import com.yahoo.document.DataType;
+import com.yahoo.document.Document;
+import com.yahoo.document.DocumentType;
+import com.yahoo.document.Field;
+import com.yahoo.document.StructDataType;
 import com.yahoo.document.datatypes.FieldValue;
 import com.yahoo.document.datatypes.StringFieldValue;
 import com.yahoo.document.datatypes.Struct;
-import com.yahoo.vespa.indexinglanguage.SimpleDocumentAdapter;
+import com.yahoo.vespa.indexinglanguage.SimpleDocumentFieldValues;
 import com.yahoo.vespa.indexinglanguage.SimpleTestAdapter;
 import org.junit.Test;
 
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotEquals;
+import static org.junit.Assert.fail;
 
 /**
  * @author Simon Thoresen Hult
@@ -34,13 +40,13 @@ public class InputTestCase {
     @Test
     public void requireThatExpressionCanBeVerified() {
         SimpleTestAdapter adapter = new SimpleTestAdapter(new Field("foo", DataType.STRING));
-        adapter.setOutputValue(null, "foo", new StringFieldValue("69"));
-        assertEquals(DataType.STRING, new InputExpression("foo").verify(adapter));
+        adapter.setOutputValue("foo", new StringFieldValue("69"), null);
+        new InputExpression("foo").resolve(adapter);
         try {
-            new InputExpression("bar").verify(adapter);
+            new StatementExpression(new InputExpression("bar")).resolve(adapter);
             fail();
         } catch (VerificationException e) {
-            assertEquals("Input field 'bar' not found.", e.getMessage());
+            assertEquals("Invalid expression 'input bar': Field 'bar' not found.", e.getMessage());
         }
     }
 
@@ -68,7 +74,7 @@ public class InputTestCase {
         Document doc = new Document(docType, "id:scheme:my_doc::");
         doc.setFieldValue("foo", foo);
 
-        ExecutionContext ctx = new ExecutionContext(new SimpleDocumentAdapter(doc));
+        ExecutionContext ctx = new ExecutionContext(new SimpleDocumentFieldValues(doc));
         assertEquals(foo, new InputExpression("foo").execute(ctx));
         assertEquals(bar, new InputExpression("foo.bar").execute(ctx));
     }

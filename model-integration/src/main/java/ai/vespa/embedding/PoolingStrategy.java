@@ -7,11 +7,15 @@ package ai.vespa.embedding;
 import com.yahoo.tensor.Tensor;
 import com.yahoo.tensor.TensorAddress;
 import com.yahoo.tensor.TensorType;
+import com.yahoo.text.Text;
+import java.util.Locale;
+
+import static com.yahoo.text.Lowercase.toLowerCase;
 
 /**
  * @author bjorncs
  */
-public enum PoolingStrategy {
+enum PoolingStrategy {
     MEAN {
         @Override
         public Tensor toSentenceEmbedding(TensorType type, Tensor tokenEmbeddings, Tensor attentionMask) {
@@ -34,15 +38,26 @@ public enum PoolingStrategy {
             }
             return builder.build();
         }
+    },
+    NONE {
+        @Override
+        public Tensor toSentenceEmbedding(TensorType type, Tensor tokenEmbeddings, Tensor ignored) {
+            var builder = Tensor.Builder.of(type);
+            for (int i = 0; i < type.dimensions().get(0).size().get(); i++) {
+                builder.cell(tokenEmbeddings.get(TensorAddress.of(0,i)), i);
+            }
+            return builder.build();
+        }
     };
 
-    public abstract Tensor toSentenceEmbedding(TensorType type, Tensor tokenEmbeddings, Tensor attentionMask);
+    abstract Tensor toSentenceEmbedding(TensorType type, Tensor tokenEmbeddings, Tensor attentionMask);
 
-    public static PoolingStrategy fromString(String strategy) {
-        return switch (strategy.toLowerCase()) {
+    static PoolingStrategy fromString(String strategy) {
+        return switch (toLowerCase(strategy)) {
             case "mean" -> MEAN;
+            case "none" -> NONE;
             case "cls" -> CLS;
-            default -> throw new IllegalArgumentException("Unknown pooling strategy '%s'".formatted(strategy));
+            default -> throw new IllegalArgumentException(Text.format("Unknown pooling strategy '%s'", strategy));
         };
     }
 }

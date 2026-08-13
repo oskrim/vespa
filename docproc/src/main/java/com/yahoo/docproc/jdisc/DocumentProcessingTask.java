@@ -4,12 +4,11 @@ package com.yahoo.docproc.jdisc;
 import com.yahoo.collections.Tuple2;
 import com.yahoo.docproc.Call;
 import com.yahoo.docproc.CallStack;
+import com.yahoo.docproc.DocumentProcessor;
+import com.yahoo.docproc.Processing;
 import com.yahoo.docproc.impl.DocprocExecutor;
 import com.yahoo.docproc.impl.DocprocService;
-import com.yahoo.docproc.DocumentProcessor;
 import com.yahoo.docproc.impl.HandledProcessingException;
-import com.yahoo.docproc.Processing;
-import java.util.logging.Level;
 import com.yahoo.yolean.Exceptions;
 
 import java.io.PrintWriter;
@@ -17,8 +16,9 @@ import java.io.StringWriter;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
+import java.util.concurrent.Executor;
 import java.util.concurrent.RejectedExecutionException;
-import java.util.concurrent.ThreadPoolExecutor;
+import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /**
@@ -34,10 +34,10 @@ public class DocumentProcessingTask implements Runnable {
     private final RequestContext requestContext;
 
     private final DocprocService service;
-    private final ThreadPoolExecutor executor;
+    private final Executor executor;
 
     public DocumentProcessingTask(RequestContext requestContext, DocumentProcessingHandler docprocHandler,
-                                  DocprocService service, ThreadPoolExecutor executor) {
+                                  DocprocService service, Executor executor) {
         this.requestContext = requestContext;
         this.docprocHandler = docprocHandler;
         this.service = service;
@@ -94,11 +94,11 @@ public class DocumentProcessingTask implements Runnable {
             iterator.remove();
             if (requestContext.hasExpired()) {
                 DocumentProcessor.Progress progress = DocumentProcessor.Progress.FAILED;
-                final String location;
+                String location;
                 if (processing != null) {
                     final CallStack callStack = processing.callStack();
                     if (callStack != null) {
-                        final Call lastPopped = callStack.getLastPopped();
+                        Call lastPopped = callStack.getLastPopped();
                         if (lastPopped != null) {
                             location = lastPopped.toString();
                         } else {
@@ -111,7 +111,7 @@ public class DocumentProcessingTask implements Runnable {
                     location = "no processing instance";
                 }
                 log.log(Level.FINE, () -> "Time is up for '" + processing + " failed, " + location + "'.");
-                requestContext.processingFailed(RequestContext.ErrorCode.ERROR_PROCESSING_FAILURE, "Time is up.");
+                requestContext.processingFailed(RequestContext.ErrorCode.ERROR_TIMEOUT, "Request deadline exceeded");
                 return progress;
             }
 
@@ -131,12 +131,28 @@ public class DocumentProcessingTask implements Runnable {
             } else if (DocumentProcessor.Progress.FAILED.equals(progress)) {
                 logProcessingFailure(processing, null);
                 requestContext.processingFailed(RequestContext.ErrorCode.ERROR_PROCESSING_FAILURE,
-                        progress.getReason().orElse("Document processing failed."));
+                                                progress.getReason().orElse("Document processing failed."));
                 return progress;
+            } else if (DocumentProcessor.Progress.INVALID_INPUT.equals(progress)) {
+                log.log(Level.FINE,
+                        () -> "Invalid input for '" + processing + "' at " + processing.callStack().getLastPopped());
+                requestContext.processingFailed(RequestContext.ErrorCode.ERROR_INVALID_INPUT,
+                                                progress.getReason().orElse("Document processing failed due to invalid input."));
             } else if (DocumentProcessor.Progress.PERMANENT_FAILURE.equals(progress)) {
                 logProcessingFailure(processing, null);
                 requestContext.processingFailed(RequestContext.ErrorCode.ERROR_PROCESSING_FAILURE,
-                        progress.getReason().orElse("Document processing failed."));
+                                                progress.getReason().orElse("Document processing failed."));
+                return progress;
+            } else if (DocumentProcessor.Progress.OVERLOAD.equals(progress)) {
+                log.log(Level.FINE,
+                        () -> "Overload/busy for '" + processing + "' at " + processing.callStack().getLastPopped());
+                requestContext.processingFailed(RequestContext.ErrorCode.ERROR_OVERLOAD,
+                                                progress.getReason().orElse("Document processing rejected due to overload."));
+            } else if (DocumentProcessor.Progress.TIMEOUT.equals(progress)) {
+                log.log(Level.FINE,
+                        () -> "Timeout for '" + processing + "' at " + processing.callStack().getLastPopped());
+                requestContext.processingFailed(RequestContext.ErrorCode.ERROR_TIMEOUT,
+                                                progress.getReason().orElse("Document processing timed out."));
                 return progress;
             }
         }
@@ -183,7 +199,7 @@ public class DocumentProcessingTask implements Runnable {
     }
 
     private static void logProcessingFailure(Processing processing, Exception exception) {
-        //LOGGING ONLY:
+        // LOGGING ONLY:
         String errorMsg = processing + " failed at " + processing.callStack().getLastPopped();
         if (exception != null) {
             if (exception instanceof HandledProcessingException) {
@@ -196,7 +212,7 @@ public class DocumentProcessingTask implements Runnable {
         } else {
             log.log(Level.WARNING, errorMsg);
         }
-        //LOGGING OF STACK TRACE:
+        // LOGGING OF STACK TRACE:
         if (exception != null) {
             StringWriter backtrace = new StringWriter();
             exception.printStackTrace(new PrintWriter(backtrace));

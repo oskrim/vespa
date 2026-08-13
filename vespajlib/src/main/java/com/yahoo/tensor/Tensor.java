@@ -20,7 +20,6 @@ import com.yahoo.tensor.functions.Rename;
 import com.yahoo.tensor.functions.Softmax;
 import com.yahoo.tensor.functions.XwPlusB;
 import com.yahoo.tensor.functions.Expand;
-import com.yahoo.tensor.impl.Label;
 
 import java.util.ArrayList;
 import java.util.Iterator;
@@ -332,7 +331,7 @@ public interface Tensor {
 
     /**
      * Returns this tensor on the
-     * <a href="https://docs.vespa.ai/en/reference/tensor.html#tensor-literal-form">tensor literal form</a>
+     * <a href="https://docs.vespa.ai/en/reference/ranking/tensor.html#tensor-literal-form">tensor literal form</a>
      * with type included.
      */
     @Override
@@ -340,7 +339,7 @@ public interface Tensor {
 
     /**
      * Returns this tensor on the
-     * <a href="https://docs.vespa.ai/en/reference/tensor.html#tensor-literal-form">tensor literal form</a>.
+     * <a href="https://docs.vespa.ai/en/reference/ranking/tensor.html#tensor-literal-form">tensor literal form</a>.
      *
      * @param withType whether to prefix the value by the type of this
      * @param shortForms whether to use short forms where applicable, or always using the verbose form
@@ -362,7 +361,7 @@ public interface Tensor {
 
     /**
      * Call this from toString in implementations to return this tensor on the
-     * <a href="https://docs.vespa.ai/en/reference/tensor.html#tensor-literal-form">tensor literal form</a>.
+     * <a href="https://docs.vespa.ai/en/reference/ranking/tensor.html#tensor-literal-form">tensor literal form</a>.
      * (toString cannot be a default method because default methods cannot override super methods).
      *
      * @param tensor the tensor to return the standard string format of
@@ -416,7 +415,7 @@ public interface Tensor {
     int hashCode();
 
     /**
-     * Implement here to make this work across implementations.
+     * Implemented here to make this work across implementations.
      * Implementations must override equals and call this because this is an interface and cannot override equals.
      */
     static boolean equals(Tensor a, Tensor b) {
@@ -452,7 +451,7 @@ public interface Tensor {
 
     /**
      * Returns a tensor instance containing the given data on the
-     * <a href="https://docs.vespa.ai/en/reference/tensor.html#tensor-literal-form">tensor literal form</a>.
+     * <a href="https://docs.vespa.ai/en/reference/rankiong/tensor.html#tensor-literal-form">tensor literal form</a>.
      *
      * @param type the type of the tensor to return
      * @param tensorString the tensor on the standard tensor string format
@@ -463,7 +462,7 @@ public interface Tensor {
 
     /**
      * Returns a tensor instance containing the given data on the
-     * <a href="https://docs.vespa.ai/en/reference/tensor.html#tensor-literal-form">tensor literal form</a>.
+     * <a href="https://docs.vespa.ai/en/reference/ranking/tensor.html#tensor-literal-form">tensor literal form</a>.
      *
      * @param tensorType the type of the tensor to return, as a string on the tensor type format, given in
      *        {@link TensorType#fromSpec}
@@ -475,7 +474,7 @@ public interface Tensor {
 
     /**
      * Returns a tensor instance containing the given data on the
-     * <a href="https://docs.vespa.ai/en/reference/tensor.html#tensor-literal-form">tensor literal form</a>.
+     * <a href="https://docs.vespa.ai/en/reference/ranking/tensor.html#tensor-literal-form">tensor literal form</a>.
      */
     static Tensor from(String tensorString) {
         return TensorParser.tensorFrom(tensorString, Optional.empty());
@@ -626,7 +625,8 @@ public interface Tensor {
             public TensorType type() { return tensorBuilder.type(); }
 
             public CellBuilder label(String dimension, long label) {
-                return label(dimension, Label.fromNumber(label));
+                addressBuilder.add(dimension, label);
+                return this;
             }
 
             public Builder value(double cellValue) {

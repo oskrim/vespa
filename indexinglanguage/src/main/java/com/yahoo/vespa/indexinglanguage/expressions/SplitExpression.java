@@ -17,33 +17,24 @@ public final class SplitExpression extends Expression {
     private final Pattern splitPattern;
 
     public SplitExpression(String splitString) {
-        super(DataType.STRING);
         this.splitPattern = Pattern.compile(splitString);
     }
 
     public Pattern getSplitPattern() { return splitPattern; }
 
     @Override
-    public DataType setInputType(DataType input, VerificationContext context) {
-        super.setInputType(input, context);
-        // TODO: Activate type checking
-        // if (input != DataType.STRING)
-        //    throw new IllegalArgumentException("split requires a string input, but got " + input);
+    public DataType setInputType(DataType input, TypeContext context) {
+        super.setInputType(input, DataType.STRING, context);
         return new ArrayDataType(DataType.STRING);
     }
 
     @Override
-    public DataType setOutputType(DataType output, VerificationContext context) {
-        super.setOutputType(output, context);
-        // TODO: Activate type checking
-        // if ( ! (output instanceof ArrayDataType) && output.getNestedType() == DataType.STRING)
-        //    throw new IllegalArgumentException("split produces a string array, but needs " + output);
+    public DataType setOutputType(DataType outputType, TypeContext context) {
+        super.setOutputType(outputType, context);
+        if (outputType != null && !(outputType == AnyDataType.instance ||
+                                    (outputType instanceof ArrayDataType) && (DataType.STRING.isAssignableTo(outputType.getNestedType()))))
+            throw new VerificationException(this, "This produces a string array, but " + outputType.getName() + " is required");
         return DataType.STRING;
-    }
-
-    @Override
-    protected void doVerify(VerificationContext context) {
-        context.setCurrentType(createdOutputType());
     }
 
     @Override
@@ -51,17 +42,10 @@ public final class SplitExpression extends Expression {
         String input = String.valueOf(context.getCurrentValue());
         Array<StringFieldValue> output = new Array<>(DataType.getArray(DataType.STRING));
         if (!input.isEmpty()) {
-            String[] splits = splitPattern.split(input);
-            for (String split : splits) {
+            for (String split : splitPattern.split(input))
                 output.add(new StringFieldValue(split));
-            }
         }
         context.setCurrentValue(output);
-    }
-
-    @Override
-    public DataType createdOutputType() {
-        return DataType.getArray(DataType.STRING);
     }
 
     @Override

@@ -5,6 +5,8 @@
 namespace search {
 
 MatchingElementsFields::MatchingElementsFields() = default;
+MatchingElementsFields::MatchingElementsFields(const MatchingElementsFields&) = default;
+MatchingElementsFields::MatchingElementsFields(MatchingElementsFields&&) noexcept = default;
 MatchingElementsFields::~MatchingElementsFields() = default;
 
 } // namespace search

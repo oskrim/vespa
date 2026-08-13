@@ -121,23 +121,45 @@ public class NodeResources {
 
     }
 
-    public record GpuResources(int count, double memoryGiB) {
+    public enum GpuType { NONE, T4, A100, L4, L40S }
 
-        private static final GpuResources zero = new GpuResources(0, 0);
+    public record GpuResources(GpuType type, int count, double memoryGiB) {
+
+        private static final GpuResources zero = new GpuResources(GpuType.NONE, 0, 0);
+
+        private static GpuType typeFrom(String type, int count) {
+            if (count <= 0) return GpuType.NONE;
+            if (type == null || type.equals("")) return GpuType.T4;
+            return GpuType.valueOf(type);
+        }
+        private GpuType unify(GpuType other) {
+            if (this.type == GpuType.NONE) return other;
+            // XXX long-term we may need to track several GPU types, this is not good:
+            return this.type;
+        }
+
+        // backwards compatibility:
+        public GpuResources(int count, double memoryGiB) {
+            this(typeFrom(null, count), count, memoryGiB);
+        }
+
+        public GpuResources(String t, int count, double memoryGiB) {
+            this(typeFrom(t, count), count, memoryGiB);
+        }
 
         public GpuResources {
+            validate(count, "gpu-count");
             validate(memoryGiB, "memory");
         }
 
         private boolean lessThan(GpuResources other) {
-            return this.count < other.count ||
-                   this.memoryGiB < other.memoryGiB;
+            int diff = this.type.compareTo(other.type);
+            if (diff == 0) diff = Integer.compare(this.count, other.count);
+            if (diff == 0) diff = Double.compare(this.memoryGiB, other.memoryGiB);
+            return diff < 0;
         }
 
         public boolean isZero() { return this.equals(zero); }
-
-        @Deprecated(forRemoval = true)
-        public double memoryGb() { return memoryGiB; } // Remove after 8.355.18 is gone
 
         public static GpuResources zero() { return zero; }
 
@@ -147,34 +169,22 @@ public class NodeResources {
         public static GpuResources getDefault() { return zero; }
 
         public GpuResources plus(GpuResources other) {
-            if (other.isZero()) return this;
+            if (other.count == 0) return this;
+            if (this.count == 0) return other;
             var thisMem = this.count() * this.memoryGiB();
             var otherMem = other.count() * other.memoryGiB();
-            return new NodeResources.GpuResources(1, thisMem + otherMem);
+            return new NodeResources.GpuResources(unify(other.type), 1, thisMem + otherMem);
         }
 
         public GpuResources minus(GpuResources other) {
-            if (other.isZero()) return this;
+            if (other.count == 0) return this;
             var thisMem = this.count() * this.memoryGiB();
             var otherMem = other.count() * other.memoryGiB();
-            return new NodeResources.GpuResources(1, thisMem - otherMem);
+            return new NodeResources.GpuResources(unify(other.type), 1, thisMem - otherMem);
         }
 
         public GpuResources multipliedBy(double factor) {
-            return new GpuResources(this.count, this.memoryGiB * factor);
-        }
-
-        @Override
-        public boolean equals(Object o) {
-            if (this == o) return true;
-            if (o == null || getClass() != o.getClass()) return false;
-            GpuResources that = (GpuResources) o;
-            return count == that.count && equal(this.memoryGiB, that.memoryGiB);
-        }
-
-        @Override
-        public int hashCode() {
-            return Objects.hash(count, memoryGiB);
+            return new GpuResources(this.type, this.count, this.memoryGiB * factor);
         }
     }
 
@@ -215,8 +225,6 @@ public class NodeResources {
     }
 
     public double vcpu() { return vcpu; }
-    @Deprecated(forRemoval = true)
-    public double memoryGb() { return memoryGiB; } // Remove after 8.355.18 is gone
     public double memoryGiB() { return memoryGiB; }
     public double diskGb() { return diskGb; }
     public double bandwidthGbps() { return bandwidthGbps; }
@@ -416,6 +424,7 @@ public class NodeResources {
         }
         sb.append(", architecture: ").append(architecture);
         if ( !gpuResources.isDefault()) {
+            sb.append(", gpu type: ").append(gpuResources.type());
             sb.append(", gpu count: ").append(gpuResources.count());
             sb.append(", gpu memory: ");
             appendDouble(sb, gpuResources.memoryGiB());
@@ -431,12 +440,16 @@ public class NodeResources {
         other.ensureSpecified();
         if (this.vcpu < other.vcpu) return false;
         if (this.memoryGiB < other.memoryGiB) return false;
-        if (this.diskGb < other.diskGb) return false;
+        if ( ! this.diskIsUnspecified() && ! other.diskIsUnspecified() && this.diskGb < other.diskGb) return false;
         if (this.bandwidthGbps < other.bandwidthGbps) return false;
         if (this.gpuResources.lessThan(other.gpuResources)) return false;
+        // disallow substitution of GPU type
+        if (this.gpuResources.type() != other.gpuResources.type()) {
+            return false;
+        }
 
         // Why doesn't a fast disk satisfy a slow disk? Because if slow disk is explicitly specified
-        // (i.e not "any"), you should not randomly, sometimes get a faster disk as that means you may
+        // (i.e. not "any"), you should not randomly, sometimes get a faster disk as that means you may
         // draw conclusions about performance on the basis of better resources than you think you have
         if (other.diskSpeed != DiskSpeed.any && other.diskSpeed != this.diskSpeed) return false;
 
@@ -450,16 +463,24 @@ public class NodeResources {
     }
 
     /**
-     * Returns true if all the resources of this are the same as or compatible with the requested resources:
-     * - Equal numbers only where request implies it (i.e not for disk if storage is any/remote, and not for bandwidth
+     * Returns true if all the resources of this are compatible and numerically equal the requested resources.
+     * - Equal numbers only where request implies it (i.e. not for disk if storage is any/remote, and not for bandwidth
      *   where we don't enforce constraints),
      * - Compatible non-numbers.
      */
     public boolean compatibleWith(NodeResources requested) {
-        if ( ! equal(this.vcpu, requested.vcpu)) return false;
-        if ( ! equal(this.memoryGiB, requested.memoryGiB)) return false;
+        return compatibleWith(requested, 0.00000001);
+    }
+
+    /**
+     * Returns whether this is {@link #compatibleWith} the given resources within a given tolerance factor:
+     * For each numeric resource: abs(1 - this resource / requested resource) <= tolerance.
+     */
+    public boolean compatibleWith(NodeResources requested, double tolerance) {
+        if ( ! equal(this.vcpu, requested.vcpu, tolerance)) return false;
+        if ( ! equal(this.memoryGiB, requested.memoryGiB, tolerance)) return false;
         if (this.storageType == StorageType.local || requested.storageType == StorageType.local) {
-            if ( ! equal(this.diskGb, requested.diskGb)) return false;
+            if ( ! equal(this.diskGb, requested.diskGb, tolerance)) return false;
         }
         else {
             if (this.diskGb < requested.diskGb) return false;
@@ -515,29 +536,14 @@ public class NodeResources {
         return this.isUnspecified() ? Optional.empty() : Optional.of(this);
     }
 
+
     private static boolean equal(double a, double b) {
-        return Math.abs(a - b) < 0.00000001;
+        return equal(a, b, 0.00000001);
     }
 
-    /**
-     * Create this from serial form.
-     *
-     * @throws IllegalArgumentException if the given string cannot be parsed as a serial form of this
-     */
-    public static NodeResources fromLegacyName(String name) {
-        if ( ! name.startsWith("d-"))
-            throw new IllegalArgumentException("A node specification string must start by 'd-' but was '" + name + "'");
-        String[] parts = name.split("-");
-        if (parts.length != 4)
-            throw new IllegalArgumentException("A node specification string must contain three numbers separated by '-' but was '" + name + "'");
-
-        double cpu = Integer.parseInt(parts[1]);
-        double mem = Integer.parseInt(parts[2]);
-        double dsk = Integer.parseInt(parts[3]);
-        if (cpu == 0) cpu = 0.5;
-        if (cpu == 2 && mem == 8 ) cpu = 1.5;
-        if (cpu == 2 && mem == 12 ) cpu = 2.3;
-        return new NodeResources(cpu, mem, dsk, 0.3, DiskSpeed.getDefault(), StorageType.getDefault(), Architecture.any);
+    private static boolean equal(double a, double b, double tolerance) {
+        if (b == 0) return a == 0;
+        return Math.abs(1.0 - a/b) < tolerance;
     }
 
     private static double validate(double value, String valueName) {

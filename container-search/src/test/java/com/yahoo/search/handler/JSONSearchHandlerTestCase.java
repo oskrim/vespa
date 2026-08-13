@@ -1,7 +1,6 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.search.handler;
 
-import com.yahoo.json.Jackson;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -12,7 +11,9 @@ import com.yahoo.container.jdisc.HttpRequest;
 import com.yahoo.container.jdisc.RequestHandlerTestDriver;
 import com.yahoo.container.protect.Error;
 import com.yahoo.io.IOUtils;
+import com.yahoo.json.Jackson;
 import com.yahoo.net.HostName;
+import com.yahoo.search.Query;
 import com.yahoo.search.searchchain.config.test.SearchChainConfigurerTestCase;
 import com.yahoo.slime.Inspector;
 import com.yahoo.slime.SlimeUtils;
@@ -29,6 +30,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.Random;
+import java.util.Set;
 
 import static com.yahoo.jdisc.http.HttpRequest.Method.GET;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -36,6 +38,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -410,6 +413,55 @@ public class JSONSearchHandlerTestCase {
     }
 
     @Test
+    void testSelectFieldsSetsSummaryFields() {
+        var query = new Query();
+        query.properties().set("select.fields", "[\"id\", \"title\", \"body\"]");
+        assertEquals(Set.of("id", "title", "body"), query.getPresentation().getSummaryFields());
+    }
+
+    @Test
+    void testSelectFieldsEmptyArray() {
+        var query = new Query();
+        query.properties().set("select.fields", "[]");
+        assertTrue(query.getPresentation().getSummaryFields().isEmpty());
+    }
+
+    @Test
+    void testSelectFieldsMalformedJsonReportsParseError() {
+        var query = new Query();
+        var thrown = assertThrows(RuntimeException.class,
+                () -> query.properties().set("select.fields", "[\"id\", "));
+        assertTrue(rootCauseMessage(thrown).contains("select.fields"),
+                "error should reference 'select.fields': " + rootCauseMessage(thrown));
+    }
+
+    @Test
+    void testSelectFieldsNonStringElementRejected() {
+        var query = new Query();
+        var thrown = assertThrows(RuntimeException.class,
+                () -> query.properties().set("select.fields", "[\"id\", 42]"));
+        assertTrue(rootCauseMessage(thrown).contains("not a string"),
+                "error should mention non-string element: " + rootCauseMessage(thrown));
+    }
+
+    @Test
+    void testSelectFieldsNotArrayRejected() {
+        var query = new Query();
+        var thrown = assertThrows(RuntimeException.class,
+                () -> query.properties().set("select.fields", "{\"id\": 1}"));
+        assertTrue(rootCauseMessage(thrown).contains("JSON array"),
+                "error should mention JSON array: " + rootCauseMessage(thrown));
+    }
+
+    private static String rootCauseMessage(Throwable t) {
+        Throwable cause = t;
+        while (cause.getCause() != null && cause.getCause() != cause) {
+            cause = cause.getCause();
+        }
+        return cause.getMessage() == null ? "" : cause.getMessage();
+    }
+
+    @Test
     void testJsonQueryWithYQL() {
         ObjectNode root = jsonMapper.createObjectNode();
         root.put("yql", "select * from sources * where default contains 'bad';");
@@ -535,6 +587,24 @@ public class JSONSearchHandlerTestCase {
         // Get mapping
         Map<String, String> propertyMap = request.propertyMap();
         assertEquals(propertyMap, map);
+    }
+
+    @Test
+    void testFlatRankingPropertiesRequestMapping() {
+        ObjectNode json = jsonMapper.createObjectNode();
+        json.put("yql", "select * from sources * where sddocname contains \"blog_post\"");
+        json.put("hits", 10);
+        json.put("ranking.properties.freshness(my_field).maxAge", 30);
+
+        // Create mapping
+        Inspector inspector = SlimeUtils.jsonToSlime(json.toString().getBytes(StandardCharsets.UTF_8)).get();
+        Map<String, String> map = new Json2SingleLevelMap(new ByteArrayInputStream(inspector.toString().getBytes(StandardCharsets.UTF_8))).parse();
+
+        // Create GET-request with same query
+        String url = uri + "ranking.properties.freshness(my_field).maxAge=30&hits=10&yql=select+%2A+from+sources+%2A+where+sddocname+contains+%22blog_post%22";
+
+        HttpRequest request = HttpRequest.createTestRequest(url, GET);
+        assertEquals(request.propertyMap(), map);
     }
 
     @Test

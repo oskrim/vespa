@@ -14,6 +14,7 @@ import com.yahoo.jrt.Target;
 import com.yahoo.jrt.TargetWatcher;
 import com.yahoo.security.tls.Capability;
 import com.yahoo.security.tls.CapabilitySet;
+import com.yahoo.text.Text;
 import com.yahoo.vespa.config.JRTMethods;
 import com.yahoo.vespa.config.RawConfig;
 import com.yahoo.vespa.config.protocol.JRTServerConfigRequest;
@@ -66,13 +67,15 @@ public class ConfigProxyRpcServer implements Runnable, TargetWatcher {
     }
 
     void shutdown() {
+        supervisor.transport().shutdown().join();
         try {
-            rpcExecutor.shutdownNow();
-            rpcExecutor.awaitTermination(10, TimeUnit.SECONDS);
+            rpcExecutor.shutdown();
+            if (!rpcExecutor.awaitTermination(10, TimeUnit.SECONDS)) {
+                rpcExecutor.shutdownNow();
+            }
         } catch (InterruptedException e) {
             throw new RuntimeException(e);
         }
-        supervisor.transport().shutdown().join();
     }
 
     Spec getSpec() {
@@ -239,20 +242,20 @@ public class ConfigProxyRpcServer implements Runnable, TargetWatcher {
 
     private void dispatchRpcRequest(Request request, Runnable handler) {
         request.detach();
-        log.log(Level.FINEST, () -> String.format("Dispatching RPC request %s", requestLogId(request)));
+        log.log(Level.FINEST, () -> Text.format("Dispatching RPC request %s", requestLogId(request)));
         rpcExecutor.execute(() -> {
             try {
-                log.log(Level.FINEST, () -> String.format("Executing RPC request %s.", requestLogId(request)));
+                log.log(Level.FINEST, () -> Text.format("Executing RPC request %s.", requestLogId(request)));
                 handler.run();
             } catch (Exception e) {
                 log.log(Level.WARNING,
-                        String.format("Exception thrown during execution of RPC request %s: %s", requestLogId(request), e.getMessage()), e);
+                        Text.format("Exception thrown during execution of RPC request %s: %s", requestLogId(request), e.getMessage()), e);
             }
         });
     }
 
     private String requestLogId(Request request) {
-        return String.format("%s/%08X", request.methodName(), request.hashCode());
+        return Text.format("%s/%08X", request.methodName(), request.hashCode());
     }
 
     /**

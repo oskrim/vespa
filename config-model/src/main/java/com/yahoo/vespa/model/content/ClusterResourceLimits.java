@@ -1,18 +1,22 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.model.content;
 
+import com.yahoo.config.application.api.DeployLogger;
 import com.yahoo.vespa.model.builder.xml.dom.ModelElement;
 import com.yahoo.vespa.model.content.cluster.DomResourceLimitsBuilder;
 
 import java.util.Optional;
 import java.util.function.Consumer;
 
+import static java.util.logging.Level.WARNING;
+
 /**
  * Class tracking the feed block resource limits for a content cluster.
  *
  * This includes the limits used by the cluster controller and the content nodes (proton).
  *
- * @author geirst
+ * @author Geir Storli
+ * @author hmusum
  */
 public class ClusterResourceLimits {
 
@@ -37,22 +41,32 @@ public class ClusterResourceLimits {
         private final boolean hostedVespa;
         private final double resourceLimitDisk;
         private final double resourceLimitMemory;
+        private final double resourceLimitLowAddressSpace;
+        private final DeployLogger deployLogger;
 
         private ResourceLimits.Builder ctrlBuilder = new ResourceLimits.Builder();
         private ResourceLimits.Builder nodeBuilder = new ResourceLimits.Builder();
 
         public Builder(boolean hostedVespa,
                        double resourceLimitDisk,
-                       double resourceLimitMemory) {
+                       double resourceLimitMemory,
+                       double resourceLimitLowAddressSpace,
+                       DeployLogger deployLogger) {
             this.hostedVespa = hostedVespa;
             this.resourceLimitDisk = resourceLimitDisk;
             this.resourceLimitMemory = resourceLimitMemory;
-            verifyLimits(resourceLimitDisk, resourceLimitMemory);
+            this.resourceLimitLowAddressSpace = resourceLimitLowAddressSpace;
+            this.deployLogger = deployLogger;
+            verifyLimits(resourceLimitDisk, resourceLimitMemory, resourceLimitLowAddressSpace);
         }
 
         public ClusterResourceLimits build(ModelElement clusterElem) {
             ctrlBuilder = createBuilder(clusterElem.childByPath("tuning"));
             nodeBuilder = createBuilder(clusterElem.childByPath("engine.proton"));
+            if (nodeBuilder.getDiskLimit().isPresent() || nodeBuilder.getMemoryLimit().isPresent())
+                deployLogger.logApplicationPackage(WARNING, "Setting proton resource limits in <engine><proton> " +
+                        "should not be done directly. Set limits for cluster as described in " +
+                        "https://docs.vespa.ai/en/reference/applications/services/content.html#resource-limits instead.");
 
             deriveLimits();
             return new ClusterResourceLimits(this);
@@ -87,19 +101,24 @@ public class ClusterResourceLimits {
                                                          nodeBuilder.getMemoryLimit(),
                                                          ctrlBuilder::setMemoryLimit,
                                                          resourceLimitMemory);
+            considerSettingDefaultClusterControllerLimit(ctrlBuilder.getAddressSpaceLimit(),
+                                                         nodeBuilder.getAddressSpaceLimit(),
+                                                         ctrlBuilder::setAddressSpaceLimit,
+                                                         resourceLimitLowAddressSpace);
 
             deriveClusterControllerLimit(ctrlBuilder.getDiskLimit(), nodeBuilder.getDiskLimit(), ctrlBuilder::setDiskLimit);
             deriveClusterControllerLimit(ctrlBuilder.getMemoryLimit(), nodeBuilder.getMemoryLimit(), ctrlBuilder::setMemoryLimit);
+            deriveClusterControllerLimit(ctrlBuilder.getAddressSpaceLimit(), nodeBuilder.getAddressSpaceLimit(), ctrlBuilder::setAddressSpaceLimit);
 
-            deriveContentNodeLimit(nodeBuilder.getDiskLimit(), ctrlBuilder.getDiskLimit(), 0.6, nodeBuilder::setDiskLimit);
-            deriveContentNodeLimit(nodeBuilder.getMemoryLimit(), ctrlBuilder.getMemoryLimit(), 0.5, nodeBuilder::setMemoryLimit);
+            deriveContentNodeLimit(nodeBuilder.getDiskLimit(), ctrlBuilder.getDiskLimit(), nodeBuilder::setDiskLimit);
+            deriveContentNodeLimit(nodeBuilder.getMemoryLimit(), ctrlBuilder.getMemoryLimit(), nodeBuilder::setMemoryLimit);
+            deriveContentNodeLimit(nodeBuilder.getAddressSpaceLimit(), ctrlBuilder.getAddressSpaceLimit(), nodeBuilder::setAddressSpaceLimit);
         }
 
         private void considerSettingDefaultClusterControllerLimit(Optional<Double> clusterControllerLimit,
                                                                   Optional<Double> contentNodeLimit,
                                                                   Consumer<Double> setter,
                                                                   double resourceLimit) {
-            // TODO: remove this when feed block in distributor is default enabled.
             if (clusterControllerLimit.isEmpty() && contentNodeLimit.isEmpty()) {
                 setter.accept(resourceLimit);
             }
@@ -117,22 +136,26 @@ public class ClusterResourceLimits {
 
         private void deriveContentNodeLimit(Optional<Double> contentNodeLimit,
                                             Optional<Double> clusterControllerLimit,
-                                            double scaleFactor,
                                             Consumer<Double> setter) {
             if (contentNodeLimit.isEmpty()) {
                 clusterControllerLimit.ifPresent(limit ->
-                        setter.accept(calcContentNodeLimit(limit, scaleFactor)));
+                        setter.accept(calcContentNodeLimit(limit)));
             }
         }
 
-        private double calcContentNodeLimit(double clusterControllerLimit, double scaleFactor) {
+        private double calcContentNodeLimit(double clusterControllerLimit) {
+            // Scale factor used to calculate limit for content node based on limit for
+            // cluster controller. 0.5 will give a content node limit that is halfway between
+            // cluster controller limit and 1.0 (e.g. 0.8 => 0.9)
+            double scaleFactor = 0.5;
             return clusterControllerLimit + ((1.0 - clusterControllerLimit) * scaleFactor);
         }
 
 
-        private void verifyLimits(double resourceLimitDisk, double resourceLimitMemory) {
+        private void verifyLimits(double resourceLimitDisk, double resourceLimitMemory, double resourceLimitAddressSpace) {
             verifyLimitInRange(resourceLimitDisk, "disk");
             verifyLimitInRange(resourceLimitMemory, "memory");
+            verifyLimitInRange(resourceLimitAddressSpace, "address space");
         }
 
         private void verifyLimitInRange(double limit, String type) {
