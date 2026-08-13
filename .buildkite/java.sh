@@ -1,8 +1,28 @@
-#!/bin/bash
+#!/usr/bin/env bash
+#
 # Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+#
+# Builds Java components using Maven.
 
-set -euo pipefail
+set -o errexit
+set -o nounset
+set -o pipefail
 
+if [[ -n "${DEBUG:-}" ]]; then
+    set -o xtrace
+fi
+
+mydir=${0%/*}
+shlim=${mydir}/show-limits.sh
+
+: "${SOURCE_DIR:?Environment variable SOURCE_DIR must be set (path to source code)}"
+: "${VESPA_MAVEN_TARGET:?Environment variable VESPA_MAVEN_TARGET must be set (Maven target)}"
+: "${NUM_MVN_THREADS:?Environment variable NUM_MVN_THREADS must be set (Maven threads)}"
+if [ -x "${shlim}" ]; then
+    "${shlim}" || echo "failed: ${shlim}"
+fi
+
+echo "--- ☕ Building Java components"
 # shellcheck disable=1091
 source /etc/profile.d/enable-gcc-toolset.sh
 
@@ -10,5 +30,6 @@ PATH=/opt/vespa-deps/bin:$PATH
 
 cd "$SOURCE_DIR"
 
+echo "Running Maven build with target: ${VESPA_MAVEN_TARGET} [threads: ${NUM_MVN_THREADS} opts: ${MAVEN_OPTS:-none} extra-opts: ${VESPA_MAVEN_EXTRA_OPTS:-none}]"
 read -ra MVN_EXTRA_OPTS <<< "$VESPA_MAVEN_EXTRA_OPTS"
-./mvnw -T "$NUM_MVN_THREADS" "${MVN_EXTRA_OPTS[@]}" "$VESPA_MAVEN_TARGET"
+./mvnw -T "$NUM_MVN_THREADS" "${MVN_EXTRA_OPTS[@]}" -DskipTests "$VESPA_MAVEN_TARGET"

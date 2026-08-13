@@ -1,5 +1,6 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.search.query;
+import java.util.Locale;
 
 import com.ibm.icu.text.Collator;
 import com.ibm.icu.util.ULocale;
@@ -55,11 +56,11 @@ public class Sorting implements Cloneable {
 
     /**
      * Creates a new sorting from the given string and returns it, or returns null if the argument does not contain
-     * any sorting criteria (e.g it is null or the empty string)
+     * any sorting criteria (e.g. it is null or the empty string)
      */
     public static Sorting fromString(String sortSpec) {
         if (sortSpec == null) return null;
-        if ("".equals(sortSpec)) return null;
+        if (sortSpec.isEmpty()) return null;
         return new Sorting(sortSpec);
     }
 
@@ -106,7 +107,7 @@ public class Sorting implements Cloneable {
                             } else if (STRENGTH_IDENTICAL.equalsIgnoreCase(s)) {
                                 strength = UcaSorter.Strength.IDENTICAL;
                             } else {
-                                throw new IllegalInputException("Unknown collation strength: '" + s + "'");
+                                throw new IllegalInputException("Unknown collation strength: '" + s + "' in '" + rawSortSpec + "'");
                             }
                         }
                         sorter = new UcaSorter(canonic(attrName, indexFacts), locale, strength);
@@ -115,9 +116,9 @@ public class Sorting implements Cloneable {
                     }
                 } else {
                     if (functionName.isEmpty()) {
-                        throw new IllegalInputException("No sort function specified at " + tokenizer.spec());
+                        throw new IllegalInputException("No sort function specified in '" + rawSortSpec + "'");
                     } else {
-                        throw new IllegalInputException("Unknown sort function '" + functionName + "' at " + tokenizer.spec());
+                        throw new IllegalInputException("Unknown sort function '" + functionName + "' in '" + rawSortSpec + "'");
                     }
                 }
             } else {
@@ -154,7 +155,7 @@ public class Sorting implements Cloneable {
     private static MissingPolicy decodeMissingPolicy(Tokenizer tokenizer) {
         var policyName = tokenizer.token();
         try {
-            return MissingPolicy.valueOf(policyName.toUpperCase());
+            return MissingPolicy.valueOf(policyName.toUpperCase(Locale.ROOT));
         } catch (IllegalArgumentException e) {
             throw new IllegalInputException("Unknown missing policy '" + policyName +"' at " + tokenizer.spec());
         }
@@ -248,7 +249,7 @@ public class Sorting implements Cloneable {
     }
 
     private static boolean isFieldPath(String fieldName) {
-        return fieldName.contains("{") && fieldName.contains("}");
+        return fieldName.contains("{") || fieldName.contains("}");
     }
 
     public static class AttributeSorter implements Cloneable {
@@ -309,18 +310,46 @@ public class Sorting implements Cloneable {
         public AttributeMapSorter(String fieldPath) {
             super(fieldPath);
             int keyStart = fieldPath.indexOf('{');
-            int keyEnd = fieldPath.indexOf('}');
-            if (keyStart == -1 || keyEnd == -1 || keyEnd <= keyStart) {
-                throw new IllegalInputException("Invalid FieldPath syntax: " + fieldPath);
+            int keyEnd = fieldPath.lastIndexOf('}');
+            if (keyStart <= 0 || keyEnd != fieldPath.length() - 1 || keyEnd == keyStart + 1 ||
+                fieldPath.indexOf('{', keyStart + 1) != -1 || fieldPath.indexOf('}', keyStart) != keyEnd) {
+                throw new IllegalInputException("Invalid map sort field: '" + fieldPath + "'");
             }
             this.mapName = fieldPath.substring(0, keyStart);
-            String keyWithQuotes = fieldPath.substring(keyStart + 1, keyEnd);
-            // Remove quotes if present
-            if (keyWithQuotes.startsWith("\"") && keyWithQuotes.endsWith("\"")) {
-                this.key = keyWithQuotes.substring(1, keyWithQuotes.length() - 1);
+            String encodedKey = fieldPath.substring(keyStart + 1, keyEnd);
+            if (encodedKey.startsWith("\"")) {
+                this.key = decodeQuotedKey(encodedKey, fieldPath);
+            } else if (encodedKey.indexOf('"') >= 0 || encodedKey.indexOf('\\') >= 0) {
+                throw new IllegalInputException("Invalid map sort field: '" + fieldPath + "'");
             } else {
-                this.key = keyWithQuotes;
+                this.key = encodedKey;
             }
+        }
+
+        private static String decodeQuotedKey(String encodedKey, String fieldPath) {
+            if (encodedKey.length() < 2 || !encodedKey.endsWith("\"")) {
+                throw new IllegalInputException("Invalid map sort field: '" + fieldPath + "'");
+            }
+            var decoded = new StringBuilder(encodedKey.length() - 2);
+            for (int i = 1; i < encodedKey.length() - 1; i++) {
+                char c = encodedKey.charAt(i);
+                if (c == '\\') {
+                    if (++i >= encodedKey.length() - 1) {
+                        throw new IllegalInputException("Invalid map sort field: '" + fieldPath + "'");
+                    }
+                    c = encodedKey.charAt(i);
+                    if (c != '\\' && c != '"') {
+                        throw new IllegalInputException("Invalid map sort field: '" + fieldPath + "'");
+                    }
+                } else if (c == '"') {
+                    throw new IllegalInputException("Invalid map sort field: '" + fieldPath + "'");
+                }
+                decoded.append(c);
+            }
+            if (decoded.isEmpty()) {
+                throw new IllegalInputException("Invalid map sort field: '" + fieldPath + "'");
+            }
+            return decoded.toString();
         }
 
         public String getMapName() { return mapName; }
@@ -336,7 +365,7 @@ public class Sorting implements Cloneable {
 
         @Override
         public String toSerialForm() {
-            return mapName + "{\"" + key + "\"}";
+            return mapName + "{\"" + key.replace("\\", "\\\\").replace("\"", "\\\"") + "\"}";
         }
 
         @Override
@@ -689,17 +718,20 @@ public class Sorting implements Cloneable {
             var oldPos = pos;
             boolean inFieldPath = false;
             boolean inQuotes = false;
-            
+            boolean escaped = false;
+
             while (pos < spec.length()) {
                 var c = spec.charAt(pos);
-                
+
                 if (inFieldPath) {
-                    if (c == '"' && !inQuotes) {
-                        inQuotes = true;
-                    } else if (c == '"' && inQuotes) {
-                        inQuotes = false;
+                    if (escaped) {
+                        escaped = false;
+                    } else if (c == '\\' && inQuotes) {
+                        escaped = true;
+                    } else if (c == '"') {
+                        inQuotes = !inQuotes;
                     } else if (c == '}' && !inQuotes) {
-                        ++pos; // Include the closing brace
+                        ++pos;
                         break;
                     }
                     ++pos;

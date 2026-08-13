@@ -8,41 +8,39 @@
  *
  */
 
-#include <iostream>
-#include <iomanip>
-
-#include <vespa/fsa/fsa.h>
 #include <vespa/fsa/detector.h>
+#include <vespa/fsa/fsa.h>
+
+#include <iomanip>
+#include <iostream>
 
 using namespace fsa;
 
-class MyHits : public Detector::Hits{
+class MyHits : public Detector::Hits {
 public:
-  MyHits() {};
-  ~MyHits() {};
+    MyHits() {};
+    ~MyHits() override;
 
-  void add(const NGram &text,
-           unsigned int from, int length,
-           const FSA::State &) override
-  {
-    std::cout << "detected: [" << from << "," << from+length-1 << "], '"
-              << text.join(" ",from,length) << "'\n";
-  }
+    void add(const NGram& text, unsigned int from, int length, const FSA::State&) override {
+        std::cout << "detected: [" << from << "," << from + length - 1 << "], '" << text.join(" ", from, length)
+                  << "'\n";
+    }
 };
 
-int main(int argc, char **argv)
-{
-  FSA dict(argc>=2? argv[1] : "__testfsa__.__fsa__");
+MyHits::~MyHits() = default;
 
-  Detector d(dict);
-  MyHits   h;
+int main(int argc, char** argv) {
+    FSA dict(argc >= 2 ? argv[1] : "__testfsa__.__fsa__");
 
-  std::string text;
-  while(!std::cin.eof()){
-    getline(std::cin,text);
+    Detector d(dict);
+    MyHits   h;
 
-    d.detect(text,h);
-  }
+    std::string text;
+    while (!std::cin.eof()) {
+        getline(std::cin, text);
 
-  return 0;
+        d.detect(text, h);
+    }
+
+    return 0;
 }

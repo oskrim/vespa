@@ -24,10 +24,17 @@ import com.yahoo.language.process.Embedder;
 import com.yahoo.language.process.FieldGenerator;
 import com.yahoo.language.provider.DefaultEmbedderProvider;
 import com.yahoo.language.provider.DefaultGeneratorProvider;
+import com.yahoo.metrics.simple.MetricReceiver;
+import com.yahoo.text.Text;
 import com.yahoo.vespa.configdefinition.IlscriptsConfig;
 import com.yahoo.vespa.indexinglanguage.FieldValuesFactory;
 import com.yahoo.vespa.indexinglanguage.expressions.Expression;
+import com.yahoo.vespa.indexinglanguage.expressions.InvalidInputException;
+import com.yahoo.vespa.indexinglanguage.expressions.OverloadException;
+import com.yahoo.vespa.indexinglanguage.expressions.TimeoutException;
+import com.yahoo.yolean.Exceptions;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -65,14 +72,16 @@ public class IndexingProcessor extends DocumentProcessor {
                              Linguistics linguistics,
                              ComponentRegistry<Chunker> chunkers,
                              ComponentRegistry<Embedder> embedders,
-                             ComponentRegistry<FieldGenerator> generators) {
+                             ComponentRegistry<FieldGenerator> generators,
+                             MetricReceiver metricReceiver) {
         this(documentTypeManager,
              new ScriptManager(documentTypeManager,
                                ilscriptsConfig,
                                linguistics,
                                toMap(chunkers, null), // No failing default since we add pure Java default components
                                toMap(embedders, DefaultEmbedderProvider.class),
-                               toMap(generators, DefaultGeneratorProvider.class)
+                               toMap(generators, DefaultGeneratorProvider.class),
+                               metricReceiver
                 )
         );
     }
@@ -88,18 +97,44 @@ public class IndexingProcessor extends DocumentProcessor {
     public Progress process(Processing proc) {
         if (proc.getDocumentOperations().isEmpty()) return Progress.DONE;
 
+        Instant deadline = null;
+        var timeLeft = proc.timeLeft();
+        if (timeLeft != Processing.NO_TIMEOUT) {
+            deadline = Instant.now().plus(timeLeft);
+        }
+
         List<DocumentOperation> out = new ArrayList<>(proc.getDocumentOperations().size());
-        for (DocumentOperation documentOperation : proc.getDocumentOperations()) {
-            if (documentOperation instanceof DocumentPut) {
-                processDocument((DocumentPut)documentOperation, out);
-            } else if (documentOperation instanceof DocumentUpdate) {
-                processUpdate((DocumentUpdate)documentOperation, out);
-            } else if (documentOperation instanceof DocumentRemove) {
-                processRemove((DocumentRemove)documentOperation, out);
-            } else if (documentOperation != null) {
-                throw new IllegalArgumentException("Document class " + documentOperation.getClass().getName() + " not supported.");
-            } else {
-                throw new IllegalArgumentException("Expected document, got null.");
+        for (var op : proc.getDocumentOperations()) {
+            try {
+                if (op instanceof DocumentPut dp) {
+                    processDocument(dp, out, deadline);
+                } else if (op instanceof DocumentUpdate du) {
+                    processUpdate(du, out, deadline);
+                } else if (op instanceof DocumentRemove dr) {
+                    processRemove(dr, out);
+                } else if (op != null) {
+                    throw new IllegalArgumentException("Document class " + op.getClass().getName() + " not supported.");
+                } else {
+                    throw new IllegalArgumentException("Expected document, got null.");
+                }
+            } catch (InvalidInputException e) {
+                String message = Exceptions.toMessageString(e);
+                return Progress.INVALID_INPUT.withReason(
+                        op.getId() != null
+                        ? Text.format("Operation on '%s' contains invalid input: %s", op.getId().toString(), message)
+                        : Text.format("Operation contains invalid input: %s", message));
+            } catch (OverloadException e) {
+                String message = Exceptions.toMessageString(e);
+                return Progress.OVERLOAD.withReason(
+                        op.getId() != null
+                        ? Text.format("Operation on '%s' rejected due to overload: %s", op.getId().toString(), message)
+                        : Text.format("Operation rejected due to overload: %s", message));
+            } catch (TimeoutException e) {
+                String message = Exceptions.toMessageString(e);
+                return Progress.TIMEOUT.withReason(
+                        op.getId() != null
+                        ? Text.format("Operation on '%s' timed out: %s", op.getId().toString(), message)
+                        : Text.format("Operation timed out: %s", message));
             }
         }
         proc.getDocumentOperations().clear();
@@ -111,7 +146,7 @@ public class IndexingProcessor extends DocumentProcessor {
         return documentTypeManager;
     }
 
-    private void processDocument(DocumentPut input, List<DocumentOperation> out) {
+    private void processDocument(DocumentPut input, List<DocumentOperation> out, Instant deadline) {
         DocumentType hadType = input.getDocument().getDataType();
         DocumentScript script = scriptManager.getScript(hadType);
         if (script == null) {
@@ -130,19 +165,19 @@ public class IndexingProcessor extends DocumentProcessor {
             buffer.flip();
             inputDocument = documentTypeManager.createDocument(buffer);
         }
-        Document output = script.execute(fieldValuesFactory, inputDocument, isReindexingOperation(input));
+        Document output = script.execute(fieldValuesFactory, inputDocument, isReindexingOperation(input), deadline);
         if (output == null) return;
 
         out.add(new DocumentPut(input, output));
     }
 
-    private void processUpdate(DocumentUpdate input, List<DocumentOperation> out) {
+    private void processUpdate(DocumentUpdate input, List<DocumentOperation> out, Instant deadline) {
         DocumentScript script = scriptManager.getScript(input.getType());
         if (script == null) {
             out.add(input);
             return;
         }
-        DocumentUpdate output = script.execute(fieldValuesFactory, input);
+        DocumentUpdate output = script.execute(fieldValuesFactory, input, deadline);
         if (output == null) return;
         output.setCondition(input.getCondition());
         out.add(output);

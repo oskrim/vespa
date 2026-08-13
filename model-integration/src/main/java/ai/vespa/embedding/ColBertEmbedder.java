@@ -11,6 +11,7 @@ import com.yahoo.component.annotation.Inject;
 import com.yahoo.embedding.ColBertEmbedderConfig;
 import com.yahoo.language.huggingface.HuggingFaceTokenizer;
 import com.yahoo.language.process.Embedder;
+import ai.vespa.modelintegration.evaluator.config.OnnxEvaluatorConfig;
 import com.yahoo.searchlib.rankingexpression.evaluation.MapContext;
 import com.yahoo.searchlib.rankingexpression.evaluation.TensorValue;
 import com.yahoo.searchlib.rankingexpression.rule.ReferenceNode;
@@ -37,6 +38,7 @@ import static com.yahoo.language.huggingface.ModelInfo.TruncationStrategy.LONGES
  * See col-bert-embedder.def for configurable parameters.
  *
  * @author bergum
+ * @author glebashnik
  */
 @Beta
 public class ColBertEmbedder extends AbstractComponent implements Embedder {
@@ -52,6 +54,7 @@ public class ColBertEmbedder extends AbstractComponent implements Embedder {
     private final int maxTransformerTokens;
     private final int maxQueryTokens;
     private final int maxDocumentTokens;
+    private final boolean attendToExpansionTokens;
 
     private final long startSequenceToken;
     private final long endSequenceToken;
@@ -64,25 +67,32 @@ public class ColBertEmbedder extends AbstractComponent implements Embedder {
     private final long documentSequenceToken;
     private final Set<Long> skipTokens;
 
-    public record TransformerInput(List<Long> inputIds, List<Long> attentionMask) {}
+    /**
+     * @param inputIds          full input sequence including any [MASK] expansion padding for queries
+     * @param attentionMask     attention mask (zero on expansion positions)
+     * @param realInputLength   length of the input excluding query [MASK] expansion padding;
+     *                          equal to inputIds.size() for documents
+     */
+    public record TransformerInput(List<Long> inputIds, List<Long> attentionMask, int realInputLength) {}
 
     @Inject
-    public ColBertEmbedder(OnnxRuntime onnx, Embedder.Runtime runtime, ColBertEmbedderConfig config) {
+    public ColBertEmbedder(OnnxRuntime onnx, Embedder.Runtime runtime, ColBertEmbedderConfig embedderConfig, OnnxEvaluatorConfig onnxConfig) {
         this.runtime = runtime;
-        inputIdsName = config.transformerInputIds();
-        attentionMaskName = config.transformerAttentionMask();
-        outputName = config.transformerOutput();
-        maxTransformerTokens = config.transformerMaxTokens();
-        maxDocumentTokens = Math.min(config.maxDocumentTokens(), maxTransformerTokens);
-        maxQueryTokens = Math.min(config.maxQueryTokens(), maxTransformerTokens);
-        startSequenceToken = config.transformerStartSequenceToken();
-        endSequenceToken = config.transformerEndSequenceToken();
-        maskSequenceToken = config.transformerMaskToken();
-        padSequenceToken = config.transformerPadToken();
-        querySequenceToken = config.queryTokenId();
-        documentSequenceToken = config.documentTokenId();
+        inputIdsName = embedderConfig.transformerInputIds();
+        attentionMaskName = embedderConfig.transformerAttentionMask();
+        outputName = embedderConfig.transformerOutput();
+        maxTransformerTokens = embedderConfig.transformerMaxTokens();
+        maxDocumentTokens = Math.min(embedderConfig.maxDocumentTokens(), maxTransformerTokens);
+        maxQueryTokens = Math.min(embedderConfig.maxQueryTokens(), maxTransformerTokens);
+        attendToExpansionTokens = embedderConfig.attendToExpansionTokens();
+        startSequenceToken = embedderConfig.transformerStartSequenceToken();
+        endSequenceToken = embedderConfig.transformerEndSequenceToken();
+        maskSequenceToken = embedderConfig.transformerMaskToken();
+        padSequenceToken = embedderConfig.transformerPadToken();
+        querySequenceToken = embedderConfig.queryTokenId();
+        documentSequenceToken = embedderConfig.documentTokenId();
 
-        var tokenizerPath = Paths.get(config.tokenizerPath().toString());
+        var tokenizerPath = Paths.get(embedderConfig.tokenizerPath().toString());
         var builder = new HuggingFaceTokenizer.Builder()
                 .addSpecialTokens(false)
                 .addDefaultModel(tokenizerPath)
@@ -91,9 +101,9 @@ public class ColBertEmbedder extends AbstractComponent implements Embedder {
         if (info.maxLength() == -1 || info.truncation() != LONGEST_FIRST) {
             // Force truncation
             // to max length accepted by model if tokenizer.json contains no valid truncation configuration
-            int maxLength = info.maxLength() > 0 && info.maxLength() <= config.transformerMaxTokens()
+            int maxLength = info.maxLength() > 0 && info.maxLength() <= embedderConfig.transformerMaxTokens()
                     ? info.maxLength()
-                    : config.transformerMaxTokens();
+                    : embedderConfig.transformerMaxTokens();
             builder.setTruncation(true).setMaxLength(maxLength);
         }
         this.tokenizer = builder.build();
@@ -102,18 +112,15 @@ public class ColBertEmbedder extends AbstractComponent implements Embedder {
                 c -> this.skipTokens.addAll(
                         tokenizer.encode(Character.toString((char) c), null).ids())
         );
-        var optionsBuilder = new OnnxEvaluatorOptions.Builder()
-                .setExecutionMode(config.transformerExecutionMode().toString())
-                .setThreads(config.transformerInterOpThreads(), config.transformerIntraOpThreads());
-        if (config.transformerGpuDevice() >= 0)
-            optionsBuilder.setGpuDevice(config.transformerGpuDevice());
-        var onnxOpts = optionsBuilder.build();
+        
         var resolver = new OnnxExternalDataResolver();
-        evaluator = onnx.evaluatorOf(resolver.resolveOnnxModel(config.transformerModelReference()).toString(), onnxOpts);
-
+        var onnxOpts = OnnxEvaluatorOptions.of(onnxConfig);
+        var modelPath = resolver.resolveOnnxModel(embedderConfig.transformerModelReference()).toString();
+        this.evaluator = onnx.evaluatorOf(modelPath, onnxOpts);
+        
         validateModel();
     }
-
+    
     private void validateModel() {
         Map<String, TensorType> inputs = evaluator.getInputInfo();
         validateName(inputs, inputIdsName, "input");
@@ -140,7 +147,7 @@ public class ColBertEmbedder extends AbstractComponent implements Embedder {
             throw new IllegalArgumentException("Invalid colbert embedder tensor target destination. " +
                                                "Wanted a mixed 2-d mapped-indexed tensor, got " + tensorType);
         }
-        if (context.getDestination().startsWith("query")) {
+        if (context.getDestinationType() == Context.DestinationType.QUERY) {
             return embedQuery(text, context, tensorType);
         } else {
             return embedDocument(text, context, tensorType);
@@ -178,7 +185,7 @@ public class ColBertEmbedder extends AbstractComponent implements Embedder {
         for (int i = 0; i < padding; i++)
             attentionMask.add((long) 0); // Do not attend to mask paddings
 
-        return new TransformerInput(inputIds, attentionMask);
+        return new TransformerInput(inputIds, attentionMask, inputLength);
     }
 
     protected Tensor embedQuery(String text, Context context, TensorType tensorType) {
@@ -220,9 +227,16 @@ public class ColBertEmbedder extends AbstractComponent implements Embedder {
         var inputs = Map.of(inputIdsName,
                             inputIdsTensor.expand("d0"),
                             attentionMaskName, attentionMaskTensor.expand("d0"));
-        Map<String, Tensor> outputs = evaluator.evaluate(inputs);
+        Map<String, Tensor> outputs = evaluator.evaluate(inputs, OnnxEmbedderTimeout.remainingOrThrow(context));
         runtime.sampleEmbeddingLatency((System.nanoTime() - start) / 1_000_000d, context);
-        return new EmbeddingResult(input.inputIds.size(), outputs);
+        // Number of token-rows to emit downstream. For queries with
+        // attendToExpansionTokens=false, drop the [MASK] expansion positions so
+        // they do not contribute to MaxSim — necessary for models whose
+        // expansion-token outputs are not trained (e.g. LateOn).
+        int tokensToEmit = (isQuery && !attendToExpansionTokens)
+                ? input.realInputLength()
+                : input.inputIds().size();
+        return new EmbeddingResult(tokensToEmit, outputs);
     }
 
     public static Tensor toFloatTensor(IndexedTensor result, TensorType type, int nTokens) {

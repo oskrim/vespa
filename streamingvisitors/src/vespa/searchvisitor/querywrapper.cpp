@@ -6,13 +6,10 @@ using namespace search::streaming;
 
 namespace streaming {
 
-QueryWrapper::QueryWrapper(Query & query)
-    : _termList()
-{
-    query.getLeaves(_termList);
+QueryWrapper::QueryWrapper(Query& query) : _query(query), _termList() {
+    _query.getLeaves(_termList);
 }
 
 QueryWrapper::~QueryWrapper() = default;
 
 } // namespace streaming
-

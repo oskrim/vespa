@@ -2,16 +2,26 @@
 package com.yahoo.vespa.clustercontroller.core.status.statuspage;
 
 import com.yahoo.document.FixedBucketSpaces;
+import com.yahoo.text.Text;
 import com.yahoo.vdslib.state.ClusterState;
 import com.yahoo.vdslib.state.NodeState;
 import com.yahoo.vdslib.state.NodeType;
 import com.yahoo.vdslib.state.State;
-import com.yahoo.vespa.clustercontroller.core.*;
+import com.yahoo.vespa.clustercontroller.core.ClusterStateBundle;
+import com.yahoo.vespa.clustercontroller.core.ClusterStatsAggregator;
+import com.yahoo.vespa.clustercontroller.core.ContentNodeErrorStats;
+import com.yahoo.vespa.clustercontroller.core.ContentNodeStats;
+import com.yahoo.vespa.clustercontroller.core.EventLog;
+import com.yahoo.vespa.clustercontroller.core.NodeInfo;
+import com.yahoo.vespa.clustercontroller.core.NodeResourceExhaustion;
+import com.yahoo.vespa.clustercontroller.core.RealTimer;
+import com.yahoo.vespa.clustercontroller.core.Timer;
 
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.TimeZone;
@@ -51,7 +61,7 @@ public class VdsClusterHtmlRenderer {
             contentBuilder.append("<h2>State of content cluster '")
                     .append(clusterName)
                     .append("'.</h2>\n")
-                    .append("<p>Based on information retrieved from slobrok at generation ")
+                    .append("<p>Based on information retrieved from location broker at generation ")
                     .append(slobrokGenerationCount).append(".</p>\n");
         }
 
@@ -263,7 +273,7 @@ public class VdsClusterHtmlRenderer {
                             .collect(Collectors.joining(", "));
                     return Optional.of(new NodeMessage(
                             MessageSeverity.ERROR,
-                            String.format("<strong>Node is blocking feed: %s</strong>", HtmlTable.escape(exhaustionsDesc))));
+                            Text.format("<strong>Node is blocking feed: %s</strong>", HtmlTable.escape(exhaustionsDesc))));
                 }
             }
             return Optional.empty();
@@ -296,10 +306,10 @@ public class VdsClusterHtmlRenderer {
                 TreeMap<Integer, NodeInfo> distributorNodeInfos,
                 List<Map.Entry<Integer, ContentNodeErrorStats.DistributorErrorStats>> distributorsWithRpcErrors) {
             var sb = new StringBuilder();
-            sb.append(String.format("The following %d distributor(s) are reporting <strong>network-related errors</strong> towards this node:<br>\n",
+            sb.append(Text.format("The following %d distributor(s) are reporting <strong>network-related errors</strong> towards this node:<br>\n",
                     distributorsWithRpcErrors.size()));
             for (var node : distributorsWithRpcErrors) {
-                sb.append("<strong>%d</strong> (%.2f%% of all requests are failing)".formatted(node.getKey(), node.getValue().networkErrorRatio() * 100.0));
+                sb.append(Text.format("<strong>%d</strong> (%.2f%% of all requests are failing)", node.getKey(), node.getValue().networkErrorRatio() * 100.0));
                 var distrInfo = distributorNodeInfos.get(node.getKey());
                 // If the distributor in question has not converged to the latest state version,
                 // point an accusing finger at the content node with connectivity problems.
@@ -365,7 +375,7 @@ public class VdsClusterHtmlRenderer {
 
             var usage = usages.get(resourceType);
             if (usage != null && usage.getUsage() != null) {
-                row.addCell(new HtmlTable.Cell(String.format("%.2f", usage.getUsage() * 100.0)));
+                row.addCell(new HtmlTable.Cell(Text.format("%.2f", usage.getUsage() * 100.0)));
                 double limit = feedBlockLimits.getOrDefault(resourceType, 1.0);
                 // Mark as error if limit exceeded, warn if within 5% of exceeding
                 if (usage.getUsage() > limit) {
@@ -398,8 +408,8 @@ public class VdsClusterHtmlRenderer {
 
         private void addClusterStateVersion(ClusterStateBundle state, NodeInfo nodeInfo, HtmlTable.Row row) {
             String cellContent = (nodeInfo.getClusterStateVersionActivationAcked() == state.getVersion() || !state.deferredActivation())
-                    ? String.format("%d", nodeInfo.getClusterStateVersionBundleAcknowledged())
-                    : String.format("%d (%d)", nodeInfo.getClusterStateVersionBundleAcknowledged(),
+                    ? Text.format("%d", nodeInfo.getClusterStateVersionBundleAcknowledged())
+                    : Text.format("%d (%d)", nodeInfo.getClusterStateVersionBundleAcknowledged(),
                                                nodeInfo.getClusterStateVersionActivationAcked());
             row.addCell(new HtmlTable.Cell(cellContent));
             if (nodeInfo.getClusterStateVersionBundleAcknowledged() < state.getVersion() - 2) {
@@ -458,7 +468,7 @@ public class VdsClusterHtmlRenderer {
                 }
             } else {
                 row.addCell(new HtmlTable.Cell("Cluster " +
-                        state.getClusterState().name().toLowerCase()).addProperties(ERROR_PROPERTY));
+                        state.getClusterState().name().toLowerCase(Locale.ROOT)).addProperties(ERROR_PROPERTY));
             }
         }
 

@@ -1,6 +1,7 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 #pragma once
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -41,15 +42,12 @@ class Regex {
     std::unique_ptr<const Impl> _impl;
 
     explicit Regex(std::unique_ptr<const Impl> impl);
+
 public:
     // TODO consider using type-safe parameter instead.
-    enum Options {
-        None              = 0,
-        IgnoreCase        = 1,
-        DotMatchesNewline = 2
-    };
+    enum Options { None = 0, IgnoreCase = 1, DotMatchesNewline = 2 };
 
-    //Default constructed object is invalid
+    // Default constructed object is invalid
     Regex();
 
     ~Regex();
@@ -78,5 +76,4 @@ public:
     [[nodiscard]] static bool full_match(std::string_view input, std::string_view pattern) noexcept;
 };
 
-}
-
+} // namespace vespalib

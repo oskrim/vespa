@@ -37,7 +37,6 @@ import com.yahoo.vespa.curator.Curator;
 import com.yahoo.vespa.flags.FlagSource;
 
 import java.io.File;
-import java.io.IOException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -70,6 +69,7 @@ public class PreparedModelsBuilder extends ModelsBuilder<PreparedModelsBuilder.P
     private final Curator curator;
     private final ExecutorService executor;
     private final OnnxModelCost onnxModelCost;
+    private final Provisioned provisioned = new Provisioned();
 
     public PreparedModelsBuilder(ModelFactoryRegistry modelFactoryRegistry,
                                  FlagSource flagSource,
@@ -111,7 +111,6 @@ public class PreparedModelsBuilder extends ModelsBuilder<PreparedModelsBuilder.P
         log.log(FINE, () -> "Building model " + modelVersion + " for " + applicationId);
 
         // Use empty on non-hosted systems, use already allocated hosts if available, create connection to a host provisioner otherwise
-        Provisioned provisioned = new Provisioned();
         ModelContext modelContext = new ModelContextImpl(
                 applicationPackage,
                 modelOf(modelVersion),
@@ -119,8 +118,8 @@ public class PreparedModelsBuilder extends ModelsBuilder<PreparedModelsBuilder.P
                 configDefinitionRepo,
                 fileRegistry,
                 executor,
-                new ApplicationCuratorDatabase(applicationId.tenant(), curator).readReindexingStatus(applicationId),
-                createHostProvisioner(applicationPackage, provisioned),
+                new ApplicationCuratorDatabase(applicationId.tenant(), curator, configserverConfig).readReindexingStatus(applicationId),
+                createHostProvisioner(applicationPackage),
                 provisioned,
                 createModelContextProperties(modelFactory.version(), applicationPackage),
                 getAppDir(applicationPackage),
@@ -153,19 +152,25 @@ public class PreparedModelsBuilder extends ModelsBuilder<PreparedModelsBuilder.P
         return activeApplicationVersions.get().get(version).map(Application::getModel);
     }
 
-    private HostProvisioner createHostProvisioner(ApplicationPackage applicationPackage, Provisioned provisioned) {
-        HostProvisioner defaultHostProvisioner = DeployState.getDefaultModelHostProvisioner(applicationPackage);
+    private HostProvisioner createHostProvisioner(ApplicationPackage applicationPackage) {
         // Note: nodeRepositoryProvisioner will always be present when hosted is true
-        Optional<HostProvisioner> nodeRepositoryProvisioner = createNodeRepositoryProvisioner(params.getApplicationId(), provisioned);
+        Optional<HostProvisioner> nodeRepositoryProvisioner = createNodeRepositoryProvisioner(params.getApplicationId());
         Optional<AllocatedHosts> allocatedHosts = applicationPackage.getAllocatedHosts();
 
-        if (allocatedHosts.isEmpty()) return nodeRepositoryProvisioner.orElse(defaultHostProvisioner);
+        if (hosted) {
+            // In hosted Vespa, always use node repository provisioner - never read hosts.xml
+            if (allocatedHosts.isEmpty()) return nodeRepositoryProvisioner.get();
+            // Nodes are already allocated by a model, and we should use them unless this model requests hosts from a
+            // previously unallocated cluster. This allows future models to stop allocate certain clusters.
+            return createStaticProvisionerForHosted(allocatedHosts.get(), nodeRepositoryProvisioner.get());
+        }
 
-        // Nodes are already allocated by a model and we should use them unless this model requests hosts from a
-        // previously unallocated cluster. This allows future models to stop allocate certain clusters.
-        if (hosted) return createStaticProvisionerForHosted(allocatedHosts.get(), nodeRepositoryProvisioner.get());
+        // Non-hosted: use nodeRepositoryProvisioner if available, otherwise fall back to hosts.xml
+        if (allocatedHosts.isEmpty() && nodeRepositoryProvisioner.isPresent()) {
+            return nodeRepositoryProvisioner.get();
+        }
 
-        return defaultHostProvisioner;
+        return DeployState.getDefaultModelHostProvisioner(applicationPackage);
     }
 
     private Optional<File> getAppDir(ApplicationPackage applicationPackage) {
@@ -209,7 +214,7 @@ public class PreparedModelsBuilder extends ModelsBuilder<PreparedModelsBuilder.P
                                                Set.copyOf(containerEndpoints),
                                                params.isBootstrap(),
                                                activeApplicationVersions.isEmpty(),
-                                               LegacyFlags.from(applicationPackage, flagSource),
+                                               LegacyFlags.from(applicationPackage, flagSource.snapshot()),
                                                endpointCertificateSecrets,
                                                params.athenzDomain(),
                                                params.quota(),
@@ -217,6 +222,7 @@ public class PreparedModelsBuilder extends ModelsBuilder<PreparedModelsBuilder.P
                                                params.tenantSecretStores(),
                                                params.operatorCertificates(),
                                                params.cloudAccount(),
+                                               params.cloudResourceTags(),
                                                params.dataplaneTokens());
     }
 

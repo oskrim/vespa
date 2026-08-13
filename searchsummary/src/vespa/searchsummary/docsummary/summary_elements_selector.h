@@ -2,10 +2,13 @@
 
 #pragma once
 
-#include "element_ids.h"
+#include <vespa/searchcommon/common/element_ids.h>
+
 #include <string>
 
-namespace search { class MatchingElementsFields; }
+namespace search {
+class MatchingElementsFields;
+}
 
 namespace search::docsummary {
 
@@ -15,11 +18,7 @@ class GetDocsumsState;
  * A class selecting which summary elements of a multi-value field to render.
  */
 class SummaryElementsSelector {
-    enum class Selector {
-        ALL,
-        BY_MATCH,
-        BY_SUMMARY_FEATURE
-    };
+    enum class Selector { ALL, BY_MATCH, BY_SUMMARY_FEATURE };
 
     Selector                 _selector;
     std::string              _field;
@@ -27,6 +26,7 @@ class SummaryElementsSelector {
     std::string              _summary_feature;
     SummaryElementsSelector();
     const std::vector<uint32_t>& get_summary_feature_elements(uint32_t docid, GetDocsumsState& state) const;
+
 public:
     SummaryElementsSelector(const SummaryElementsSelector& rhs);
     SummaryElementsSelector(SummaryElementsSelector&& rhs) noexcept;
@@ -42,7 +42,7 @@ public:
     static SummaryElementsSelector select_all();
     static SummaryElementsSelector select_by_match(const std::string& field, std::vector<std::string> struct_fields);
     static SummaryElementsSelector select_by_summary_feature(const std::string& summary_feature);
-    ElementIds get_selected_elements(uint32_t docid, GetDocsumsState& state) const;
+    search::common::ElementIds get_selected_elements(uint32_t docid, GetDocsumsState& state) const;
 };
 
-}
+} // namespace search::docsummary

@@ -3,6 +3,7 @@ package com.yahoo.vespa.config.server.modelfactory;
 
 import com.yahoo.cloud.config.ConfigserverConfig;
 import com.yahoo.component.Version;
+import com.yahoo.concurrent.UncheckedTimeoutException;
 import com.yahoo.config.application.api.ApplicationPackage;
 import com.yahoo.config.application.api.DeployLogger;
 import com.yahoo.config.model.api.HostProvisioner;
@@ -114,7 +115,7 @@ public abstract class ModelsBuilder<MODELRESULT extends ModelResult> {
                 buildLatestModelForThisMajor = false; // We have successfully built latest model version, do it only for this major
                 versionToBuildFirst = Optional.empty(); // Set to empty, cannot build this first on another major
             }
-            catch (NodeAllocationException | ApplicationLockException | TransientException | QuotaExceededException e) {
+            catch (NodeAllocationException | ApplicationLockException | TransientException | QuotaExceededException | UncheckedTimeoutException e) {
                 // Don't wrap this exception, and don't try to load other model versions as this is (most likely)
                 // caused by the state of the system, not the model version/application combination
                 throw e;
@@ -295,12 +296,10 @@ public abstract class ModelsBuilder<MODELRESULT extends ModelResult> {
      * returns empty otherwise, which may either mean that no hosts are allocated or that we are running
      * non-hosted and should default to use hosts defined in the application package, depending on context
      */
-    HostProvisioner createStaticProvisioner(ApplicationPackage applicationPackage,
-                                            ApplicationId applicationId,
-                                            Provisioned provisioned) {
+    HostProvisioner createStaticProvisioner(ApplicationPackage applicationPackage, ApplicationId applicationId) {
         Optional<AllocatedHosts> allocatedHosts = applicationPackage.getAllocatedHosts();
         if (hosted && allocatedHosts.isPresent())
-            return createStaticProvisionerForHosted(allocatedHosts.get(), createNodeRepositoryProvisioner(applicationId, provisioned).get());
+            return createStaticProvisionerForHosted(allocatedHosts.get(), createNodeRepositoryProvisioner(applicationId).get());
         return DeployState.getDefaultModelHostProvisioner(applicationPackage);
     }
 
@@ -311,9 +310,9 @@ public abstract class ModelsBuilder<MODELRESULT extends ModelResult> {
         return new StaticProvisioner(allocatedHosts, nodeRepositoryProvisioner);
     }
 
-    Optional<HostProvisioner> createNodeRepositoryProvisioner(ApplicationId applicationId, Provisioned provisioned) {
+    Optional<HostProvisioner> createNodeRepositoryProvisioner(ApplicationId applicationId) {
         return hostProvisionerProvider.getHostProvisioner().map(
-                provisioner -> new ProvisionerAdapter(provisioner, applicationId, provisioned));
+                provisioner -> new ProvisionerAdapter(provisioner, applicationId));
     }
 
 }

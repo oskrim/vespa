@@ -2,17 +2,21 @@
 
 #include "cell_order.h"
 
+#include <cstdlib>
+
 namespace vespalib::eval {
 
 std::string as_string(CellOrder cell_order) {
     switch (cell_order) {
-        case CellOrder::MAX: return "max";
-        case CellOrder::MIN: return "min";
+    case CellOrder::MAX:
+        return "max";
+    case CellOrder::MIN:
+        return "min";
     }
     abort();
 }
 
-std::optional<CellOrder> cell_order_from_string(const std::string &str) {
+std::optional<CellOrder> cell_order_from_string(const std::string& str) {
     if (str == "max") {
         return CellOrder::MAX;
     } else if (str == "min") {
@@ -22,4 +26,4 @@ std::optional<CellOrder> cell_order_from_string(const std::string &str) {
     }
 }
 
-} // namespace
+} // namespace vespalib::eval

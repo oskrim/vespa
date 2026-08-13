@@ -1,7 +1,7 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
-#include <vespa/vespalib/gtest/gtest.h>
 #include <vespa/searchlib/common/matching_elements.h>
+#include <vespa/vespalib/gtest/gtest.h>
 
 using namespace search;
 
@@ -11,7 +11,7 @@ std::vector<uint32_t> vec(const std::initializer_list<uint32_t> list) {
     return std::vector<uint32_t>(list);
 }
 
-}
+} // namespace
 
 struct MatchingElementsTest : ::testing::Test {
     MatchingElements matches;
@@ -23,9 +23,10 @@ struct MatchingElementsTest : ::testing::Test {
         matches.add_matching_elements(2, "foo", vec({2, 3, 5}));
         matches.add_matching_elements(2, "bar", vec({2, 4, 5}));
     }
-    ~MatchingElementsTest() = default;
+    ~MatchingElementsTest() override;
 };
 
+MatchingElementsTest::~MatchingElementsTest() = default;
 
 TEST_F(MatchingElementsTest, require_that_added_matches_can_be_looked_up) {
     EXPECT_EQ(matches.get_matching_elements(1, "foo"), vec({1, 3, 5}));

@@ -15,7 +15,9 @@ import com.yahoo.search.searchchain.Execution;
 import com.yahoo.search.test.QueryTestCase;
 import org.junit.jupiter.api.Test;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * @author baldersheim
@@ -27,7 +29,7 @@ public class QueryRewriteTestCase {
         Query query = new Query("?query=sddocname:music");
         query.getModel().setRestrict("music");
         QueryRewrite.optimizeByRestrict(query);
-        assertEquals("WEAKAND(100) sddocname:music", query.getModel().getQueryTree().toString());
+        assertEquals("WEAKAND sddocname:music", query.getModel().getQueryTree().toString());
     }
 
     @Test
@@ -170,6 +172,13 @@ public class QueryRewriteTestCase {
         assertEquals("2", a.getItem(2).toString());
         assertEquals("b", a.getItem(3).toString());
         assertEquals("3", a.getItem(4).toString());
+    }
+
+    @Test
+    void requireNoEmptyOr() {
+        assertRewritten("title:word RANK (text:other AND sddocname:foo)", "qux", "title:word");
+        assertRewritten("(sddocname:foo OR sddocname:bar) AND title:word", "qux", "NULL");
+        assertRewritten("(sddocname:qux AND text:ok) OR ((sddocname:foo OR sddocname:bar) AND title:word)", "qux", "text:ok");
     }
 
 }

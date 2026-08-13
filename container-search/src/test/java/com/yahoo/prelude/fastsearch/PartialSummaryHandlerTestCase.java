@@ -9,7 +9,12 @@ import com.yahoo.search.schema.Schema;
 
 import org.junit.jupiter.api.Test;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * @author arnej
@@ -38,6 +43,14 @@ public class PartialSummaryHandlerTestCase {
         assertTrue(hit1.isFilled(null));
         assertTrue(hit1.isFilled("default"));
         assertEquals(1, result.hits().getFilled().size());
+        assertTrue(result.hits().isFilled(null));
+        assertFalse(result.hits().isFilled("foobar"));
+        hit2.setUnfillable();
+        assertTrue(result.hits().isFilled("default"));
+        assertTrue(result.hits().isFilled(null));
+        assertFalse(result.hits().isFilled("foobar"));
+        hit1.setUnfillable();
+        assertTrue(result.hits().isFilled("foobar"));
     }
 
     @Test
@@ -338,6 +351,17 @@ public class PartialSummaryHandlerTestCase {
         assertEquals(2, result.hits().getFilled().size());
     }
 
+    static class TraceToString extends com.yahoo.yolean.trace.TraceVisitor {
+        public StringBuilder target = new StringBuilder();
+        public void visit(com.yahoo.yolean.trace.TraceNode node) {
+            if (node.payload() != null) {
+                target.append("\n\t>>> ");
+                target.append(node.payload());
+                target.append(" <<<");
+            }
+        }
+    }
+
     @Test
     void testFieldsPlusClassPresentation() {
         DocsumDefinitionSet set = createDocsumDefinitionSet();
@@ -349,7 +373,16 @@ public class PartialSummaryHandlerTestCase {
         var result = createResult(query, hit1, hit2);
         var toTest = new PartialSummaryHandler(set);
         toTest.wantToFill(result, PartialSummaryHandler.PRESENTATION);
-        assertEquals("default", toTest.askForSummary());
+        // so we have:
+        // summary=first3 (TOPIC, TITLE, WORDS)
+        // but fields = [ TOPIC, SCORE ]
+        // so what do we expect to get?
+        var tracer = new TraceToString();
+        query.getModel().getExecution().trace().accept(tracer);
+        assertTrue(tracer.target.toString()
+                   .contains("requested summary=first3 does not contain all fields [SCORE, TOPIC] from query; trying fields=[SCORE, TITLE, TOPIC, WORDS] and summary=[all]"),
+                   "Trace did not contain expected message, was: " + tracer.target);
+        assertEquals("[all]", toTest.askForSummary());
         assertNotNull(toTest.askForFields());
         assertEquals(4, toTest.askForFields().size());
         assertFalse(toTest.resultAlreadyFilled());
@@ -372,11 +405,40 @@ public class PartialSummaryHandlerTestCase {
         assertEquals(2, result.hits().getFilled().size());
     }
 
+    @Test
+    void enoughFields() {
+        var query = createQuery("first3");
+        var hit1 = createHit(query);
+        var result = createResult(query, hit1);
+        assertEquals("first3", PartialSummaryHandler.enoughFields(null, result));
+        assertEquals("first3", PartialSummaryHandler.enoughFields(PartialSummaryHandler.DEFAULT_CLASS, result));
+        assertEquals("first3", PartialSummaryHandler.enoughFields(PartialSummaryHandler.PRESENTATION, result));
+        assertEquals("[all]", PartialSummaryHandler.enoughFields("first3", result));
+        query.getPresentation().setSummaryFields("field1");
+        assertEquals("[f:field1]", PartialSummaryHandler.enoughFields(null, result));
+        assertEquals("[f:field1]", PartialSummaryHandler.enoughFields(PartialSummaryHandler.DEFAULT_CLASS, result));
+        assertEquals("[f:field1]", PartialSummaryHandler.enoughFields(PartialSummaryHandler.PRESENTATION, result));
+        assertEquals("[all]", PartialSummaryHandler.enoughFields("first3", result));
+    }
+
+    @Test
+    void enoughFieldsWhenOnlyMatchFeaturesAreInSummaryFeatures() {
+        var query = createQuery("first3");
+        query.getPresentation().setSummaryFields("matchfeatures");
+        var hit1 = createHit(query);
+        var result = createResult(query, hit1);
+        assertEquals("[f:matchfeatures]", PartialSummaryHandler.enoughFields(null, result));
+        assertEquals("[f:matchfeatures]", PartialSummaryHandler.enoughFields(PartialSummaryHandler.DEFAULT_CLASS, result));
+        assertEquals("[f:matchfeatures]", PartialSummaryHandler.enoughFields(PartialSummaryHandler.PRESENTATION, result));
+        assertEquals("[all]", PartialSummaryHandler.enoughFields("first3", result));
+    }
+
     static Query createQuery(String summaryClass) {
+        String q = "/search/?query=foo&trace.level=3";
         if (summaryClass == null)
-            return new Query("/search/?query=foo");
+            return new Query(q);
         else {
-            return new Query("/search/?query=foo&presentation.summary=" + summaryClass);
+            return new Query(q + "&presentation.summary=" + summaryClass);
         }
     }
 

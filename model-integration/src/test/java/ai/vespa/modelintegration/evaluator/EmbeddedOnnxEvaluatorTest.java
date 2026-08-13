@@ -2,6 +2,10 @@
 
 package ai.vespa.modelintegration.evaluator;
 
+import ai.vespa.modelintegration.utils.ModelPathHelper;
+import ai.vespa.modelintegration.utils.OnnxExternalDataResolver;
+import com.yahoo.config.ModelReference;
+import com.yahoo.config.UrlReference;
 import com.yahoo.tensor.Tensor;
 import com.yahoo.tensor.TensorType;
 import org.junit.Test;
@@ -13,6 +17,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -22,6 +27,8 @@ import java.util.logging.LogRecord;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assume.assumeTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /**
  * @author lesters
@@ -31,7 +38,7 @@ public class EmbeddedOnnxEvaluatorTest {
     @Test
     public void testSimpleModel() {
         assumeTrue(OnnxRuntime.isRuntimeAvailable());
-        var runtime = new EmbeddedOnnxRuntime();
+        var runtime = EmbeddedOnnxRuntime.createTestInstance();
         OnnxEvaluator evaluator = runtime.evaluatorOf("src/test/models/onnx/simple/simple.onnx");
 
         // Input types
@@ -57,7 +64,7 @@ public class EmbeddedOnnxEvaluatorTest {
     @Test
     public void testBatchDimension() {
         assumeTrue(OnnxRuntime.isRuntimeAvailable());
-        var runtime = new EmbeddedOnnxRuntime();
+        var runtime = EmbeddedOnnxRuntime.createTestInstance();
         OnnxEvaluator evaluator = runtime.evaluatorOf("src/test/models/onnx/pytorch/one_layer.onnx");
 
         // Input types
@@ -75,9 +82,50 @@ public class EmbeddedOnnxEvaluatorTest {
     }
 
     @Test
+    public void testModelWithExternalData() throws IOException {
+        assumeTrue(OnnxRuntime.isRuntimeAvailable());
+        // Resolve the model and its external data file the same way the embedders do. onnxruntime (>= 1.24)
+        // validates that external data paths don't escape the model directory, so the resolver must place the
+        // model and its data file together as hard links (or copies) rather than symlinks into the download dir.
+        var model = Paths.get("src/test/models/onnx/external_data/add_with_external_data.onnx");
+        var dataFile = Paths.get("src/test/models/onnx/external_data/external_data.bin");
+        var modelRef = ModelReference.unresolved(
+                Optional.empty(), Optional.of(new UrlReference("https://my.website/add_with_external_data.onnx")),
+                Optional.empty(), Optional.empty());
+        var dataRef = ModelReference.unresolved(
+                Optional.empty(), Optional.of(new UrlReference("https://my.website/external_data.bin")),
+                Optional.empty(), Optional.empty());
+        var modelPathHelper = mock(ModelPathHelper.class);
+        when(modelPathHelper.getModelPathResolvingIfNecessary(modelRef)).thenReturn(model);
+        when(modelPathHelper.getModelPathResolvingIfNecessary(dataRef)).thenReturn(dataFile);
+        var resolvedPath = new OnnxExternalDataResolver(modelPathHelper).resolveOnnxModel(modelRef);
+        var tempDir = resolvedPath.getParent();
+        // Guard against accidentally deleting the source tree if resolveOnnxModel ever falls back to the local path.
+        assertTrue(tempDir.getFileName().toString().startsWith("onnx-model-"));
+
+        var runtime = EmbeddedOnnxRuntime.createTestInstance();
+        try {
+            // Creating the session triggers onnxruntime's external data path validation.
+            try (OnnxEvaluator evaluator = runtime.evaluatorOf(resolvedPath.toString())) {
+                Map<String, Tensor> inputs = new HashMap<>();
+                inputs.put("input1", Tensor.from("tensor<float>(d0[1]):[1]"));
+                inputs.put("input2", Tensor.from("tensor<float>(d0[1]):[2]"));
+                // output = input1 + input2 + constant_value (5.0, stored as external data)
+                assertEquals(Tensor.from("tensor<float>(d0[1]):[8]"), evaluator.evaluate(inputs, "output"));
+            }
+        } finally {
+            try (var paths = Files.walk(tempDir)) {
+                paths.sorted(java.util.Comparator.reverseOrder()).forEach(p -> {
+                    try { Files.deleteIfExists(p); } catch (IOException e) { throw new java.io.UncheckedIOException(e); }
+                });
+            }
+        }
+    }
+
+    @Test
     public void testMatMul() {
         assumeTrue(OnnxRuntime.isRuntimeAvailable());
-        var runtime = new EmbeddedOnnxRuntime();
+        var runtime = EmbeddedOnnxRuntime.createTestInstance();
         String expected = "tensor<float>(d0[2],d1[4]):[38,44,50,56,83,98,113,128]";
         String input1 = "tensor<float>(d0[2],d1[3]):[1,2,3,4,5,6]";
         String input2 = "tensor<float>(d0[3],d1[4]):[1,2,3,4,5,6,7,8,9,10,11,12]";
@@ -87,7 +135,7 @@ public class EmbeddedOnnxEvaluatorTest {
     @Test
     public void testTypes() {
         assumeTrue(OnnxRuntime.isRuntimeAvailable());
-        var runtime = new EmbeddedOnnxRuntime();
+        var runtime = EmbeddedOnnxRuntime.createTestInstance();
         assertEvaluate(runtime, "add_double.onnx", "tensor(d0[1]):[3]", "tensor(d0[1]):[1]", "tensor(d0[1]):[2]");
         assertEvaluate(runtime, "add_float.onnx", "tensor<float>(d0[1]):[3]", "tensor<float>(d0[1]):[1]", "tensor<float>(d0[1]):[2]");
         assertEvaluate(runtime, "add_float16.onnx", "tensor<float>(d0[1]):[3]", "tensor<float>(d0[1]):[1]", "tensor<float>(d0[1]):[2]");
@@ -103,7 +151,7 @@ public class EmbeddedOnnxEvaluatorTest {
     @Test
     public void testNotIdentifiers() {
         assumeTrue(OnnxRuntime.isRuntimeAvailable());
-        var runtime = new EmbeddedOnnxRuntime();
+        var runtime = EmbeddedOnnxRuntime.createTestInstance();
         OnnxEvaluator evaluator = runtime.evaluatorOf("src/test/models/onnx/badnames.onnx");
         var inputInfo = evaluator.getInputInfo();
         var outputInfo = evaluator.getOutputInfo();
@@ -171,7 +219,7 @@ public class EmbeddedOnnxEvaluatorTest {
     @Test
     public void testLoadModelFromBytes() throws IOException {
         assumeTrue(OnnxRuntime.isRuntimeAvailable());
-        var runtime = new EmbeddedOnnxRuntime();
+        var runtime = EmbeddedOnnxRuntime.createTestInstance();
         var model = Files.readAllBytes(Paths.get("src/test/models/onnx/simple/simple.onnx"));
         var evaluator = runtime.evaluatorOf(model);
         assertEquals(3, evaluator.getInputs().size());
@@ -182,10 +230,10 @@ public class EmbeddedOnnxEvaluatorTest {
     @Test
     public void testLoggingMessages() throws IOException {
         assumeTrue(OnnxRuntime.isRuntimeAvailable());
-        Logger logger = Logger.getLogger(EmbeddedOnnxEvaluator.class.getName());
+        Logger logger = Logger.getLogger(EmbeddedOnnxRuntime.class.getName());
         CustomLogHandler logHandler = new CustomLogHandler();
         logger.addHandler(logHandler);
-        var runtime = new EmbeddedOnnxRuntime();
+        var runtime = EmbeddedOnnxRuntime.createTestInstance();
         var model = Files.readAllBytes(Paths.get("src/test/models/onnx/simple/simple.onnx"));
         OnnxEvaluatorOptions options = new OnnxEvaluatorOptions.Builder()
                 .setGpuDevice(0)

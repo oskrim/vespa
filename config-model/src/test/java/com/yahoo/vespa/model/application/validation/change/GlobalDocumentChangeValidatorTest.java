@@ -7,7 +7,9 @@ import com.yahoo.vespa.model.VespaModel;
 import com.yahoo.vespa.model.application.validation.ValidationTester;
 import org.junit.jupiter.api.Test;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Test that global attribute changes are detected by change validator.
@@ -36,8 +38,8 @@ public class GlobalDocumentChangeValidatorTest {
             if (validationOverrides != null) assertEquals(ClusterSpec.Id.from("default"), actions.get(0).clusterId());
         } catch (IllegalArgumentException e) {
             assertFalse(allowed);
-            assertEquals("global-document-change: Document type music in cluster default changed global from " + oldGlobal + " to " + newGlobal + ". " +
-                         "To allow this add <allow until='yyyy-mm-dd'>global-document-change</allow> to validation-overrides.xml, see https://docs.vespa.ai/en/reference/validation-overrides.html",
+            assertEquals("Changing global attribute for document types in content clusters: Document type music in cluster default changed global from " + oldGlobal + " to " + newGlobal + ". " +
+                         "To allow this add <allow until='yyyy-mm-dd'>global-document-change</allow> to validation-overrides.xml, see https://docs.vespa.ai/en/reference/applications/validation-overrides.html",
                          e.getMessage());
         }
     }
@@ -50,7 +52,7 @@ public class GlobalDocumentChangeValidatorTest {
                 "      <document type='music' mode='index' global='" +
                 isGlobal + "'/>" +
                 "    </documents>" +
-                "    <nodes count='1'/>" +
+                "    <nodes count='2'/>" +
                 "   </content>" +
                 "</services>";
     }

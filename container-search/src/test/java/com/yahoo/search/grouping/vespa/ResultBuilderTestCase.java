@@ -3,6 +3,7 @@ package com.yahoo.search.grouping.vespa;
 
 import com.yahoo.document.GlobalId;
 import com.yahoo.document.idstring.IdString;
+import com.yahoo.search.Query;
 import com.yahoo.search.grouping.Continuation;
 import com.yahoo.search.grouping.request.GroupingOperation;
 import com.yahoo.search.grouping.result.AbstractList;
@@ -20,6 +21,7 @@ import com.yahoo.searchlib.aggregation.Grouping;
 import com.yahoo.searchlib.aggregation.HitsAggregationResult;
 import com.yahoo.searchlib.aggregation.MaxAggregationResult;
 import com.yahoo.searchlib.aggregation.MinAggregationResult;
+import com.yahoo.searchlib.aggregation.QuantileAggregationResult;
 import com.yahoo.searchlib.aggregation.SumAggregationResult;
 import com.yahoo.searchlib.aggregation.XorAggregationResult;
 import com.yahoo.searchlib.aggregation.hll.SparseSketch;
@@ -77,8 +79,9 @@ public class ResultBuilderTestCase {
 
     @Test
     void requireThatAllExpressionNodesCanBeConverted() {
-        assertResult("0", new AverageAggregationResult(new IntegerResultNode(6), 9));
+        assertResult("3.5", new AverageAggregationResult(new IntegerResultNode(7), 2));
         assertResult("69", new CountAggregationResult(69));
+        assertResult("QuantileResult[entries=[Entry[quantile=0.5, value=69.0]]]", new QuantileAggregationResult(List.of(0.5)).updateSketch(69));
         assertResult("69", new MaxAggregationResult(new IntegerResultNode(69)));
         assertResult("69", new MinAggregationResult(new IntegerResultNode(69)));
         assertResult("69", new SumAggregationResult(new IntegerResultNode(69)));
@@ -923,7 +926,7 @@ public class ResultBuilderTestCase {
         reqBuilder.build();
         assertEquals(reqBuilder.getRequestList().size(), test.result.size());
 
-        ResultBuilder resBuilder = new ResultBuilder();
+        ResultBuilder resBuilder = new ResultBuilder(new Query());
         resBuilder.setHitConverter(new MyHitConverter());
         resBuilder.setTransform(reqBuilder.getTransform());
         resBuilder.setRequestId(REQUEST_ID);

@@ -2,7 +2,7 @@
 package ai.vespa.metrics;
 
 /**
- * @author yngveaasheim
+ * @author Yngve Aasheim
  */
 public enum ConfigServerMetrics implements VespaMetrics {
 
@@ -27,9 +27,11 @@ public enum ConfigServerMetrics implements VespaMetrics {
 
     MAINTENANCE_DEPLOYMENT_TRANSIENT_FAILURE("maintenanceDeployment.transientFailure", Unit.OPERATION, "Number of maintenance deployments that failed with a transient failure"),
     MAINTENANCE_DEPLOYMENT_FAILURE("maintenanceDeployment.failure", Unit.OPERATION, "Number of maintenance deployments that failed with a permanent failure"),
+    MAINTENANCE_DEPLOYMENT_REASON("maintenanceDeployment.reason", Unit.OPERATION, "Reason for maintenance deployment"),
 
     MAINTENANCE_SUCCESS_FACTOR_DEVIATION("maintenance.successFactorDeviation", Unit.FRACTION, "Configserver: Maintenance Success Factor Deviation"),
     MAINTENANCE_DURATION("maintenance.duration", Unit.MILLISECOND, "Configserver: Maintenance Duration"),
+    MAINTENANCE_CONGESTION("maintenance.congestion", Unit.FAILURE, "Configserver: Maintenance Congestion"),
 
     // ZooKeeper related metrics
     ZK_CONNECTION_LOST("configserver.zkConnectionLost", Unit.CONNECTION, "Number of ZooKeeper connections lost"),
@@ -69,6 +71,8 @@ public enum ConfigServerMetrics implements VespaMetrics {
     CLUSTER_LOAD_PEAK_CPU("cluster.load.peak.cpu", Unit.FRACTION, "The peak cpu load in the period considered of a certain cluster"),
     CLUSTER_LOAD_PEAK_MEMORY("cluster.load.peak.memory", Unit.FRACTION, "The peak memory load in the period considered of a certain cluster"),
     CLUSTER_LOAD_PEAK_DISK("cluster.load.peak.disk", Unit.FRACTION, "The peak disk load in the period considered of a certain cluster"),
+    CLUSTER_BACKUP_AGE_FRACTION("cluster.backup.age", Unit.FRACTION, "Age of the most recent cluster backup as a fraction of the backup interval"),
+    CLUSTER_SNAPSHOT_BUSY_SECONDS("cluster.snapshot.busySeconds", Unit.SECOND, "The maximum time a snapshot has been busy (creating or restoring) for a cluster"),
 
     ZONE_WORKING("zone.working", Unit.BINARY, "The value 1 if zone is considered healthy, 0 if not. This is decided by considering the number of non-active nodes vs the number of active nodes in a zone"),
     CACHE_NODE_OBJECT_HIT_RATE("cache.nodeObject.hitRate", Unit.FRACTION, "The fraction of cache hits vs cache lookups for the node object cache"),
@@ -151,6 +155,7 @@ public enum ConfigServerMetrics implements VespaMetrics {
     THROTTLED_NODE_FAILURES("throttledNodeFailures", Unit.HOST, "Number of node failures stopped due to throttling"),
     NODE_FAIL_THROTTLING("nodeFailThrottling", Unit.BINARY, "Metric indicating when node failure throttling is active. The value 1 means active, 0 means inactive"),
     CLUSTER_AUTOSCALED("clusterAutoscaled", Unit.OPERATION, "Number of times a cluster has been rescaled by the autoscaler"),
+    AUTOSCALE_SCALING_DURATION("clusterAutoscaleDuration", Unit.SECOND, "The currently predicted duration of a rescaling of this cluster"),
 
     DEPLOYMENT_PREPARE_MILLIS("deployment.prepareMillis", Unit.MILLISECOND, "Duration of deployment preparations"),
     DEPLOYMENT_ACTIVATE_MILLIS("deployment.activateMillis", Unit.MILLISECOND, "Duration of deployment activations"),

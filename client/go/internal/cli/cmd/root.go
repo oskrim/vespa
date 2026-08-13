@@ -56,6 +56,7 @@ type CLI struct {
 
 	now           func() time.Time
 	retryInterval time.Duration
+	sleeper       func(time.Duration)
 
 	cmd     *cobra.Command
 	config  *Config
@@ -146,10 +147,7 @@ use a token for Vespa Cloud access:
 
 $ export VESPA_CLI_DATA_PLANE_TOKEN='value-of-token'
 
-To get started, see the following quick start guides:
-
-- Local Vespa instance: https://docs.vespa.ai/en/vespa-quick-start.html
-- Vespa Cloud: https://docs.vespa.ai/en/cloud/getting-started.html
+To get started, follow https://docs.vespa.ai/en/basics/deploy-an-application.html
 
 The complete Vespa documentation is available at https://docs.vespa.ai.
 
@@ -231,6 +229,7 @@ For detailed description of flags and configuration, see 'vespa help config'.
 		exec:          &execSubprocess{},
 		now:           time.Now,
 		retryInterval: 2 * time.Second,
+		sleeper:       time.Sleep,
 
 		version: version,
 		cmd:     cmd,
@@ -304,8 +303,8 @@ func (c *CLI) configureFlags() map[string]*pflag.Flag {
 		debugMode   bool
 	)
 	c.cmd.PersistentFlags().StringVarP(&target, targetFlag, "t", "local", `The target platform to use. Must be "local", "cloud", "hosted" or an URL`)
-	c.cmd.PersistentFlags().StringVarP(&application, applicationFlag, "a", "", `The application to use (cloud only). Format "tenant.application.instance" - instance is optional`)
-	c.cmd.PersistentFlags().StringVarP(&instance, instanceFlag, "i", "", "The instance of the application to use (cloud only)")
+	c.cmd.PersistentFlags().StringVarP(&application, applicationFlag, "a", "", `The application to use. Format "tenant.application.instance" - instance is optional (tenant required for cloud targets)`)
+	c.cmd.PersistentFlags().StringVarP(&instance, instanceFlag, "i", "", "The instance of the application to use")
 	c.cmd.PersistentFlags().StringVarP(&cluster, clusterFlag, "C", "", "The container cluster to use. This is only required for applications with multiple clusters")
 	c.cmd.PersistentFlags().StringVarP(&zone, zoneFlag, "z", "", "The zone to use. This defaults to a dev zone (cloud only)")
 	c.cmd.PersistentFlags().StringVarP(&color, colorFlag, "c", "auto", `Whether to use colors in output. Must be "auto", "never", or "always"`)
@@ -340,7 +339,7 @@ func (c *CLI) configureCommands() {
 	configCmd := newConfigCmd()
 	documentCmd := newDocumentCmd(c)
 	prodCmd := newProdCmd()
-	statusCmd := newStatusCmd(c)
+	statusCmd := newStatusCmd(c, false)
 	applicationCmd := newApplicationCmd()
 
 	certCmd.AddCommand(newCertAddCmd(c))                // auth cert add
@@ -374,6 +373,7 @@ func (c *CLI) configureCommands() {
 	rootCmd.AddCommand(newQueryCmd(c))                  // query
 	statusCmd.AddCommand(newStatusDeployCmd(c))         // status deploy
 	statusCmd.AddCommand(newStatusDeploymentCmd(c))     // status deployment
+	statusCmd.AddCommand(newStatusEndpointCmd(c))       // status endpoint
 	rootCmd.AddCommand(statusCmd)                       // status
 	rootCmd.AddCommand(newTestCmd(c))                   // test
 	rootCmd.AddCommand(newVersionCmd(c))                // version
@@ -395,7 +395,11 @@ func (c *CLI) bindWaitFlag(cmd *cobra.Command, defaultSecs int, value *int) {
 }
 
 func (c *CLI) printErr(err error, hints ...string) {
-	fmt.Fprintln(c.Stderr, color.RedString("Error:"), err)
+	if msg, ok := strings.CutPrefix(err.Error(), "deployment failed: "); ok {
+		fmt.Fprintln(c.Stderr, color.RedString("Deployment failed:"), msg)
+	} else {
+		fmt.Fprintln(c.Stderr, color.RedString("Error:"), err)
+	}
 	for _, hint := range hints {
 		fmt.Fprintln(c.Stderr, color.CyanString("Hint:"), hint)
 	}
@@ -407,6 +411,12 @@ func (c *CLI) printSuccess(msg ...interface{}) {
 
 func (c *CLI) printInfo(msg ...interface{}) {
 	fmt.Fprintln(c.Stderr, fmt.Sprint(msg...))
+}
+
+func (c *CLI) printHelpfulInfo(msg string) {
+	if c.isTerminal() {
+		fmt.Fprintln(c.Stderr, msg)
+	}
 }
 
 func (c *CLI) printDebug(msg ...interface{}) {
@@ -463,7 +473,7 @@ func (c *CLI) target(opts targetOptions) (vespa.Target, error) {
 	switch targetType.name {
 	case vespa.TargetLocal, vespa.TargetCustom:
 		target, err = c.createCustomTarget(targetType.name, targetType.url)
-	case vespa.TargetCloud, vespa.TargetHosted:
+	case vespa.TargetCloud, vespa.TargetHosted, vespa.TargetCD, vespa.TargetPublicCD:
 		target, err = c.createCloudTarget(targetType.name, opts, targetType.url)
 	default:
 		return nil, errHint(fmt.Errorf("invalid target: %s", targetType), "Valid targets are 'local', 'cloud', 'hosted' or an URL")
@@ -497,8 +507,11 @@ func (c *CLI) targetType(targetTypeRestriction int) (targetType, error) {
 			return targetType{}, err
 		}
 	}
-	unsupported := (targetTypeRestriction == cloudTargetOnly && tt.name != vespa.TargetCloud && tt.name != vespa.TargetHosted) ||
-		(targetTypeRestriction == localTargetOnly && tt.name != vespa.TargetLocal && tt.name != vespa.TargetCustom)
+	isCloudTarget := tt.name == vespa.TargetCloud || tt.name == vespa.TargetHosted ||
+		tt.name == vespa.TargetCD || tt.name == vespa.TargetPublicCD
+	isLocalTarget := tt.name == vespa.TargetLocal || tt.name == vespa.TargetCustom
+	unsupported := (targetTypeRestriction == cloudTargetOnly && !isCloudTarget) ||
+		(targetTypeRestriction == localTargetOnly && !isLocalTarget)
 	if unsupported {
 		return targetType{}, errHint(fmt.Errorf("command does not support %s target", tt.name),
 			"to switch target run the following:",
@@ -526,15 +539,32 @@ func (c *CLI) targetFromURL(customURL string) (string, error) {
 }
 
 func (c *CLI) createCustomTarget(targetType, customURL string) (vespa.Target, error) {
-	tlsOptions, err := c.config.readTLSOptions(vespa.DefaultApplication, targetType)
+
+	// The old default for application ID (with "application" name) is still used for TLS options.
+	// Changing this can break existing pipelines/automations relying on this location for certificates. This only applies here,
+	// the config server still receives the correct default and uses that elsewhere.
+	deprecatedDefaultApplication := vespa.ApplicationID{Tenant: "default", Application: "application", Instance: "default"}
+	tlsOptions, err := c.config.readTLSOptions(deprecatedDefaultApplication, targetType)
+
 	if err != nil {
 		return nil, err
 	}
+	deployment := vespa.DefaultDeployment
+
+	// Set deployment application or keep default if config is not set
+	if _, ok := c.config.get(applicationFlag); ok {
+		if app, err := c.config.application(); err == nil {
+			deployment.Application = app
+		} else {
+			return nil, err
+		}
+	}
+
 	switch targetType {
 	case vespa.TargetLocal:
-		return vespa.LocalTarget(c.httpClient, tlsOptions, c.retryInterval), nil
+		return vespa.LocalTarget(c.httpClient, tlsOptions, c.retryInterval, deployment), nil
 	case vespa.TargetCustom:
-		return vespa.CustomTarget(c.httpClient, customURL, tlsOptions, c.retryInterval), nil
+		return vespa.CustomTarget(c.httpClient, customURL, tlsOptions, c.retryInterval, deployment), nil
 	default:
 		return nil, fmt.Errorf("invalid custom target: %s", targetType)
 	}
@@ -576,7 +606,7 @@ func (c *CLI) createCloudTarget(targetType string, opts targetOptions, customURL
 		deploymentTLSOptions vespa.TLSOptions
 	)
 	switch targetType {
-	case vespa.TargetCloud:
+	case vespa.TargetCloud, vespa.TargetPublicCD:
 		// Only setup API authentication if we're using "cloud" target, and not a direct URL
 		if customURL == "" {
 			apiAuth, err = c.cloudApiAuthenticator(deployment, system)
@@ -592,7 +622,7 @@ func (c *CLI) createCloudTarget(targetType string, opts targetOptions, customURL
 			}
 			deploymentTLSOptions = kp
 		}
-	case vespa.TargetHosted:
+	case vespa.TargetHosted, vespa.TargetCD:
 		kp, err := c.config.readTLSOptions(deployment.Application, targetType)
 		if err != nil {
 			return nil, errHint(err, "Deployment to hosted requires an Athenz certificate", "Try renewing certificate with 'athenz-user-cert'")
@@ -639,6 +669,10 @@ func (c *CLI) system(targetType string) (vespa.System, error) {
 		return vespa.MainSystem, nil
 	case vespa.TargetCloud:
 		return vespa.PublicSystem, nil
+	case vespa.TargetCD:
+		return vespa.CDSystem, nil
+	case vespa.TargetPublicCD:
+		return vespa.PublicCDSystem, nil
 	}
 	return vespa.System{}, fmt.Errorf("no default system found for %s target", targetType)
 }

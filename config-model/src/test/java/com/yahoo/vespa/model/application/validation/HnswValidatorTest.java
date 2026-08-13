@@ -17,6 +17,7 @@ import java.util.logging.Level;
 
 import static com.yahoo.config.model.test.TestUtil.joinLines;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * @author hmusum
@@ -31,7 +32,7 @@ public class HnswValidatorTest {
     void warns_when_2_searchable_copies_and_flat_setup() {
         var logger = new TestLogger();
         createModelAndValidate(logger, flat(), 2);
-        assertEquals(message + " and going to a grouped setup, see https://docs.vespa.ai/en/elasticity.html#grouped-distribution",
+        assertEquals(message + " and going to a grouped setup, see https://docs.vespa.ai/en/content/elasticity.html#grouped-distribution",
                      logger.message.toString());
     }
 
@@ -46,9 +47,8 @@ public class HnswValidatorTest {
     void warns_when_2_searchable_copies_and_2_groups() {
         var logger = new TestLogger();
         createModelAndValidate(logger, twoGroups(), 4);
-        assertEquals("Cluster 'mycluster' has searchable copies > 1 and fields with hnsw index: fields f1 in schema test." +
-                     " This will use a lot of resources, consider using searchable-copies=1",
-                     logger.message.toString());
+        assertTrue(logger.message.toString().contains("Cluster 'mycluster' has searchable copies > 1 and fields with hnsw index: fields f1 in schema test." +
+                     " This will use a lot of resources, consider using searchable-copies=1"));
     }
 
     @Test

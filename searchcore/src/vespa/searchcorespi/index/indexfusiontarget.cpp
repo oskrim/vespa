@@ -1,6 +1,8 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "indexfusiontarget.h"
+
+#include <algorithm>
 #include <cinttypes>
 
 #include <vespa/log/log.h>
@@ -13,17 +15,18 @@ namespace {
 
 class Fusioner : public FlushTask {
 private:
-    IndexMaintainer &_indexMaintainer;
-    FlushStats      &_stats;
-    SerialNum        _serialNum;
+    IndexMaintainer&                     _indexMaintainer;
+    FlushStats&                          _stats;
+    SerialNum                            _serialNum;
     std::shared_ptr<search::IFlushToken> _flush_token;
+
 public:
-    Fusioner(IndexMaintainer &indexMaintainer, FlushStats &stats, SerialNum serialNum, std::shared_ptr<search::IFlushToken> flush_token) :
-        _indexMaintainer(indexMaintainer),
-        _stats(stats),
-        _serialNum(serialNum),
-        _flush_token(std::move(flush_token))
-    {}
+    Fusioner(IndexMaintainer& indexMaintainer, FlushStats& stats, SerialNum serialNum,
+             std::shared_ptr<search::IFlushToken> flush_token)
+        : _indexMaintainer(indexMaintainer),
+          _stats(stats),
+          _serialNum(serialNum),
+          _flush_token(std::move(flush_token)) {}
 
     void run() override {
         std::string outputFusionDir = _indexMaintainer.doFusion(_serialNum, _flush_token);
@@ -36,69 +39,77 @@ public:
     }
 };
 
-}
-IndexFusionTarget::IndexFusionTarget(IndexMaintainer &indexMaintainer)
+} // namespace
+IndexFusionTarget::IndexFusionTarget(IndexMaintainer& indexMaintainer)
     : LeafFlushTarget("memoryindex.fusion", Type::GC, Component::INDEX),
       _indexMaintainer(indexMaintainer),
       _fusionStats(indexMaintainer.getFusionStats()),
-      _lastStats()
-{
+      _lastStats() {
     _lastStats.setPathElementsToLog(7);
-    LOG(debug, "New target, Num flushed: %d, Disk usage: %" PRIu64, _fusionStats.numUnfused, _fusionStats.diskUsage);
+    LOG(debug, "New target, Num flushed: %d, Disk usage: %" PRIu64, _fusionStats._num_unfused,
+        _fusionStats._disk_usage);
 }
 
 IndexFusionTarget::~IndexFusionTarget() = default;
 
-IFlushTarget::MemoryGain
-IndexFusionTarget::getApproxMemoryGain() const
-{
+IFlushTarget::MemoryGain IndexFusionTarget::getApproxMemoryGain() const {
     return MemoryGain(0, 0);
 }
 
-IFlushTarget::DiskGain
-IndexFusionTarget::getApproxDiskGain() const
-{
-    uint64_t diskUsageBefore = _fusionStats.diskUsage;
-    uint64_t diskUsageGain = static_cast<uint64_t>((0.1 * (diskUsageBefore * std::max(0,static_cast<int>(_fusionStats.numUnfused - 1)))));
+IFlushTarget::DiskGain IndexFusionTarget::getApproxDiskGain() const {
+    constexpr double max_relative_gain = 2.0;
+    uint64_t         diskUsageBefore = _fusionStats._disk_usage;
+    double           relative_gain =
+        std::clamp<double>(0.1 * (static_cast<int>(_fusionStats._num_unfused) - 1), 0.0, max_relative_gain);
+    uint64_t diskUsageGain = static_cast<uint64_t>(relative_gain * diskUsageBefore);
     diskUsageGain = std::min(diskUsageGain, diskUsageBefore);
-    if (!_fusionStats._canRunFusion)
+    if (!_fusionStats._canRunFusion) {
         diskUsageGain = 0;
-    return DiskGain(diskUsageBefore, diskUsageBefore - diskUsageGain);
+    }
+    return DiskGain(diskUsageBefore + diskUsageGain, diskUsageBefore);
 }
 
-bool
-IndexFusionTarget::needUrgentFlush() const
-{
-    bool urgent = (_fusionStats.numUnfused > _fusionStats.maxFlushed || _indexMaintainer.urgent_disk_index_fusion()) &&
-                  (_fusionStats._canRunFusion);
-    LOG(debug, "Num flushed: %d Urgent: %d", _fusionStats.numUnfused, urgent);
+bool IndexFusionTarget::needUrgentFlush() const {
+    bool urgent =
+        (_fusionStats._num_unfused > _fusionStats._max_flushed || _indexMaintainer.urgent_disk_index_fusion()) &&
+        (_fusionStats._canRunFusion);
+    LOG(debug, "Num flushed: %d Urgent: %d", _fusionStats._num_unfused, urgent);
     return urgent;
 }
 
-IFlushTarget::Time
-IndexFusionTarget::getLastFlushTime() const
-{
+IFlushTarget::Time IndexFusionTarget::getLastFlushTime() const {
     return vespalib::system_clock::now();
 }
 
-IFlushTarget::SerialNum
-IndexFusionTarget::getFlushedSerialNum() const
-{
+IFlushTarget::SerialNum IndexFusionTarget::getFlushedSerialNum() const {
     // Lack of fusion operation doesn't prevent transaction log
     // pruning.
     return _indexMaintainer.getCurrentSerialNum();
 }
 
-IFlushTarget::Task::UP
-IndexFusionTarget::initFlush(SerialNum serialNum, std::shared_ptr<search::IFlushToken> flush_token)
-{
+IFlushTarget::Task::UP IndexFusionTarget::initFlush(SerialNum                            serialNum,
+                                                    std::shared_ptr<search::IFlushToken> flush_token) {
     return std::make_unique<Fusioner>(_indexMaintainer, _lastStats, serialNum, std::move(flush_token));
 }
 
-uint64_t
-IndexFusionTarget::getApproxBytesToWriteToDisk() const
-{
-    return _fusionStats.diskUsage;
+bool IndexFusionTarget::can_flush(SerialNum) const noexcept {
+    return _fusionStats._canRunFusion;
 }
 
+uint64_t IndexFusionTarget::getApproxBytesToWriteToDisk() const {
+    return _fusionStats._disk_usage;
 }
+
+size_t IndexFusionTarget::reserved_memory_for_flush() const noexcept {
+    return 0;
+}
+
+std::chrono::steady_clock::duration IndexFusionTarget::last_flush_duration() const noexcept {
+    return _fusionStats._last_flush_duration;
+}
+
+std::chrono::steady_clock::duration IndexFusionTarget::estimated_flush_duration() const noexcept {
+    return _fusionStats._estimated_flush_duration;
+}
+
+} // namespace searchcorespi::index

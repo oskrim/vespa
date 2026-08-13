@@ -194,6 +194,8 @@ TOKEN :
     <FOR_EACH: "for_each"> |
     <GENERATE: "generate"> |
     <GET_FIELD: "get_field"> |
+    <GET_LANGUAGE: "get_language"> |
+    <GET_VALUE: "get_value"> |
     <GET_VAR: "get_var"> |
     <GUARD: "guard"> |
     <HASH: "hash"> |
@@ -215,6 +217,7 @@ TOKEN :
     <OPTIMIZE_PREDICATE: "optimize_predicate"> |
     <PACK_BITS: "pack_bits"> |
     <PASSTHROUGH: "passthrough"> |
+    <PROFILE: "profile"> |
     <RANDOM: "random"> |
     <REMOVE_IF_ZERO: "remove_if_zero"> |
     <SELECT_INPUT: "select_input"> |
@@ -352,6 +355,8 @@ Expression value() :
       val = forEachExp()            |
       val = generateExp()           |
       val = getFieldExp()           |
+      val = getLanguageExp()        |
+      val = getValueExp()           |
       val = getVarExp()             |
       val = guardExp()              |
       val = hashExp()               |
@@ -444,7 +449,7 @@ Expression chunkExp() :
 }
 
     (
-      <CHUNK> [ SCAN((identifierStr)+) => (chunkerId = identifierStr()) ] arguments = arguments()
+      <CHUNK> [ SCAN(identifierStr) => (chunkerId = identifierStr()) ] arguments = arguments()
     )
     {
         return new ChunkExpression(chunkers, chunkerId, arguments);
@@ -470,7 +475,7 @@ Expression embedExp() :
 }
  
     (
-      <EMBED> [ SCAN((identifierStr)+) => (embedderId = identifierStr()) ] arguments = arguments()
+      <EMBED> [ SCAN(identifierStr) => (embedderId = identifierStr()) ] arguments = arguments()
     )
     {
         return new EmbedExpression(linguistics, embedders, embedderId, arguments);
@@ -508,7 +513,7 @@ Expression generateExp() :
 }
 
     (
-      <GENERATE> [ SCAN((identifierStr)+) => (generatorId = identifierStr()) ] arguments = arguments()
+      <GENERATE> [ SCAN(identifierStr) => (generatorId = identifierStr()) ] arguments = arguments()
     )
     {
         return new GenerateExpression(linguistics, generators, generatorId, arguments);
@@ -517,11 +522,26 @@ Expression generateExp() :
 
 Expression getFieldExp() :
 {
-    String val;
+    String val = null;
 }
  
-    ( <GET_FIELD> val = identifierStr() )
+    ( <GET_FIELD> val = ( identifierStr() | integerValue() ) )
     { return new GetFieldExpression(val); }
+;
+
+Expression getLanguageExp() : { }
+
+    ( <GET_LANGUAGE> )
+    { return new GetLanguageExpression(); }
+;
+
+Expression getValueExp() :
+{
+    String key;
+}
+
+    ( <GET_VALUE> key = valueString() )
+    { return new GetValueExpression(key); }
 ;
 
 Expression getVarExp() :
@@ -776,13 +796,15 @@ Expression tokenizeExp() :
 AnnotatorConfig annotatorConfig() :
 {
     AnnotatorConfig val = new AnnotatorConfig(globalAnnotatorConfig);
-    String str = "SHORTEST";
+    String stemMode = "SHORTEST";
+    String profile;
     Integer maxLength;
     Integer maxTermOccurrences;
     Integer maxTokenLength;
 }
  
-    ( <STEM> ( <COLON> str = stringLiteral() ) ? { val.setStemMode(str); } |
+    ( <STEM> ( <COLON> stemMode = stringLiteral() ) ? { val.setStemMode(stemMode); } |
+      <PROFILE> <COLON> profile = stringLiteral() { val.setProfile(profile); } |
       <MAX_LENGTH> <COLON>  maxLength = integerValue() { val.setMaxTokenizeLength(maxLength); } |
       <MAX_OCCURRENCES> <COLON>  maxTermOccurrences = integerValue() { val.setMaxTermOccurrences(maxTermOccurrences); } |
       <MAX_TOKEN_LENGTH> <COLON> maxTokenLength = integerValue() { val.setMaxTokenLength(maxTokenLength); } |
@@ -899,18 +921,27 @@ List<String> arguments() :
     NumericFieldValue numericArgument;
     List<String> arguments = new ArrayList<String>();
 }
-    (
-        (SCAN(argument = identifierStr() { arguments.add(argument); } |
-              numericArgument = numericValue() { arguments.add(numericArgument.getNumber().toString()); }))*
-    )
+    ( valueString() )*
     { return arguments; }
+;
+
+/** A number, identifier, or quoted string */
+String valueString() :
+{
+    String value;
+    NumericFieldValue numericValue;
+}
+(
+    ( numericValue = numericValue() { return numericValue.getNumber().toString(); } ) |
+    ( value = stringLiteral() { return value; } ) |
+    ( value = identifierStr() { return value; } )
+)
 ;
 
 String identifierStr() :
 {
     String val;
 }
- 
     ( val = stringLiteral()      |
       ( <ATTRIBUTE>              |
         <BASE64_DECODE>          |
@@ -930,6 +961,8 @@ String identifierStr() :
         <FOR_EACH>               |
         <GENERATE>               |
         <GET_FIELD>              |
+        <GET_LANGUAGE>           |
+        <GET_VALUE>              |
         <GET_VAR>                |
         <GUARD>                  |
         <HASH>                   |
@@ -948,6 +981,7 @@ String identifierStr() :
         <NOW>                    |
         <OPTIMIZE_PREDICATE>     |
         <PASSTHROUGH>            |
+        <PROFILE>                |
         <RANDOM>                 |
         <REMOVE_IF_ZERO>         |
         <SELECT_INPUT>           |
@@ -979,7 +1013,6 @@ String identifierStr() :
         <ZCURVE>                 ) { val = lastConsumedToken.toString(); } )
     { return val; }
 ;
-
 
 String fieldName() :
 {

@@ -23,9 +23,11 @@ INJECT RankingExpressionParser :
     import com.yahoo.searchlib.rankingexpression.Reference;
     import com.yahoo.searchlib.rankingexpression.parser.CellMapHelper;
     import com.yahoo.searchlib.rankingexpression.rule.*;
+    import com.yahoo.searchlib.rankingexpression.evaluation.NamedStringValue;
     import com.yahoo.searchlib.rankingexpression.evaluation.Value;
     import com.yahoo.searchlib.rankingexpression.evaluation.StringValue;
     import com.yahoo.searchlib.rankingexpression.evaluation.TensorValue;
+    import com.yahoo.javacc.UnicodeUtilities;
     import com.yahoo.tensor.*;
     import com.yahoo.tensor.functions.*;
     import java.util.LinkedHashMap;
@@ -111,6 +113,9 @@ TOKEN :
 
     <IF: "if"> |
     <IN: "in"> |
+    <SWITCH: "switch"> |
+    <CASE: "case"> |
+    <SWITCHDEFAULT: "default"> |
     <F: "f"> |
 
     <NOT: "!"> |
@@ -296,6 +301,7 @@ ExpressionNode value() :
       ( value = constantPrimitive(neg)                             |
         (
           SCAN 2 value = ifExpression()                        |
+          SCAN 2 value = switchExpression()                    |
           SCAN 4 value = function()                            |
           value = feature()                                          |
           value = legacyQueryFeature()                               |
@@ -324,6 +330,28 @@ IfNode ifExpression() :
     {
         thisProduction.expressionNode = new IfNode(condition, ifTrue, ifFalse, trueProbability);
         return (IfNode)thisProduction.expressionNode;
+    }
+;
+
+SwitchNode switchExpression() :
+{
+    ExpressionNode discriminant;
+    List<ExpressionNode> caseValues = new ArrayList<ExpressionNode>();
+    List<ExpressionNode> caseResults = new ArrayList<ExpressionNode>();
+    ExpressionNode caseValue, caseResult;
+    ExpressionNode defaultResult;
+}
+
+    ( <SWITCH> <LBRACE> discriminant = expression() <RBRACE>
+      <LCURLY>
+      ( <CASE> caseValue = expression() <COLON> caseResult = expression() <COMMA>
+        { caseValues.add(caseValue); caseResults.add(caseResult); }
+      )+
+      <SWITCHDEFAULT> <COLON> defaultResult = expression()
+      <RCURLY> )
+    {
+        thisProduction.expressionNode = new SwitchNode(discriminant, caseValues, caseResults, defaultResult);
+        return (SwitchNode)thisProduction.expressionNode;
     }
 ;
 
@@ -382,13 +410,39 @@ String out() :
     { /* Unreachable: return null; */ }
 ;
 
+String tagValueStr() :
+{
+    String value;
+}
+
+    ( value = tag() | value = stringLiteral() )
+    { return value; }
+;
+
+ExpressionNode argExpression() :
+{
+    String argName, argValue;
+    ExpressionNode node;
+}
+
+    ( SCAN 2 (
+        argName = identifierStr() <COLON> (
+            argValue = tagValueStr() {
+                node = new ConstantNode(new NamedStringValue(argName, argValue));
+                thisProduction.expressionNode = node;
+                return node;
+            }
+        )
+      ) | ( node = expression() { thisProduction.expressionNode = node; return node; } ) )
+;
+
 List<ExpressionNode> args() :
 {
     List<ExpressionNode> arguments = new ArrayList<ExpressionNode>();
     ExpressionNode argument;
 }
 
-    ( ( argument = expression() { arguments.add(argument); } ( <COMMA> argument = expression() { arguments.add(argument); } )* )? )
+    ( ( argument = argExpression() { arguments.add(argument); } ( <COMMA> argument = argExpression() { arguments.add(argument); } )* )? )
     { return arguments; }
 ;
 
@@ -409,7 +463,7 @@ FunctionNode scalarOrTensorFunction() :
     Function function;
     ExpressionNode arg1, arg2;
 }
-
+(
     (
       ( function = unaryFunctionName() <LBRACE> arg1 = expression() <RBRACE> )
       {
@@ -424,6 +478,7 @@ FunctionNode scalarOrTensorFunction() :
           return (FunctionNode)thisProduction.expressionNode;
       }
     )
+)
 ;
 
 TensorFunctionNode tensorFunction() :
@@ -959,7 +1014,7 @@ String tensorFunctionName() :
 {
     Reduce.Aggregator aggregator;
 }
-
+(
     ( <F>                    { return lastConsumedToken.toString(); } ) |
     ( <MAP>                  { return lastConsumedToken.toString(); } ) |
     ( <MAP_SUBSPACES>        { return lastConsumedToken.toString(); } ) |
@@ -987,6 +1042,7 @@ String tensorFunctionName() :
     ( <CELL_CAST>            { return lastConsumedToken.toString(); } ) |
     ( <EXPAND>               { return lastConsumedToken.toString(); } ) |
     ( aggregator = tensorReduceAggregator() { return aggregator.toString(); } )
+)
 ;
 
 Function unaryFunctionName() : { }
@@ -1067,14 +1123,18 @@ String identifierStr() :
     Function func;
 }
 
-    SCAN 2 name = tensorFunctionName() { return name; }            |
-    func = unaryFunctionName()  { return func.toString(); } |
-    func = binaryFunctionName() { return func.toString(); } |
-    <IF>                        { return lastConsumedToken.toString(); }     |
-    <IN>                        { return lastConsumedToken.toString(); }     |
-    <IDENTIFIER>                { return lastConsumedToken.toString(); }     |
-    <TRUE>                      { return lastConsumedToken.toString(); }     |
-    <FALSE>                     { return lastConsumedToken.toString(); }
+    ( SCAN 2 name = tensorFunctionName() { return name; }            |
+      func = unaryFunctionName()  { return func.toString(); } |
+      func = binaryFunctionName() { return func.toString(); } |
+      <IF>                        { return lastConsumedToken.toString(); }     |
+      <IN>                        { return lastConsumedToken.toString(); }     |
+      <SWITCH>                    { return lastConsumedToken.toString(); }     |
+      <CASE>                      { return lastConsumedToken.toString(); }     |
+      <SWITCHDEFAULT>             { return lastConsumedToken.toString(); }     |
+      <IDENTIFIER>                { return lastConsumedToken.toString(); }     |
+      <TRUE>                      { return lastConsumedToken.toString(); }     |
+      <FALSE>                     { return lastConsumedToken.toString(); }
+    )
 ;
 
 List<String> identifierList() :
@@ -1093,10 +1153,11 @@ List<String> bracedIdentifierList() :
     List<String> list = new ArrayList<String>();
     String element;
 }
-
+(
     ( element = identifierStr() { return List.of(element); } )
     |
     ( <LBRACE> list = identifierList() <RBRACE> { return list; } )
+)
 ;
 
 // An identifier or integer
@@ -1241,10 +1302,11 @@ void indexedTensorCellSubspace(List cells) :
 {
     ExpressionNode value;
 }
-
+(
     ( <LSQUARE> indexedTensorCellSubspaceList(cells) <RSQUARE> )
     |
     ( value = expression() { cells.add(value); } )
+)
 ;
 
 void tensorCell(TensorType type, java.util.Map cells) :
@@ -1328,5 +1390,5 @@ String label() :
 
 String stringLiteral() : {}
 
-    <STRING> { return lastConsumedToken.toString().substring(1, lastConsumedToken.toString().length() - 1); }
+    <STRING> { return UnicodeUtilities.unquote(lastConsumedToken.toString()); }
 ;

@@ -22,9 +22,11 @@ import com.yahoo.jdisc.Metric;
 import com.yahoo.jdisc.Request;
 import com.yahoo.language.process.Embedder;
 import com.yahoo.language.provider.DefaultEmbedderProvider;
+import com.yahoo.net.AcceptHeaderMatcher;
 import com.yahoo.net.HostName;
 import com.yahoo.net.UriTools;
 import com.yahoo.prelude.query.parser.ParseException;
+import com.yahoo.prelude.statistics.StatisticsSearcher;
 import com.yahoo.processing.IllegalInputException;
 import com.yahoo.processing.rendering.Renderer;
 import com.yahoo.processing.request.CompoundName;
@@ -32,6 +34,7 @@ import com.yahoo.search.Query;
 import com.yahoo.search.Result;
 import com.yahoo.search.Searcher;
 import com.yahoo.search.query.context.QueryContext;
+import com.yahoo.search.query.properties.IllegalAssignmentException;
 import com.yahoo.search.query.profile.compiled.CompiledQueryProfile;
 import com.yahoo.search.query.profile.compiled.CompiledQueryProfileRegistry;
 import com.yahoo.search.query.properties.DefaultProperties;
@@ -79,7 +82,6 @@ public class SearchHandler extends LoggingRequestHandler {
 
     private static final CompoundName DETAILED_TIMING_LOGGING = CompoundName.from("trace.timingDetails");
     private static final CompoundName FORCE_TIMESTAMPS = CompoundName.from("trace.timestamps");
-
     /** Event name for number of connections to the search subsystem */
     private static final String SEARCH_CONNECTIONS = ContainerMetrics.SEARCH_CONNECTIONS.baseName();
     static final String RENDER_LATENCY_METRIC = ContainerMetrics.JDISC_RENDER_LATENCY.baseName();
@@ -114,9 +116,14 @@ public class SearchHandler extends LoggingRequestHandler {
                          ComponentRegistry<Embedder> embedders,
                          ExecutionFactory executionFactory,
                          ZoneInfo zoneInfo) {
-        this(metric, threadpool.executor(), queryProfileRegistry, embedders, executionFactory,
+        this(metric,
+             threadpool.executor(),
+             queryProfileRegistry,
+             embedders,
+             executionFactory,
              config.numQueriesToTraceOnDebugAfterConstruction(),
-                config.hostResponseHeaderKey().isEmpty() ? Optional.empty() : Optional.of(config.hostResponseHeaderKey()),
+             config.hostResponseHeaderKey().isEmpty() ? Optional.empty() : Optional.of(config.hostResponseHeaderKey()),
+             config.warmup(),
              zoneInfo);
     }
 
@@ -127,9 +134,9 @@ public class SearchHandler extends LoggingRequestHandler {
                           ExecutionFactory executionFactory,
                           long numQueriesToTraceOnDebugAfterStartup,
                           Optional<String> hostResponseHeaderKey,
+                          boolean warmup,
                           ZoneInfo zoneInfo) {
         super(executor, metric, true);
-
         log.log(Level.FINE, () -> "SearchHandler.init " + System.identityHashCode(this));
         this.queryProfileRegistry = queryProfileRegistry;
         this.embedders = toMap(embedders);
@@ -142,7 +149,8 @@ public class SearchHandler extends LoggingRequestHandler {
         metric.set(SEARCH_CONNECTIONS, 0.0d, null);
         this.zoneInfo = zoneInfo;
 
-        warmup();
+        if (warmup)
+            warmup();
     }
 
     Metric metric() { return metric; }
@@ -176,7 +184,7 @@ public class SearchHandler extends LoggingRequestHandler {
         try {
             try {
                 return handleBody(request);
-            } catch (IllegalInputException e) {
+            } catch (IllegalInputException | IllegalAssignmentException e) {
                 return illegalQueryResponse(request, e);
             } catch (RuntimeException e) { // Make sure we generate a valid response even on unexpected errors
                 log.log(Level.WARNING, "Failed handling " + request, e);
@@ -220,19 +228,31 @@ public class SearchHandler extends LoggingRequestHandler {
     }
 
     private HttpSearchResponse handleBody(HttpRequest request) {
+        long executionStart = System.currentTimeMillis();
         Map<String, String> requestMap = requestMapFromRequest(request);
 
         // Get query profile
         String queryProfileName = requestMap.getOrDefault("queryProfile", null);
         CompiledQueryProfile queryProfile = queryProfileRegistry.findQueryProfile(queryProfileName);
 
-        Query query = new Query.Builder().setRequest(request)
-                                         .setRequestMap(requestMap)
-                                         .setQueryProfile(queryProfile)
-                                         .setEmbedders(embedders)
-                                         .setZoneInfo(zoneInfo)
-                                         .setSchemaInfo(executionFactory.schemaInfo())
-                                         .build();
+        Query query;
+        try {
+            query = new Query.Builder().setRequest(request)
+                                       .setRequestMap(requestMap)
+                                       .setQueryProfile(queryProfile)
+                                       .setEmbedders(embedders)
+                                       .setZoneInfo(zoneInfo)
+                                       .setSchemaInfo(executionFactory.schemaInfo())
+                                       .build();
+        } catch (IllegalArgumentException e) {
+            throw new IllegalInputException(e);
+        }
+        query.getHttpRequest().context().put("search.handlerStartTime", executionStart);
+
+        // If format not explicitly set, use Accept header to determine response format
+        if (!requestMap.containsKey("format") && !requestMap.containsKey("presentation.format")) {
+            setFormatFromAcceptHeader(request, query);
+        }
 
         boolean benchmarking = VespaHeaders.benchmarkOutput(request);
         boolean benchmarkCoverage = VespaHeaders.benchmarkCoverage(benchmarking, request.getJDiscRequest().headers());
@@ -271,7 +291,11 @@ public class SearchHandler extends LoggingRequestHandler {
 
         // Transform result to response
         Renderer<Result> renderer = toRendererCopy(query.getPresentation().getRenderer());
-        HttpSearchResponse response = new HttpSearchResponse(getHttpResponseStatus(request, result),
+        int status = getHttpResponseStatus(request, result);
+        if (status == 500 && result.hits().getError() != null) {
+            log.log(Level.FINE, () -> "Search request returning %d: %s".formatted(status, result.hits().getError().getDetailedMessage()));
+        }
+        HttpSearchResponse response = new HttpSearchResponse(status,
                                                              result, query, renderer,
                                                              extractTraceNode(query),
                                                              metric);
@@ -346,9 +370,12 @@ public class SearchHandler extends LoggingRequestHandler {
             execution.context().setDetailedDiagnostics(true);
         }
         Result result = execution.search(query);
+        if (result.getQuery() == null)
+            result.setQuery(query);
 
-        ensureQuerySet(result, query);
-        execution.fill(result);
+        // StatisticsSearcher does fill, so we can skip the fill here for performance if it is the first in the chain
+        if ( ! searchChain.components().isEmpty() && ! (searchChain.components().get(0) instanceof StatisticsSearcher))
+            execution.fill(result);
 
         traceExecutionTimes(query, result);
         traceVespaVersion(query);
@@ -373,13 +400,6 @@ public class SearchHandler extends LoggingRequestHandler {
         Renderer<Result> copy = renderer.clone();
         copy.init();
         return copy;
-    }
-
-    private void ensureQuerySet(Result result, Query fallbackQuery) {
-        Query query = result.getQuery();
-        if (query == null) {
-            result.setQuery(fallbackQuery);
-        }
     }
 
     private Result search(String request, Query query, Chain<Searcher> searchChain) {
@@ -453,7 +473,7 @@ public class SearchHandler extends LoggingRequestHandler {
     }
 
     private Result validateQuery(Query query) {
-        DefaultProperties.requireNotPresentIn(query.getHttpRequest().propertyMap());
+        DefaultProperties.requireNotPresentIn(query.getRequestMap());
 
         int maxHits = query.properties().getInteger(DefaultProperties.MAX_HITS);
         int maxOffset = query.properties().getInteger(DefaultProperties.MAX_OFFSET);
@@ -461,12 +481,12 @@ public class SearchHandler extends LoggingRequestHandler {
         if (query.getHits() > maxHits) {
             return new Result(query, ErrorMessage.createIllegalQuery(query.getHits() +
                               " hits requested, configured limit: " + maxHits +
-                              ". See https://docs.vespa.ai/en/reference/query-api-reference.html#native-execution-parameters"));
+                              ". See https://docs.vespa.ai/en/reference/api/query.html#native-execution-parameters"));
 
         } else if (query.getOffset() > maxOffset) {
             return new Result(query, ErrorMessage.createIllegalQuery("Offset of " + query.getOffset() +
                               " requested, configured limit: " + maxOffset +
-                              ". See https://docs.vespa.ai/en/reference/query-api-reference.html#native-execution-parameters"));
+                              ". See https://docs.vespa.ai/en/reference/api/query.html#native-execution-parameters"));
         }
         return null;
     }
@@ -501,6 +521,24 @@ public class SearchHandler extends LoggingRequestHandler {
             header = header.substring(0, semi);
         }
         return com.yahoo.text.Lowercase.toLowerCase(header.trim());
+    }
+
+    private static final String CBOR_CONTENT_TYPE = "application/cbor";
+
+    /** Sets the response format based on the Accept header if CBOR is preferred over JSON */
+    private static void setFormatFromAcceptHeader(HttpRequest request, Query query) {
+        String acceptHeader = request.getHeader(com.yahoo.jdisc.http.HttpHeaders.Names.ACCEPT);
+        if (acceptHeader == null || acceptHeader.isEmpty()) return;
+
+        try {
+            var acceptMatcher = new AcceptHeaderMatcher(acceptHeader);
+            var preferred = acceptMatcher.preferredExactMediaTypes(CBOR_CONTENT_TYPE, JSON_CONTENT_TYPE);
+            if (!preferred.isEmpty() && CBOR_CONTENT_TYPE.equals(preferred.get(0))) {
+                query.getPresentation().setFormat("cbor");
+            }
+        } catch (IllegalArgumentException e) {
+            query.trace("Ignoring malformed Accept header: " + e.getMessage(), 2);
+        }
     }
 
     /** Add properties POSTed as a JSON payload, if any, to the request map */

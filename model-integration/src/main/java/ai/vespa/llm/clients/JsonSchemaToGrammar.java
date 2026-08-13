@@ -4,7 +4,14 @@ package ai.vespa.llm.clients;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 import java.util.function.BiConsumer;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -232,7 +239,7 @@ class JsonSchemaToGrammar {
 
                 var properties = new ArrayList<Map.Entry<String, JsonNode>>();
                 if (schema.has("properties"))
-                    schema.get("properties").fields().forEachRemaining(properties::add);
+                    schema.get("properties").properties().iterator().forEachRemaining(properties::add);
 
                 var rule = addRule(name, generateObject(properties, required, baseName, schema.get("additionalProperties")));
                 return Optional.of(rule);
@@ -252,7 +259,7 @@ class JsonSchemaToGrammar {
 
                 BiConsumer<JsonNode, Boolean> addComponent = (compNode, isRequired) -> {
                     if (compNode.has("properties")) {
-                        compNode.get("properties").fields().forEachRemaining(properties::add);
+                        compNode.get("properties").properties().iterator().forEachRemaining(properties::add);
                         if (isRequired) {
                             compNode.get("properties").fieldNames().forEachRemaining(required::add);
                         }

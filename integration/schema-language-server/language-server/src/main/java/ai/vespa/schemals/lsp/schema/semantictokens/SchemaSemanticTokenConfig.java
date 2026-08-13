@@ -65,6 +65,7 @@ class SchemaSemanticTokenConfig {
         add(TokenType.DENSE_POSTING_LIST_THRESHOLD);
         add(TokenType.DIVERSITY);
         add(TokenType.DOCUMENT);
+        add(TokenType.DOCUMENTID);
         add(TokenType.DOCUMENT_SUMMARY);
         add(TokenType.ELEMENT_GAP);
         add(TokenType.ENABLE_BM25);
@@ -109,6 +110,7 @@ class SchemaSemanticTokenConfig {
         add(TokenType.RANK_FEATURES);
         add(TokenType.RANK_PROFILE);
         add(TokenType.RANK_PROPERTIES);
+        add(TokenType.RANK_SCORE_DROP_LIMIT);
         add(TokenType.RANK_TYPE);
         add(TokenType.RAW_AS_BASE64_IN_SUMMARY);
         add(TokenType.SCHEMA);
@@ -173,43 +175,43 @@ class SchemaSemanticTokenConfig {
     // ========= Ranking expressions =========
     // Keyword
     static final ArrayList<ai.vespa.schemals.parser.rankingexpression.Token.TokenType> rankingExpressionKeywordTokens = new ArrayList<>() {{
-        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.IF);
-        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.IN);
-
-        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.TRUE);
-        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.FALSE);
-
-        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.AVG);
-        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.COUNT);
-        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.MAX);
-        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.MEDIAN);
-        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.MIN);
-        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.PROD);
-        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.SUM);
-
-        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.MAP);
-        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.MAP_SUBSPACES);
-        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.UNPACK_BITS);
-        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.REDUCE);
-        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.JOIN);
-        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.MERGE);
-        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.RENAME);
-        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.CONCAT);
-        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.TENSOR);
-        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.RANGE);
-        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.DIAG);
-        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.RANDOM);
-        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.L1_NORMALIZE);
-        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.L2_NORMALIZE);
-        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.EUCLIDEAN_DISTANCE);
-        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.COSINE_SIMILARITY);
-        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.MATMUL);
-        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.SOFTMAX);
-        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.XW_PLUS_B);
         add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.ARGMAX);
         add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.ARGMIN);
+        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.AVG);
+        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.CASE);
         add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.CELL_CAST);
+        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.CONCAT);
+        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.COSINE_SIMILARITY);
+        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.COUNT);
+        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.DIAG);
+        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.EUCLIDEAN_DISTANCE);
         add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.EXPAND);
+        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.FALSE);
+        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.IF);
+        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.IN);
+        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.JOIN);
+        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.L1_NORMALIZE);
+        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.L2_NORMALIZE);
+        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.MAP);
+        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.MAP_SUBSPACES);
+        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.MATMUL);
+        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.MAX);
+        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.MEDIAN);
+        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.MERGE);
+        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.MIN);
+        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.PROD);
+        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.RANDOM);
+        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.RANGE);
+        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.REDUCE);
+        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.RENAME);
+        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.SOFTMAX);
+        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.SUM);
+        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.SWITCH);
+        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.SWITCHDEFAULT);
+        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.TENSOR);
+        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.TRUE);
+        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.UNPACK_BITS);
+        add(ai.vespa.schemals.parser.rankingexpression.Token.TokenType.XW_PLUS_B);
     }};
 
     // Operations
@@ -256,6 +258,7 @@ class SchemaSemanticTokenConfig {
         add(ai.vespa.schemals.parser.indexinglanguage.Token.TokenType.ECHO);
         add(ai.vespa.schemals.parser.indexinglanguage.Token.TokenType.FLATTEN);
         add(ai.vespa.schemals.parser.indexinglanguage.Token.TokenType.GET_FIELD);
+        add(ai.vespa.schemals.parser.indexinglanguage.Token.TokenType.GET_LANGUAGE);
         add(ai.vespa.schemals.parser.indexinglanguage.Token.TokenType.GET_VAR);
         add(ai.vespa.schemals.parser.indexinglanguage.Token.TokenType.HEX_DECODE);
         add(ai.vespa.schemals.parser.indexinglanguage.Token.TokenType.HEX_ENCODE);
@@ -311,6 +314,7 @@ class SchemaSemanticTokenConfig {
         put(SymbolType.DOCUMENT_SUMMARY, SemanticTokenTypes.Variable);
         put(SymbolType.FIELD, SemanticTokenTypes.Variable);
         put(SymbolType.FIELDSET, SemanticTokenTypes.Variable);
+        put(SymbolType.FOREACH, SemanticTokenTypes.Macro);
         put(SymbolType.FUNCTION, SemanticTokenTypes.Function);
         put(SymbolType.LABEL, SemanticTokenTypes.Variable);
         put(SymbolType.LAMBDA_FUNCTION, SemanticTokenTypes.Keyword);

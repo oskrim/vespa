@@ -25,7 +25,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * Unit tests for content search cluster.
  *
- * @author geirst
+ * @author Geir Storli
  */
 public class ContentSchemaClusterTest {
 
@@ -121,29 +121,29 @@ public class ContentSchemaClusterTest {
 
     @Test
     void requireThatOnlyMemoryLimitCanBeSet() throws Exception {
-        assertProtonResourceLimits(0.9, 0.77, 0.91,
+        assertProtonResourceLimits(0.875, 0.77, 0.91,
                 new ContentClusterBuilder().protonMemoryLimit(0.77).getXml());
     }
 
     @Test
     void cluster_controller_resource_limits_can_be_set() throws Exception {
-        assertClusterControllerResourceLimits(0.92, 0.93, 0.89,
+        assertClusterControllerResourceLimits(0.92, 0.93, 0.80,
                 new ContentClusterBuilder().clusterControllerDiskLimit(0.92).clusterControllerMemoryLimit(0.93).getXml());
     }
 
     @Test
     void resource_limits_are_derived_from_the_other_if_not_specified() throws Exception {
         var cluster = createCluster(new ContentClusterBuilder().clusterControllerDiskLimit(0.5).protonMemoryLimit(0.95).getXml());
-        assertProtonResourceLimits(0.8, 0.95, 0.91, cluster);
-        assertClusterControllerResourceLimits(0.5, 0.94, 0.89, cluster);
-        assertClusterControllerResourceLimits(0.5, 0.94, 0.89, cluster);
+        assertProtonResourceLimits(0.75, 0.95, 0.91, cluster);
+        assertClusterControllerResourceLimits(0.5, 0.94, 0.80, cluster);
+        assertClusterControllerResourceLimits(0.5, 0.94, 0.80, cluster);
     }
 
     @Test
     void default_resource_limits_with_feed_block_in_distributor() throws Exception {
         var cluster = createCluster(new ContentClusterBuilder().getXml());
-        assertProtonResourceLimits(0.9, 0.9, 0.91, cluster);
-        assertClusterControllerResourceLimits(0.75, 0.8, 0.89, cluster);
+        assertProtonResourceLimits(0.875, 0.9, 0.91, cluster);
+        assertClusterControllerResourceLimits(0.75, 0.8, 0.80, cluster);
     }
 
     @Test

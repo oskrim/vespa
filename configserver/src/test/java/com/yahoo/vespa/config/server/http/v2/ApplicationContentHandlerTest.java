@@ -9,7 +9,6 @@ import com.yahoo.container.jdisc.HttpRequest;
 import com.yahoo.container.jdisc.HttpResponse;
 import com.yahoo.jdisc.Response;
 import com.yahoo.vespa.config.server.ApplicationRepository;
-import com.yahoo.vespa.config.server.application.OrchestratorMock;
 import com.yahoo.vespa.config.server.http.ContentHandlerTestBase;
 import com.yahoo.vespa.config.server.session.PrepareParams;
 import com.yahoo.vespa.config.server.session.Session;
@@ -61,11 +60,10 @@ public class ApplicationContentHandlerTest extends ContentHandlerTestBase {
 
         applicationRepository = new ApplicationRepository.Builder()
                 .withTenantRepository(tenantRepository)
-                .withOrchestrator(new OrchestratorMock())
                 .withConfigserverConfig(configserverConfig)
                 .build();
 
-        applicationRepository.deploy(testApp, prepareParams(appId1));
+        applicationRepository.prepareAndActivate(testApp, prepareParams(appId1));
         handler = new ApplicationHandler(ApplicationHandler.testContext(),
                                          Zone.defaultZone(),
                                          applicationRepository);

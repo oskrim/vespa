@@ -28,14 +28,91 @@ import java.util.Map;
 import java.util.LinkedHashMap;
 
 import com.yahoo.collections.Pair;
-import com.yahoo.document.datatypes.*;
+import com.yahoo.document.datatypes.DoubleFieldValue;
+import com.yahoo.document.datatypes.FieldValue;
+import com.yahoo.document.datatypes.FloatFieldValue;
+import com.yahoo.document.datatypes.IntegerFieldValue;
+import com.yahoo.document.datatypes.LongFieldValue;
+import com.yahoo.document.datatypes.NumericFieldValue;
+import com.yahoo.document.datatypes.StringFieldValue;
 import com.yahoo.text.StringUtilities;
-import com.yahoo.vespa.indexinglanguage.expressions.*;
+import com.yahoo.vespa.indexinglanguage.expressions.ArithmeticExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.AttributeExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.Base64DecodeExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.Base64EncodeExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.BinarizeExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.BusyWaitExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.CatExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.ChoiceExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.ChunkExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.ClearStateExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.Components;
+import com.yahoo.vespa.indexinglanguage.expressions.ConstantExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.EchoExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.EmbedExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.ExactExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.ExecutionValueExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.Expression;
+import com.yahoo.vespa.indexinglanguage.expressions.ExpressionList;
+import com.yahoo.vespa.indexinglanguage.expressions.FlattenExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.ForEachExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.GenerateExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.GetFieldExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.GetLanguageExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.GetValueExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.GetVarExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.GuardExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.HashExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.HexDecodeExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.HexEncodeExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.HostNameExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.IfThenExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.IndexExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.InputExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.JoinExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.LiteralBoolExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.LowerCaseExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.MathResolver;
+import com.yahoo.vespa.indexinglanguage.expressions.NGramExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.NormalizeExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.NowExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.OptimizePredicateExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.PackBitsExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.ParenthesisExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.PassthroughExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.RandomExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.ScriptExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.SelectInputExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.SetLanguageExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.SetVarExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.SleepExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.SplitExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.StatementExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.SubstringExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.SummaryExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.SwitchExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.ThisExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.ToArrayExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.ToBoolExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.ToByteExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.ToDoubleExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.ToEpochSecondExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.ToFloatExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.ToIntegerExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.ToLongExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.ToPositionExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.ToStringExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.ToUriExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.ToWsetExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.TokenizeExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.TrimExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.ZCurveExpression;
 import com.yahoo.vespa.indexinglanguage.linguistics.AnnotatorConfig;
 import com.yahoo.language.process.Chunker;
 import com.yahoo.language.process.Embedder;
 import com.yahoo.language.process.FieldGenerator;
 import com.yahoo.language.Linguistics;
+import com.yahoo.metrics.simple.MetricReceiver;
 
 /**
  * @author Simon Thoresen Hult
@@ -47,6 +124,7 @@ public class IndexingParser {
     private Components<Chunker> chunkers;
     private Components<Embedder> embedders;
     private Components<FieldGenerator> generators;
+    private MetricReceiver metricReceiver = MetricReceiver.nullImplementation;
     private AnnotatorConfig globalAnnotatorConfig = new AnnotatorConfig();
 
     public IndexingParser(String str) {
@@ -75,6 +153,11 @@ public class IndexingParser {
 
     public IndexingParser setGenerators(Map<String, FieldGenerator> generators) {
         this.generators = new Components.Map<FieldGenerator>(generators, FieldGenerator.FailingFieldGenerator.factory());
+        return this;
+    }
+
+    public IndexingParser setMetricReceiver(MetricReceiver metricReceiver) {
+        this.metricReceiver = metricReceiver;
         return this;
     }
 
@@ -178,6 +261,8 @@ TOKEN :
     <FLATTEN: "flatten"> |
     <FOR_EACH: "for_each"> |
     <GET_FIELD: "get_field"> |
+    <GET_LANGUAGE: "get_language"> |
+    <GET_VALUE: "get_value"> |
     <GET_VAR: "get_var"> |
     <GUARD: "guard"> |
     <HASH: "hash"> |
@@ -199,6 +284,7 @@ TOKEN :
     <OPTIMIZE_PREDICATE: "optimize_predicate"> |
     <PACK_BITS: "pack_bits" > |
     <PASSTHROUGH: "passthrough"> |
+    <PROFILE: "profile"> |
     <RANDOM: "random"> |
     <REMOVE_IF_ZERO: "remove_if_zero"> |
     <SELECT_INPUT: "select_input"> |
@@ -214,7 +300,7 @@ TOKEN :
     <TOKENIZE: "tokenize"> |
     <TO_ARRAY: "to_array"> |
     <TO_BOOL: "to_bool"> |
-     <TO_BYTE: "to_byte"> |
+    <TO_BYTE: "to_byte"> |
     <TO_DOUBLE: "to_double"> |
     <TO_FLOAT: "to_float"> |
     <TO_INT: "to_int"> |
@@ -331,6 +417,8 @@ Expression value() :
       val = flattenExp()            |
       val = forEachExp()            |
       val = getFieldExp()           |
+      val = getLanguageExp()        |
+      val = getValueExp()           |
       val = getVarExp()             |
       val = guardExp()              |
       val = hashExp()               |
@@ -436,7 +524,7 @@ Expression embedExp() :
 }
 {
     <EMBED> [ LOOKAHEAD(2) embedderId = identifier() ] arguments = arguments()
-    { return new EmbedExpression(linguistics, embedders, embedderId, arguments); }
+    { return new EmbedExpression(linguistics, embedders, embedderId, arguments, metricReceiver); }
 }
 
 Expression generateExp() :
@@ -481,6 +569,21 @@ Expression getFieldExp() :
 {
     ( <GET_FIELD> ( "$" { hasPrefix = true; } )? val = identifier() )
     { return new GetFieldExpression( (hasPrefix ? "$" : "") + val); }
+}
+
+Expression getLanguageExp() : { }
+{
+    ( <GET_LANGUAGE> )
+    { return new GetLanguageExpression(); }
+}
+
+Expression getValueExp() :
+{
+    String key;
+}
+{
+    ( <GET_VALUE> ( key = valueString() ) )
+    { return new GetValueExpression(key); }
 }
 
 Expression getVarExp() :
@@ -735,13 +838,15 @@ Expression tokenizeExp() :
 AnnotatorConfig annotatorConfig() :
 {
     AnnotatorConfig config = new AnnotatorConfig(globalAnnotatorConfig);
-    String str = "SHORTEST";
+    String stemMode = "SHORTEST";
+    String profile;
     Integer maxLength;
     Integer maxTermOccurrences;
     Integer maxTokenLength;
 }
 {
-    ( <STEM> ( <COLON> str = string() ) ? { config.setStemMode(str); } |
+    ( <STEM> ( <COLON> stemMode = string() ) ? { config.setStemMode(stemMode); } |
+      <PROFILE> <COLON> profile = string() { config.setProfile(profile); } |
       <MAX_LENGTH> <COLON>  maxLength = integer() { config.setMaxTokenizeLength(maxLength); } |
       <MAX_OCCURRENCES> <COLON>  maxTermOccurrences = integer() { config.setMaxTermOccurrences(maxTermOccurrences); } |
       <MAX_TOKEN_LENGTH> <COLON> maxTokenLength = integer() { config.setMaxTokenLength(maxTokenLength); } |
@@ -864,15 +969,23 @@ Expression executionValueExp() : { }
 List<String> arguments() :
 {
     String argument;
-    NumericFieldValue numericArgument;
     List<String> arguments = new ArrayList<String>();
 }
 {
-      ( LOOKAHEAD(2)
-          argument = identifier() { arguments.add(argument); } |
-          numericArgument = numericValue() { arguments.add(numericArgument.getNumber().toString()); }
-      )*
+      ( argument = valueString() { arguments.add(argument); } )*
       { return arguments; }
+}
+
+/** A number, identifier, or quoted string */
+String valueString() :
+{
+    String value;
+    NumericFieldValue numericValue;
+}
+{
+    numericValue = numericValue() { return numericValue.getNumber().toString(); } |
+    value = string() { return value; } |
+    value = identifier() { return value; }
 }
 
 String identifier() :
@@ -895,22 +1008,24 @@ String identifier() :
         <EXACT>                  |
         <ELSE>                   |
         <EMBED>                  |
-        <GENERATE>               |    
         <FLATTEN>                |
         <FOR_EACH>               |
+        <GENERATE>               |
         <GET_FIELD>              |
+        <GET_LANGUAGE>           |
+        <GET_VALUE>              |
         <GET_VAR>                |
         <GUARD>                  |
         <HASH>                   |
-        <HEX_DECODE>              |
-        <HEX_ENCODE>              |
-        <HOST_NAME>               |
+        <HEX_DECODE>             |
+        <HEX_ENCODE>             |
+        <HOST_NAME>              |
         <IDENTIFIER>             |
         <IF>                     |
         <INDEX>                  |
         <INPUT>                  |
         <JOIN>                   |
-        <LOWER_CASE>              |
+        <LOWER_CASE>             |
         <MAX_LENGTH>             |
         <NGRAM>                  |
         <NORMALIZE>              |
@@ -918,6 +1033,7 @@ String identifier() :
         <OPTIMIZE_PREDICATE>     |
         <PACK_BITS>              |
         <PASSTHROUGH>            |
+        <PROFILE>                |
         <RANDOM>                 |
         <REMOVE_IF_ZERO>         |
         <SELECT_INPUT>           |

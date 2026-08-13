@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include <cstdint>
 #include <memory>
 
 namespace search::tensor {
@@ -16,4 +17,4 @@ public:
     virtual uint32_t max_level() = 0;
 };
 
-}
+} // namespace search::tensor

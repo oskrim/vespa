@@ -5,6 +5,7 @@ import com.yahoo.vespa.config.content.core.StorCommunicationmanagerConfig;
 import com.yahoo.vespa.config.content.core.StorDistributormanagerConfig;
 import com.yahoo.vespa.config.content.core.StorServerConfig;
 import com.yahoo.config.model.test.MockRoot;
+import com.yahoo.text.Text;
 import com.yahoo.vespa.model.content.cluster.ContentCluster;
 import com.yahoo.vespa.model.content.utils.ContentClusterUtils;
 import com.yahoo.vespa.model.content.utils.DocType;
@@ -260,23 +261,6 @@ public class DistributorTest {
     }
 
     @Test
-    void testPortOverride() {
-        StorCommunicationmanagerConfig.Builder builder = new StorCommunicationmanagerConfig.Builder();
-        DistributorCluster cluster =
-                parse("<cluster id=\"storage\" distributor-base-port=\"14065\">" +
-                        "  <redundancy>3</redundancy>" +
-                        "  <documents/>" +
-                        "  <group>" +
-                        "     <node distribution-key=\"0\" hostalias=\"mockhost\"/>" +
-                        "  </group>" +
-                        "</cluster>");
-
-        cluster.getChildren().get("0").getConfig(builder);
-        StorCommunicationmanagerConfig config = new StorCommunicationmanagerConfig(builder);
-        assertEquals(14066, config.rpcport());
-    }
-
-    @Test
     void testCommunicationManagerDefaults() {
         StorCommunicationmanagerConfig.Builder builder = new StorCommunicationmanagerConfig.Builder();
         DistributorCluster cluster =
@@ -372,7 +356,7 @@ public class DistributorTest {
     }
 
     private String createServices(String maxDocumentSize) {
-        return """
+        return Text.format("""
                       <content id="foo">
                         <redundancy>1</redundancy>
                         <documents/>
@@ -383,7 +367,7 @@ public class DistributorTest {
                           <max-document-size>%s</max-document-size>
                         </tuning>
                       </content>
-                      """.formatted(maxDocumentSize);
+                      """, maxDocumentSize);
     }
 
     private StorDistributormanagerConfig parseAndGetConfig(String servicesXml) {

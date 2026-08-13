@@ -15,6 +15,7 @@ import com.yahoo.config.model.builder.xml.ConfigModelId;
 import com.yahoo.config.model.deploy.DeployState;
 import com.yahoo.config.model.producer.AnyConfigProducer;
 import com.yahoo.config.model.producer.TreeConfigProducer;
+import com.yahoo.config.provision.ClusterSpec;
 import com.yahoo.vespa.model.AbstractService;
 import com.yahoo.vespa.model.HostResource;
 import com.yahoo.vespa.model.SimpleConfigProducer;
@@ -39,12 +40,13 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.logging.Level;
 
 /**
  * The config model from a content tag in services.
  * This consists mostly of a ContentCluster.
  *
- * @author baldersheim
+ * @author Henning Baldersheim
  */
 public class Content extends ConfigModel {
 
@@ -104,6 +106,26 @@ public class Content extends ConfigModel {
         }
 
         containerCluster.getDocprocChains().add(new IndexingDocprocChain());
+    }
+
+    private static boolean inheritsFromIndexing(DocprocChain chain) {
+        for (ComponentSpecification inherited : chain.getChainSpecification().inheritance.chainSpecifications) {
+            if (IndexingDocprocChain.NAME.equals(inherited.getName())) return true;
+        }
+        return false;
+    }
+
+    private static void addIndexingChainToContainersInheritingFromIt(Collection<ContainerModel> containers) {
+        for (ContainerModel containerModel : containers) {
+            ContainerCluster<?> cluster = containerModel.getCluster();
+            if (cluster.getDocproc() == null) continue;
+            for (DocprocChain chain : cluster.getDocprocChains().allChains().allComponents()) {
+                if (inheritsFromIndexing(chain)) {
+                    addIndexingChain(cluster);
+                    break;
+                }
+            }
+        }
     }
 
     private static ContainerCluster<?> getContainerWithSearch(Collection<ContainerModel> containers) {
@@ -207,10 +229,11 @@ public class Content extends ConfigModel {
     
         @Override
         public void doBuild(Content content, Element xml, ConfigModelContext modelContext) {
-            Admin admin = content.adminModel != null ? content.adminModel.getAdmin() : null; // This is null in tests only
-            content.cluster = new ContentCluster.Builder(admin).build(content.containers, modelContext, xml);
+            Admin admin = content.adminModel.getAdmin();
+            content.cluster = new ContentCluster.Builder(admin).build(modelContext, xml);
             buildIndexingClusters(content, modelContext,
                                   (ApplicationConfigProducerRoot)modelContext.getParentProducer());
+            addIndexingChainToContainersInheritingFromIt(content.containers);
         }
 
         /** Select/creates and initializes the indexing cluster coupled to this */
@@ -221,6 +244,14 @@ public class Content extends ConfigModel {
             if (indexingDocproc.hasExplicitCluster()) {
                 setExistingIndexingCluster(content, indexingDocproc, content.containers);
             } else {
+                if (content.containers.size() > 1) {
+                    String message = "Content cluster '" + content.getCluster().getName() + "' does not have an explicit " +
+                                     "document-processing cluster configured. Add '<document-processing cluster=\"<name>\"/>' " +
+                                     "in <content> to ensure deterministic indexing cluster selection.";
+                    if (modelContext.getDeployState().featureFlags().requireExplicitDocprocCluster())
+                        throw new IllegalArgumentException(message);
+                    modelContext.getDeployState().getDeployLogger().logApplicationPackage(Level.WARNING, message);
+                }
                 setContainerAsIndexingCluster(search.getSearchNodes(), indexingDocproc, content, modelContext, root);
             }
         }
@@ -239,7 +270,7 @@ public class Content extends ConfigModel {
                 if (targetCluster == null)
                     targetCluster = content.containers.iterator().next().getCluster();
 
-                addDocproc(targetCluster);
+                addDocproc(targetCluster, modelContext.getDeployState());
                 indexingCluster.setClusterName(targetCluster.getName());
                 addIndexingChainsTo(targetCluster, content, indexingCluster);
             }
@@ -310,6 +341,9 @@ public class Content extends ConfigModel {
             TreeConfigProducer<AnyConfigProducer> parent = getDocProc(root);
             var indexingCluster = new ApplicationContainerCluster(parent, "cluster." + indexerName,
                                                                   indexerName, modelContext.getDeployState());
+            indexingCluster.setSpec(ClusterSpec.request(ClusterSpec.Type.container, ClusterSpec.Id.from(indexerName))
+                                               .vespaVersion(modelContext.getDeployState().getVespaVersion())
+                                               .build());
             ContainerModel indexingClusterModel = new ContainerModel(modelContext.withParent(parent).withId(indexingCluster.getSubId()));
             indexingClusterModel.setCluster(indexingCluster);
             modelContext.getConfigModelRepoAdder().add(indexingClusterModel);
@@ -318,7 +352,7 @@ public class Content extends ConfigModel {
             indexingCluster.addDefaultHandlersWithVip();
             indexingCluster.addAllPlatformBundles();
             indexingCluster.addAccessLog();
-            addDocproc(indexingCluster);
+            addDocproc(indexingCluster, modelContext.getDeployState());
 
             List<ApplicationContainer> nodes = new ArrayList<>();
             int index = 0;
@@ -350,10 +384,11 @@ public class Content extends ConfigModel {
             return null;
         }
 
-        private void addDocproc(ContainerCluster<?> cluster) {
+        private void addDocproc(ContainerCluster<?> cluster, DeployState deployState) {
             if (cluster.getDocproc() == null) {
-                DocprocChains chains = new DocprocChains(cluster, "docprocchains");
-                ContainerDocproc containerDocproc = new ContainerDocproc(cluster, chains);
+                DocprocChains chains = new DocprocChains(cluster, "docprocchains",
+                        new ContainerDocproc.Threadpool(deployState, null));
+                ContainerDocproc containerDocproc = new ContainerDocproc(cluster, chains, deployState);
                 cluster.setDocproc(containerDocproc);
             }
         }

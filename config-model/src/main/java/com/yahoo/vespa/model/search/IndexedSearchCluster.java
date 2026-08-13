@@ -7,6 +7,7 @@ import com.yahoo.config.model.producer.TreeConfigProducer;
 import com.yahoo.vespa.config.search.DispatchConfig;
 import com.yahoo.vespa.config.search.DispatchConfig.DistributionPolicy;
 import com.yahoo.vespa.config.search.DispatchNodesConfig;
+import com.yahoo.vespa.model.content.CoveragePolicy;
 import com.yahoo.vespa.model.content.DispatchTuning;
 import com.yahoo.vespa.model.content.Redundancy;
 import com.yahoo.vespa.model.content.SearchCoverage;
@@ -22,6 +23,7 @@ public class IndexedSearchCluster extends SearchCluster {
 
     private Tuning tuning;
     private SearchCoverage searchCoverage;
+    private CoveragePolicy.Policy coveragePolicy = null;
 
     private final Redundancy.Provider redundancyProvider;
 
@@ -35,8 +37,8 @@ public class IndexedSearchCluster extends SearchCluster {
         dispatchWarmup = featureFlags.queryDispatchWarmup();
     }
 
-    public void addSearcher(SearchNode searcher) {
-        searchNodes.add(searcher);
+    public void addSearchNode(SearchNode searchNode) {
+        searchNodes.add(searchNode);
     }
 
     public List<SearchNode> getSearchNodes() { return Collections.unmodifiableList(searchNodes); }
@@ -51,13 +53,17 @@ public class IndexedSearchCluster extends SearchCluster {
         this.searchCoverage = searchCoverage;
     }
 
+    public void setCoveragePolicy(CoveragePolicy.Policy policy) {
+        this.coveragePolicy = policy;
+    }
+
     private static DistributionPolicy.Enum toDistributionPolicy(DispatchTuning.DispatchPolicy tuning) {
         return switch (tuning) {
-            case ADAPTIVE: yield DistributionPolicy.ADAPTIVE;
-            case ROUNDROBIN: yield DistributionPolicy.ROUNDROBIN;
-            case BEST_OF_RANDOM_2: yield DistributionPolicy.BEST_OF_RANDOM_2;
-            case LATENCY_AMORTIZED_OVER_REQUESTS: yield DistributionPolicy.LATENCY_AMORTIZED_OVER_REQUESTS;
-            case LATENCY_AMORTIZED_OVER_TIME: yield DistributionPolicy.LATENCY_AMORTIZED_OVER_TIME;
+            case ADAPTIVE -> DistributionPolicy.ADAPTIVE;
+            case ROUNDROBIN -> DistributionPolicy.ROUNDROBIN;
+            case BEST_OF_RANDOM_2 -> DistributionPolicy.BEST_OF_RANDOM_2;
+            case LATENCY_AMORTIZED_OVER_REQUESTS -> DistributionPolicy.LATENCY_AMORTIZED_OVER_REQUESTS;
+            case LATENCY_AMORTIZED_OVER_TIME -> DistributionPolicy.LATENCY_AMORTIZED_OVER_TIME;
         };
     }
 
@@ -66,6 +72,8 @@ public class IndexedSearchCluster extends SearchCluster {
             DispatchNodesConfig.Node.Builder nodeBuilder = new DispatchNodesConfig.Node.Builder();
             nodeBuilder.key(node.getDistributionKey());
             nodeBuilder.group(node.getNodeSpec().groupIndex());
+            if (node.getHostResource() != null)
+                nodeBuilder.availabilityZone(node.getHostResource().spec().availabilityZone().value());
             nodeBuilder.host(node.getHostName());
             nodeBuilder.port(node.getRpcPort());
             builder.node(nodeBuilder);
@@ -77,8 +85,21 @@ public class IndexedSearchCluster extends SearchCluster {
             builder.topKProbability(tuning.dispatch.getTopkProbability());
         if (tuning.dispatch.getPrioritizeAvailability() != null)
             builder.prioritizeAvailability(tuning.dispatch.getPrioritizeAvailability());
-        if (tuning.dispatch.getMinActiveDocsCoverage() != null)
+        if (tuning.dispatch.getMinActiveDocsCoverage() != null) {
             builder.minActivedocsPercentage(tuning.dispatch.getMinActiveDocsCoverage());
+        } else if (coveragePolicy == CoveragePolicy.Policy.NODE && !searchNodes.isEmpty()) {
+            long numGroups = searchNodes.stream()
+                    .mapToInt(n -> n.getNodeSpec().groupIndex())
+                    .distinct()
+                    .count();
+            int nodesPerGroup = (int) (searchNodes.size() / numGroups);
+            if (nodesPerGroup > 1) {
+                // Note: For clusters with small number of docs the " - 0.01" might still make
+                // this limit is too high, but we don't know the document count here
+                // Apps with several groups is not likely to have that few docs in practice
+                builder.minActivedocsPercentage((1.0 - 1.0 / nodesPerGroup) * 100.0 - 0.01);
+            }
+        }
         if (tuning.dispatch.getDispatchPolicy() != null)
             builder.distributionPolicy(toDistributionPolicy(tuning.dispatch.getDispatchPolicy()));
         if (tuning.dispatch.getMaxHitsPerPartition() != null)

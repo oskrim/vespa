@@ -2,7 +2,9 @@
 package com.yahoo.prelude.query.parser;
 
 import com.yahoo.language.Language;
+import com.yahoo.language.process.LinguisticsParameters;
 import com.yahoo.language.process.Segmenter;
+import com.yahoo.language.process.StemMode;
 import com.yahoo.prelude.Index;
 import com.yahoo.prelude.IndexFacts;
 import com.yahoo.prelude.query.AndItem;
@@ -122,7 +124,7 @@ public abstract class AbstractParser implements CustomParser {
     }
 
     // TODO: Deprecate the unwanted method signatures below
-    
+
     @Override
     public final QueryTree parse(Parsable query) {
         Item root = null;
@@ -180,9 +182,9 @@ public abstract class AbstractParser implements CustomParser {
 
     /**
      * Do a best-effort attempt at creating a single string for language detection from only the relevant
-     * subset of tokens. 
+     * subset of tokens.
      * The relevant tokens are text tokens which follows names of indexes which are tokenized.
-     * 
+     *
      * This method does not modify the position of the given token stream.
      */
     private String generateLanguageDetectionTextFrom(TokenPosition tokens, IndexFacts.Session indexFacts, String defaultIndex) {
@@ -352,7 +354,7 @@ public abstract class AbstractParser implements CustomParser {
     // -bratseth
     // TODO: Use segmenting for forced phrase searches?
     //
-    // Language detection currently depends on tokenization (see generateLanguageDetectionTextFrom), but 
+    // Language detection currently depends on tokenization (see generateLanguageDetectionTextFrom), but
     // - the API's was originally not constructed for that, so a careful and somewhat unsatisfactory dance
     //   must be carried out to make it work
     // - it should really depend on parsing
@@ -366,35 +368,47 @@ public abstract class AbstractParser implements CustomParser {
             WordItem w = new WordItem(token.toString(), true, token.substring);
             w.setWords(false);
             w.setFromSpecialToken(true);
+            w.setQueryType(environment.getType());
             return w;
         }
 
         if (language == Language.UNKNOWN) {
-            return new WordItem(normalizedToken, true, token.substring);
+            var word = new WordItem(normalizedToken, true, token.substring);
+            word.setQueryType(environment.getType());
+            return word;
         }
 
-
         Segmenter segmenter = environment.getLinguistics().getSegmenter();
-        List<String> segments = segmenter.segment(normalizedToken, language);
+        List<String> segments = segmenter.segment(normalizedToken,
+                                                  new LinguisticsParameters(linguisticsProfileFor(indexName),
+                                                                            language,
+                                                                            StemMode.NONE,
+                                                                            false,
+                                                                            false));
         if (segments.isEmpty()) {
             return null;
         }
 
         if (segments.size() == 1) {
-            return new WordItem(segments.get(0), "", true, token.substring);
+            var word = new WordItem(segments.get(0), "", true, token.substring);
+            word.setQueryType(environment.getType());
+            return word;
         }
 
         CompositeItem composite;
         if (indexFacts.getIndex(indexName).getPhraseSegmenting() || quoted) {
             composite = new PhraseSegmentItem(token.toString(), normalizedToken, true, false, token.substring);
+            ((PhraseSegmentItem)composite).setQueryType(environment.getType());
         }
         else {
             composite = new AndSegmentItem(token.toString(), true, false);
+            ((AndSegmentItem)composite).setQueryType(environment.getType());
         }
         int n = 0;
         WordItem previous = null;
         for (String segment : segments) {
             WordItem w = new WordItem(segment, "", true, token.substring);
+            w.setQueryType(environment.getType());
             w.setFromSegmented(true);
             w.setSegmentIndex(n++);
             w.setStemmed(false);
@@ -414,9 +428,18 @@ public abstract class AbstractParser implements CustomParser {
             case near    -> new NearItem();
             case oNear   -> new ONearItem();
             case or      -> new OrItem();
-            case phrase  -> new PhraseItem();
+            case phrase  -> new PhraseItem(defaultIndex);
             case weakAnd -> new WeakAndItem();
         };
+    }
+
+    protected String linguisticsProfileFor(String field) {
+        String queryAssignedProfile = environment.getType().getProfile();
+        if (queryAssignedProfile != null) return queryAssignedProfile;
+        if (indexFacts == null) return null;
+        Index index = indexFacts.getIndex(field);
+        if (index == null) return null;
+        return index.getLinguisticsProfile();
     }
 
 }

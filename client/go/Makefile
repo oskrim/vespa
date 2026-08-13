@@ -8,6 +8,8 @@ ifeq ($(VERSION),)
 	VERSION = $(DEVEL_VERSION)
 endif
 
+export PATH := /usr/local/bin:$(PATH)
+
 PREFIX ?= $(CURDIR)
 BIN ?= $(PREFIX)/bin
 SHARE ?= $(PREFIX)/share
@@ -131,6 +133,7 @@ install-brew:
 	brew install vespa-cli
 
 install: setenv
+	env GOBIN=$(BIN) go version
 	env GOBIN=$(BIN) go install $(GO_FLAGS) ./...
 
 manpages: install
@@ -149,7 +152,7 @@ test: setenv
 	mkdir -p $(GO_TMPDIR) && GOTMPDIR=$(GO_TMPDIR) go test ./...
 
 checkfmt:
-	@sh -c "test -z $$(gofumpt -l .)" || { echo "one or more files need to be formatted: try make fmt to fix this automatically"; exit 1; }
+	@sh -c "test -z $$(gofmt -l .)" || { echo "one or more files need to be formatted: try make fmt to fix this automatically"; exit 1; }
 
 fmt:
 	gofmt -w .

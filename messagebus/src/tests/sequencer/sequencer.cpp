@@ -1,10 +1,11 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
-#include <vespa/messagebus/testlib/simplemessage.h>
-#include <vespa/messagebus/sequencer.h>
-#include <vespa/messagebus/routablequeue.h>
 #include <vespa/messagebus/emptyreply.h>
+#include <vespa/messagebus/routablequeue.h>
+#include <vespa/messagebus/sequencer.h>
+#include <vespa/messagebus/testlib/simplemessage.h>
 #include <vespa/vespalib/gtest/gtest.h>
+
 #include <cinttypes>
 
 #include <vespa/log/log.h>
@@ -20,12 +21,7 @@ using namespace mbus;
 
 struct MyQueue : public RoutableQueue {
 
-    virtual ~MyQueue() {
-        while (size() > 0) {
-            Routable::UP obj = dequeue();
-            obj->getCallStack().discard();
-        }
-    }
+    ~MyQueue() override;
 
     bool checkReply(bool hasSeqId, uint64_t seqId) {
         if (size() == 0) {
@@ -37,27 +33,25 @@ struct MyQueue : public RoutableQueue {
             LOG(error, "checkReply(): Got message when expecting reply.");
             return false;
         }
-        Reply::UP reply(static_cast<Reply*>(obj.release()));
+        Reply::UP   reply(static_cast<Reply*>(obj.release()));
         Message::UP msg = reply->getMessage();
-        if ( ! msg) {
+        if (!msg) {
             LOG(error, "checkReply(): Reply has no message attached.");
             return false;
         }
         if (hasSeqId) {
             if (!msg->hasSequenceId()) {
-                LOG(error, "checkReply(): Expected sequence id %" PRIu64 ", got none.",
-                    seqId);
+                LOG(error, "checkReply(): Expected sequence id %" PRIu64 ", got none.", seqId);
                 return false;
             }
             if (msg->getSequenceId() != seqId) {
-                LOG(error, "checkReply(): Expected sequence id %" PRIu64 ", got %" PRIu64 ".",
-                    seqId, msg->getSequenceId());
+                LOG(error, "checkReply(): Expected sequence id %" PRIu64 ", got %" PRIu64 ".", seqId,
+                    msg->getSequenceId());
                 return false;
             }
         } else {
             if (msg->hasSequenceId()) {
-                LOG(error, "checkReply(): Message has unexpected sequence id %" PRIu64 ".",
-                    msg->getSequenceId());
+                LOG(error, "checkReply(): Message has unexpected sequence id %" PRIu64 ".", msg->getSequenceId());
                 return false;
             }
         }
@@ -66,12 +60,12 @@ struct MyQueue : public RoutableQueue {
 
     void replyNext() {
         Routable::UP obj = dequeue();
-        Message::UP msg(static_cast<Message*>(obj.release()));
+        Message::UP  msg(static_cast<Message*>(obj.release()));
 
         Reply::UP reply(new EmptyReply());
         reply->swapState(*msg);
         reply->setMessage(std::move(msg));
-        IReplyHandler &handler = reply->getCallStack().pop(*reply);
+        IReplyHandler& handler = reply->getCallStack().pop(*reply);
         handler.handleReply(std::move(reply));
     }
 
@@ -82,17 +76,23 @@ struct MyQueue : public RoutableQueue {
     }
 };
 
+MyQueue::~MyQueue() {
+    while (size() > 0) {
+        Routable::UP obj = dequeue();
+        obj->getCallStack().discard();
+    }
+}
+
 // --------------------------------------------------------------------------------
 //
 // Tests.
 //
 // --------------------------------------------------------------------------------
 
-TEST(SequencerTest, test_sync_none)
-{
-    MyQueue       src;
-    MyQueue       dst;
-    Sequencer     seq(dst);
+TEST(SequencerTest, test_sync_none) {
+    MyQueue   src;
+    MyQueue   dst;
+    Sequencer seq(dst);
 
     seq.handleMessage(src.createMessage(false, 0));
     seq.handleMessage(src.createMessage(false, 0));
@@ -119,11 +119,10 @@ TEST(SequencerTest, test_sync_none)
     EXPECT_EQ(0u, dst.size());
 }
 
-TEST(SequencerTest, test_sync_id)
-{
-    MyQueue     src;
-    MyQueue     dst;
-    Sequencer   seq(dst);
+TEST(SequencerTest, test_sync_id) {
+    MyQueue   src;
+    MyQueue   dst;
+    Sequencer seq(dst);
 
     seq.handleMessage(src.createMessage(true, 1));
     seq.handleMessage(src.createMessage(true, 2));

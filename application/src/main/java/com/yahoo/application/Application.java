@@ -9,7 +9,6 @@ import ai.vespa.rankingexpression.importer.xgboost.XGBoostImporter;
 import com.yahoo.api.annotations.Beta;
 import com.yahoo.application.container.JDisc;
 import com.yahoo.application.container.impl.StandaloneContainerRunner;
-import com.yahoo.application.content.ContentCluster;
 import com.yahoo.config.ConfigInstance;
 import com.yahoo.config.InnerNode;
 import com.yahoo.config.InnerNodeVector;
@@ -19,6 +18,7 @@ import com.yahoo.config.application.api.ApplicationPackage;
 import com.yahoo.config.model.NullConfigModelRegistry;
 import com.yahoo.config.model.application.provider.FilesApplicationPackage;
 import com.yahoo.config.model.deploy.DeployState;
+import com.yahoo.config.model.deploy.TestProperties;
 import com.yahoo.docproc.DocumentProcessor;
 import com.yahoo.io.IOUtils;
 import com.yahoo.jdisc.handler.RequestHandler;
@@ -42,6 +42,7 @@ import java.net.BindException;
 import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -69,7 +70,6 @@ public final class Application implements AutoCloseable {
     public static final String vespaLocalProperty = "vespa.local";
 
     private final JDisc container;
-    private final List<ContentCluster> contentClusters;
     private final Path path;
     private final boolean deletePathWhenClosing;
     private final CompiledQueryProfileRegistry compiledQueryProfileRegistry;
@@ -79,7 +79,6 @@ public final class Application implements AutoCloseable {
         System.setProperty(vespaLocalProperty, "true");
         this.path = path;
         this.deletePathWhenClosing = deletePathWhenClosing;
-        contentClusters = ContentCluster.fromPath(path);
         container = JDisc.fromPath(path, networking, createVespaModel().configModelRepo());
         compiledQueryProfileRegistry = readQueryProfilesFromApplicationPackage(path);
     }
@@ -148,6 +147,7 @@ public final class Application implements AutoCloseable {
                     .modelImporters(modelImporters)
                     .deployLogger((level, s) -> { })
                     .accessLoggingEnabledByDefault(false)
+                    .properties(new TestProperties())
                     .build();
             return new VespaModel(new NullConfigModelRegistry(), deployState);
         } catch (IOException | SAXException e) {
@@ -241,7 +241,7 @@ public final class Application implements AutoCloseable {
         }
 
         /**
-         * Get the file name (path) of a resource or fail if it can not be found
+         * Get the file name (path) of a resource or fail if it cannot be found
          *
          * @param resource Name of desired resource
          * @return Path of resource
@@ -370,7 +370,7 @@ public final class Application implements AutoCloseable {
         }
 
         private void generateXml() throws Exception {
-            try (PrintWriter xml = new PrintWriter(Files.newOutputStream(path.resolve("services.xml")))) {
+            try (PrintWriter xml = new PrintWriter(Files.newOutputStream(path.resolve("services.xml")), true, StandardCharsets.UTF_8)) {
                 xml.println("<?xml version=\"1.0\" encoding=\"utf-8\" ?>");
                 for (Map.Entry<String, Container> entry : containers.entrySet()) {
                     entry.getValue().build(xml, entry.getKey(), (networking == Networking.enable ? getRandomPort() : -1));

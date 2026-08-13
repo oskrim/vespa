@@ -6,8 +6,14 @@ import com.yahoo.language.Language;
 import com.yahoo.language.Linguistics;
 import com.yahoo.prelude.IndexFacts;
 import com.yahoo.prelude.IndexFactsFactory;
+import com.yahoo.prelude.query.AndItem;
+import com.yahoo.prelude.query.AndSegmentItem;
 import com.yahoo.prelude.query.Item;
 import com.yahoo.prelude.query.NullItem;
+import com.yahoo.prelude.query.OrItem;
+import com.yahoo.prelude.query.PhraseItem;
+import com.yahoo.prelude.query.PhraseSegmentItem;
+import com.yahoo.prelude.query.WordItem;
 import com.yahoo.prelude.query.parser.TestLinguistics;
 import com.yahoo.prelude.querytransform.CJKSearcher;
 import com.yahoo.search.Query;
@@ -16,14 +22,18 @@ import com.yahoo.search.query.parser.Parsable;
 import com.yahoo.search.query.parser.Parser;
 import com.yahoo.search.query.parser.ParserEnvironment;
 import com.yahoo.search.query.parser.ParserFactory;
+import com.yahoo.search.querytransform.NGramSearcher;
 import com.yahoo.search.searchchain.Execution;
 
 import com.yahoo.search.test.QueryTestCase;
 import com.yahoo.search.yql.MinimalQueryInserter;
 import org.junit.jupiter.api.Test;
 
+import java.util.Iterator;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * @author Steinar Knutsen
@@ -47,12 +57,22 @@ public class CJKSearcherTestCase {
     @Test
     void testCjkQueryWithOverlappingTokens() {
         // The test language segmenter will segment "bcd" into the overlapping tokens "bc" "cd"
-        assertTransformed("bcd", "SAND bc cd", Query.Type.ALL, Language.CHINESE_SIMPLIFIED, Language.CHINESE_TRADITIONAL,
-                TestLinguistics.INSTANCE);
+        assertTransformed("bcd", "SAND bc cd", Query.Type.ALL,
+                          Language.CHINESE_SIMPLIFIED, Language.CHINESE_TRADITIONAL, TestLinguistics.INSTANCE);
 
         // While "efg" will be segmented into one of the standard options, "e" "fg"
-        assertTransformed("efg", "SAND e fg", Query.Type.ALL, Language.CHINESE_SIMPLIFIED, Language.CHINESE_TRADITIONAL,
-                TestLinguistics.INSTANCE);
+        assertTransformed("efg", "SAND e fg", Query.Type.ALL,
+                          Language.CHINESE_SIMPLIFIED, Language.CHINESE_TRADITIONAL, TestLinguistics.INSTANCE);
+    }
+
+    /**
+     * The NGram searcher (in phrase mode) will create overlapping tokens in a regular Phrase, not SAND.
+     * These should also not be rewritten here.
+     */
+    @Test
+    void testCjkQueryWithPhraseComingFromNGrams() {
+        assertTransformed("gram:123", "gram:\"12 23\"", Query.Type.ALL,
+                          Language.CHINESE_SIMPLIFIED, Language.CHINESE_TRADITIONAL, TestLinguistics.INSTANCE);
     }
 
     @Test
@@ -60,6 +80,166 @@ public class CJKSearcherTestCase {
         Query query = new Query(QueryTestCase.httpEncode("search?yql=select * from music-only where default contains equiv('a', 'b c') or default contains '东'"));
         new Execution(new Chain<>(new MinimalQueryInserter(), new CJKSearcher()), Execution.Context.createContextStub()).search(query);
         assertEquals("OR (EQUIV default:a default:'b c') default:东", query.getModel().getQueryTree().toString());
+    }
+
+    /** Constructs a PhraseSegmentItem simulating CJK segmentation of "efg" into "e" + "fg" */
+    private PhraseSegmentItem createSegmentedItem(Language language) {
+        PhraseSegmentItem segment = new PhraseSegmentItem("efg", "efg", true, false);
+        segment.addItem(new WordItem("e", "default"));
+        segment.addItem(new WordItem("fg", "default"));
+        segment.setLanguage(language);
+        return segment;
+    }
+
+    @Test
+    void testCjkTransformAppliesOnlyToCjkBranch() {
+        // CJK branch: segmented phrase, marked Chinese
+        PhraseSegmentItem cjkBranch = createSegmentedItem(Language.CHINESE_SIMPLIFIED);
+
+        // English branch: simple word
+        WordItem englishBranch = new WordItem("hello", "default");
+        englishBranch.setLanguage(Language.ENGLISH);
+
+        OrItem root = new OrItem();
+        root.addItem(cjkBranch);
+        root.addItem(englishBranch);
+
+        // Query language is English — CJKSearcher should segment the CJK branch
+        Query query = new Query("?language=en");
+        query.getModel().getQueryTree().setRoot(root);
+
+        new Execution(new Chain<Searcher>(new CJKSearcher()),
+                      Execution.Context.createContextStub(indexFacts, TestLinguistics.INSTANCE)).search(query);
+
+        String result = query.getModel().getQueryTree().getRoot().toString();
+        assertTrue(result.contains("SAND"), "CJK branch should be transformed to SAND: " + result);
+        assertTrue(result.contains("hello"), "English branch should be untouched: " + result);
+    }
+
+    @Test
+    void testNonCjkBranchNotTransformedWhenQueryLanguageIsCjk() {
+        // CJK branch: segmented phrase, marked Chinese
+        PhraseSegmentItem cjkBranch = createSegmentedItem(Language.CHINESE_SIMPLIFIED);
+
+        // English branch: same segmented structure, but marked English
+        PhraseSegmentItem englishBranch = createSegmentedItem(Language.ENGLISH);
+        String enBefore = englishBranch.toString();
+
+        OrItem root = new OrItem();
+        root.addItem(cjkBranch);
+        root.addItem(englishBranch);
+
+        // Query language is CJK — CJKSearcher should transform the CJK branch and leave the English branch untouched
+        Query query = new Query("?language=zh-hans");
+        query.getModel().getQueryTree().setRoot(root);
+
+        new Execution(new Chain<Searcher>(new CJKSearcher()),
+                      Execution.Context.createContextStub(indexFacts, TestLinguistics.INSTANCE)).search(query);
+
+        Item resultRoot = query.getModel().getQueryTree().getRoot();
+        assertTrue(resultRoot instanceof OrItem, "Root should be OR: " + resultRoot);
+        OrItem or = (OrItem) resultRoot;
+        assertEquals(2, or.getItemCount());
+
+        // CJK branch: should be transformed
+        assertTrue(or.getItem(0).toString().contains("SAND"),
+                "CJK branch should be transformed: " + or.getItem(0));
+
+        // English branch: should NOT be transformed
+        assertEquals(enBefore, or.getItem(1).toString(),
+                "English branch should NOT be transformed");
+    }
+
+    @Test
+    void testTraceFiresWhenCjkItemInsideCompositeIsTransformed() {
+        PhraseSegmentItem cjkBranch = createSegmentedItem(Language.CHINESE_SIMPLIFIED);
+        WordItem englishBranch = new WordItem("hello", "default");
+        englishBranch.setLanguage(Language.ENGLISH);
+
+        OrItem root = new OrItem();
+        root.addItem(cjkBranch);
+        root.addItem(englishBranch);
+
+        Query query = new Query("?language=en&tracelevel=2");
+        query.getModel().getQueryTree().setRoot(root);
+
+        new Execution(new Chain<Searcher>(new CJKSearcher()),
+                      Execution.Context.createContextStub(indexFacts, TestLinguistics.INSTANCE)).search(query);
+
+        String trace = query.getContext(false).getTrace().toString();
+        assertTrue(trace.contains("Rewriting for CJK behavior for implicit phrases"),
+                "Trace should contain CJK rewriting message: " + trace);
+    }
+
+    @Test
+    void testNoTraceWhenNoCjkTransformationNeeded() {
+        WordItem branch1 = new WordItem("hello", "default");
+        branch1.setLanguage(Language.ENGLISH);
+        WordItem branch2 = new WordItem("world", "default");
+        branch2.setLanguage(Language.FRENCH);
+
+        OrItem root = new OrItem();
+        root.addItem(branch1);
+        root.addItem(branch2);
+
+        Query query = new Query("?language=en&tracelevel=2");
+        query.getModel().getQueryTree().setRoot(root);
+
+        new Execution(new Chain<Searcher>(new CJKSearcher()),
+                      Execution.Context.createContextStub(indexFacts, TestLinguistics.INSTANCE)).search(query);
+
+        String trace = query.getContext(false).getTrace().toString();
+        assertFalse(trace.contains("Rewriting for CJK behavior for implicit phrases"),
+                "Trace should NOT contain CJK rewriting message when no CJK items: " + trace);
+    }
+
+    @Test
+    void testLabelIsPropagatedToSegmentWords() {
+        PhraseSegmentItem segment = createSegmentedItem(Language.CHINESE_SIMPLIFIED);
+        segment.setLabel("t1");
+
+        Query query = new Query("?language=zh-hans");
+        query.getModel().getQueryTree().setRoot(segment);
+
+        new Execution(new Chain<Searcher>(new CJKSearcher()),
+                      Execution.Context.createContextStub(indexFacts, TestLinguistics.INSTANCE)).search(query);
+
+        Item root = query.getModel().getQueryTree().getRoot();
+        assertTrue(root instanceof AndSegmentItem, "Segment should be transformed to SAND: " + root);
+        AndSegmentItem sand = (AndSegmentItem) root;
+        assertEquals(2, sand.getItemCount());
+        for (Iterator<Item> i = sand.getItemIterator(); i.hasNext(); )
+            assertEquals("t1", i.next().getLabel(), "Words should inherit the segment label");
+
+        // The label must resolve to the words' unique ids when the query is prepared
+        query.prepare();
+        var values = query.getRanking().getProperties().get("vespa.label.t1.id");
+        assertEquals(2, values.size(), "Both words should be addressable through the label");
+        assertEquals(String.valueOf(((WordItem) sand.getItem(0)).getUniqueID()), values.get(0));
+        assertEquals(String.valueOf(((WordItem) sand.getItem(1)).getUniqueID()), values.get(1));
+    }
+
+    @Test
+    void testLabelIsPropagatedFromImplicitPhrase() {
+        PhraseItem phrase = new PhraseItem();
+        phrase.setIndexName("default");
+        phrase.addItem(new WordItem("e", "default"));
+        phrase.addItem(new WordItem("fg", "default"));
+        phrase.setLanguage(Language.CHINESE_SIMPLIFIED);
+        phrase.setLabel("t1");
+
+        Query query = new Query("?language=zh-hans");
+        query.getModel().getQueryTree().setRoot(phrase);
+
+        new Execution(new Chain<Searcher>(new CJKSearcher()),
+                      Execution.Context.createContextStub(indexFacts, TestLinguistics.INSTANCE)).search(query);
+
+        Item root = query.getModel().getQueryTree().getRoot();
+        assertTrue(root instanceof AndItem, "Implicit phrase should be transformed to AND: " + root);
+        AndItem and = (AndItem) root;
+        assertEquals(2, and.getItemCount());
+        for (Iterator<Item> i = and.getItemIterator(); i.hasNext(); )
+            assertEquals("t1", i.next().getLabel(), "Words should inherit the phrase label");
     }
 
     private void assertTransformed(String queryString, String expected, Query.Type mode, Language actualLanguage,
@@ -70,11 +250,11 @@ public class CJKSearcherTestCase {
         Item root = parser.parse(new Parsable().setQuery(queryString).setLanguage(actualLanguage)).getRoot();
         assertFalse(root instanceof NullItem);
 
-        Query query = new Query("?language=" + queryLanguage.languageCode());
+        Query query = new Query("?language=" + queryLanguage.languageCode() + "&gram.match=phrase");
         query.getModel().getQueryTree().setRoot(root);
 
-        new Execution(new Chain<Searcher>(new CJKSearcher()),
-                      Execution.Context.createContextStub(indexFacts, linguistics)).search(query);
+        new Execution(new Chain<>(new NGramSearcher(linguistics), new CJKSearcher()),
+                                  Execution.Context.createContextStub(indexFacts, linguistics)).search(query);
         assertEquals(expected, query.getModel().getQueryTree().getRoot().toString());
     }
 

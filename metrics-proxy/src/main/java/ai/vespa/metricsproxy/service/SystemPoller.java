@@ -5,6 +5,7 @@ import ai.vespa.metricsproxy.metric.Metric;
 import ai.vespa.metricsproxy.metric.Metrics;
 import ai.vespa.metricsproxy.metric.model.MetricId;
 import com.yahoo.system.ProcessExecuter;
+import com.yahoo.text.Utf8;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -25,8 +26,6 @@ import java.util.TimerTask;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Logger;
 
-import static java.util.logging.Level.WARNING;
-
 /**
  * Class to get data from the system and update the services at given intervals.
  * TODO: rewrite to use ScheduledExecutorService or just call poll() directly.
@@ -42,6 +41,7 @@ public class SystemPoller {
     private static final MetricId CPU_UTIL = MetricId.toMetricId("cpu_util");
     private static final MetricId MEMORY_VIRT = MetricId.toMetricId("memory_virt");
     private static final MetricId MEMORY_RSS = MetricId.toMetricId("memory_rss");
+    private static final int pageSize = getPageSize();
 
     private final Duration interval;
     private final List<VespaService> services;
@@ -111,10 +111,6 @@ public class SystemPoller {
      * @return array[0] = memoryResident, array[1] = memoryVirtual (both in bytes)
      */
     static long[] getMemoryUsage(VespaService service) {
-        return getMemoryUsage(service, getPageSize());
-    }
-
-    static long[] getMemoryUsage(VespaService service, int pageSize) {
         String s;
         int pid = service.getPid();
 
@@ -208,7 +204,7 @@ public class SystemPoller {
     static long getPidJiffies(VespaService service) {
         int pid = service.getPid();
         try {
-            BufferedReader in = new BufferedReader(new FileReader("/proc/" + pid + "/stat"));
+            BufferedReader in = new BufferedReader(Utf8.createReader("/proc/" + pid + "/stat"));
             return getPidJiffies(in);
         } catch (FileNotFoundException ex) {
             log.log(Level.FINE, () -> "Unable to find pid " + pid + " in proc directory, for service " + service.getInstanceName());
@@ -236,7 +232,7 @@ public class SystemPoller {
 
     private static JiffiesAndCpus getTotalSystemJiffies() {
         try {
-            BufferedReader in = new BufferedReader(new FileReader("/proc/stat"));
+            BufferedReader in = new BufferedReader(Utf8.createReader("/proc/stat"));
             return getTotalSystemJiffies(in);
         } catch (FileNotFoundException ex) {
             log.log(Level.SEVERE, "Unable to open stat file", ex);
@@ -310,10 +306,8 @@ public class SystemPoller {
         try {
             return Integer.parseInt(new ProcessExecuter().exec("getconf PAGESIZE").getSecond().trim());
         } catch (IOException e) {
-            log.log(WARNING, "Getting page size failed, using fallback value 4096");
-            return 4096;
+            throw new RuntimeException("Getting page size failed");
         }
     }
-
 
 }

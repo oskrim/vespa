@@ -5,6 +5,7 @@ import com.yahoo.config.model.api.container.ContainerServiceType;
 import com.yahoo.config.model.deploy.DeployState;
 import com.yahoo.config.model.producer.AnyConfigProducer;
 import com.yahoo.config.model.producer.TreeConfigProducer;
+import com.yahoo.config.provision.ClusterSpec;
 import com.yahoo.container.ComponentsConfig;
 import com.yahoo.container.QrConfig;
 import com.yahoo.container.core.ContainerHttpConfig;
@@ -102,6 +103,7 @@ public abstract class Container extends AbstractService implements
 
         addChild(new SimpleComponent("com.yahoo.container.jdisc.ConfiguredApplication$ApplicationContext"));
         addEnvironmentVariable("VESPA_MALLOC_MMAP_THRESHOLD","0x1000000"); // 16M
+        setMallocImpl(deployState.getProperties().mallocImpl(Optional.of(ClusterSpec.Type.container)));
     }
 
     void setOwner(ContainerCluster<?> owner) { this.owner = owner; }
@@ -308,6 +310,8 @@ public abstract class Container extends AbstractService implements
                 .clustername(clusterName != null ? clusterName : "")
                 .nodeIndex(index)
                 .shutdown.dumpHeapOnTimeout(dumpHeapOnShutdownTimeout);
+        if (getHostResource() != null)
+            builder.availabilityZone(getHostResource().spec().availabilityZone().value());
     }
 
     /** Returns the jvm args set explicitly for this node */

@@ -1,15 +1,17 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
-#include <vespa/vespalib/gtest/gtest.h>
 #include <vespa/searchlib/common/matching_elements_fields.h>
+#include <vespa/vespalib/gtest/gtest.h>
 
 using namespace search;
 
 namespace {
 
-std::string str(const std::string &s) { return std::string(s.data(), s.size()); }
-
+std::string str(const std::string& s) {
+    return std::string(s.data(), s.size());
 }
+
+} // namespace
 
 struct MatchingElementsFieldsTest : ::testing::Test {
     MatchingElementsFields fields;
@@ -20,8 +22,10 @@ struct MatchingElementsFieldsTest : ::testing::Test {
         fields.add_mapping("bar", "bar.y");
         fields.add_field("baz");
     }
-    ~MatchingElementsFieldsTest() = default;
+    ~MatchingElementsFieldsTest() override;
 };
+
+MatchingElementsFieldsTest::~MatchingElementsFieldsTest() = default;
 
 TEST_F(MatchingElementsFieldsTest, require_that_field_can_be_identified) {
     EXPECT_TRUE(fields.has_field("foo"));

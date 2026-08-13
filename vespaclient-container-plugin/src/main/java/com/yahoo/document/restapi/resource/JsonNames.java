@@ -21,6 +21,9 @@ class JsonNames {
     static final SerializedString PERCENT_FINISHED = new SerializedString("percentFinished");
     static final SerializedString PUT              = new SerializedString("put");
     static final SerializedString REMOVE           = new SerializedString("remove");
+    static final SerializedString SESSION_STATS    = new SerializedString("sessionStats");
+    static final SerializedString SESSION_TRACE    = new SerializedString("sessionTrace");
+    static final SerializedString SEVERITY         = new SerializedString("severity");
+    static final SerializedString TEXT             = new SerializedString("text");
     static final SerializedString TOKEN            = new SerializedString("token");
-    static final SerializedString TRACE            = new SerializedString("trace");
 }

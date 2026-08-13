@@ -1,8 +1,10 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.filedistribution.status;
 
-import com.yahoo.json.Jackson;
 import ai.vespa.util.http.hc5.VespaHttpClientBuilder;
+import com.yahoo.json.Jackson;
+import com.yahoo.text.Text;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import io.airlift.airline.Command;
 import io.airlift.airline.HelpOption;
@@ -118,7 +120,7 @@ public class FileDistributionStatusClient {
     }
 
     private URI createStatusApiUri() {
-        String path = String.format("/application/v2/tenant/%s/application/%s/environment/%s/region/%s/instance/%s/filedistributionstatus",
+        String path = Text.format("/application/v2/tenant/%s/application/%s/environment/%s/region/%s/instance/%s/filedistributionstatus",
                                     tenantName, applicationName, environment, region, instanceName);
         try {
             return new URIBuilder()
@@ -146,7 +148,7 @@ public class FileDistributionStatusClient {
                     JsonNode fileReferencesArray = host.get("fileReferences");
                     int finished = 0;
                     for (JsonNode element : fileReferencesArray) {
-                        for (Iterator<Map.Entry<String, JsonNode>> it = element.fields(); it.hasNext(); ) {
+                        for (Iterator<Map.Entry<String, JsonNode>> it = element.properties().iterator(); it.hasNext(); ) {
                             Map.Entry<String, JsonNode> fileReferenceStatus = it.next();
                             if (fileReferenceStatus.getValue().asDouble() == 1.0)
                                 finished++;

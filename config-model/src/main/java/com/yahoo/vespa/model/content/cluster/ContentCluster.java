@@ -31,11 +31,12 @@ import com.yahoo.vespa.model.admin.clustercontroller.ClusterControllerContainer;
 import com.yahoo.vespa.model.admin.clustercontroller.ClusterControllerContainerCluster;
 import com.yahoo.vespa.model.admin.clustercontroller.ReindexingContext;
 import com.yahoo.vespa.model.admin.monitoring.Monitoring;
+import com.yahoo.vespa.model.builder.xml.dom.DomContentSearchClusterBuilder;
 import com.yahoo.vespa.model.builder.xml.dom.ModelElement;
 import com.yahoo.vespa.model.builder.xml.dom.NodesSpecification;
 import com.yahoo.vespa.model.container.Container;
-import com.yahoo.vespa.model.container.ContainerModel;
 import com.yahoo.vespa.model.content.ClusterControllerConfig;
+import com.yahoo.vespa.model.content.CoveragePolicy;
 import com.yahoo.vespa.model.content.ClusterResourceLimits;
 import com.yahoo.vespa.model.content.ContentSearch;
 import com.yahoo.vespa.model.content.ContentSearchCluster;
@@ -47,7 +48,6 @@ import com.yahoo.vespa.model.content.ReservedDocumentTypeNameValidator;
 import com.yahoo.vespa.model.content.StorageGroup;
 import com.yahoo.vespa.model.content.StorageNode;
 import com.yahoo.vespa.model.content.engines.PersistenceEngine;
-import com.yahoo.vespa.model.content.engines.ProtonEngine;
 import com.yahoo.vespa.model.content.storagecluster.StorageCluster;
 import com.yahoo.vespa.model.routing.DocumentProtocol;
 import com.yahoo.vespa.model.search.IndexedSearchCluster;
@@ -103,17 +103,17 @@ public class ContentCluster extends TreeConfigProducer<AnyConfigProducer> implem
 
     public enum DistributionMode { LEGACY, STRICT, LOOSE }
     private DistributionMode distributionMode;
+    private boolean usePseudoRowColumnDistribution = false;
 
     public static class Builder {
 
-        /** The admin model of this system or null if none (which only happens in tests) */
         private final Admin admin;
 
         public Builder(Admin admin) {
-            this.admin = admin;
+            this.admin = Objects.requireNonNull(admin, "admin cannot be null");
         }
-        
-        public ContentCluster build(Collection<ContainerModel> containers, ConfigModelContext context, Element w3cContentElement) {
+
+        public ContentCluster build(ConfigModelContext context, Element w3cContentElement) {
             ModelElement contentElement = new ModelElement(w3cContentElement);
             DeployState deployState = context.getDeployState();
             ModelElement documentsElement = contentElement.child("documents");
@@ -127,11 +127,9 @@ public class ContentCluster extends TreeConfigProducer<AnyConfigProducer> implem
             ContentCluster c = new ContentCluster(context.getParentProducer(), clusterId, documentDefinitions,
                                                   globallyDistributedDocuments, routingSelection,
                                                   deployState);
-            c.search = new ContentSearchCluster.Builder(documentDefinitions,
-                                                        globallyDistributedDocuments,
-                                                        fractionOfMemoryReserved(clusterId, containers))
+            c.search = new DomContentSearchClusterBuilder(documentDefinitions, globallyDistributedDocuments)
                     .build(deployState, c, contentElement.getXml());
-            c.persistenceFactory = new EngineFactoryBuilder().build(contentElement, c);
+            c.persistenceFactory = new EngineFactoryBuilder().build(contentElement, c.search);
             c.storageNodes = new StorageCluster.Builder().build(deployState, c, w3cContentElement);
             c.distributorNodes = new DistributorCluster.Builder(c).build(deployState, c, w3cContentElement);
             c.rootGroup = new StorageGroup.Builder(contentElement, context).buildRootGroup(deployState, c, c.search.isStreaming());
@@ -143,23 +141,12 @@ public class ContentCluster extends TreeConfigProducer<AnyConfigProducer> implem
             c.search.handleRedundancy(c.redundancy);
             setupSearchCluster(c.search, contentElement, deployState.getDeployLogger());
 
-            if (c.search.hasIndexed() && !(c.persistenceFactory instanceof ProtonEngine.Factory) )
-                throw new IllegalArgumentException("Indexed search requires proton as engine");
-
-            if (documentsElement != null) {
-                ModelElement e = documentsElement.child("document-processing");
-                if (e != null)
-                    setupDocumentProcessing(c, e);
-            } else if (c.persistenceFactory != null) {
-                throw new IllegalArgumentException("The <documents> element is mandatory in content cluster '" + clusterId + "'");
-            }
-
-            ModelElement tuning = contentElement.child("tuning");
-            if (tuning != null)
-                setupTuning(c, tuning);
-
             if (context.getParentProducer().getRoot() == null) return c;
+            if (documentsElement == null)
+                throw new IllegalArgumentException("The <documents> element is mandatory in content cluster '" + clusterId + "'");
 
+            setupDocumentProcessing(c, documentsElement.child("document-processing"));
+            setupTuning(c, contentElement.child("tuning"));
             addClusterControllers(context, contentElement, c, deployState);
             return c;
         }
@@ -184,7 +171,6 @@ public class ContentCluster extends TreeConfigProducer<AnyConfigProducer> implem
             var resourceLimits = new ClusterResourceLimits.Builder(isHosted,
                                                                    deployState.featureFlags().resourceLimitDisk(),
                                                                    resourceLimitMemory,
-                                                                   deployState.featureFlags().resourceLimitLowWatermarkDifference(),
                                                                    deployState.featureFlags().resourceLimitAddressSpace(),
                                                                    deployState.getDeployLogger())
                     .build(contentElement);
@@ -229,14 +215,17 @@ public class ContentCluster extends TreeConfigProducer<AnyConfigProducer> implem
             if (element.child("dispatch") != null)
                 logger.logApplicationPackage(WARNING, "The <dispatch> element is deprecated and ignored " +
                                                       "and will be removed in the next major release. " +
-                                                      " See https://docs.vespa.ai/en/reference/services-content.html#dispatch");
+                                                      " See https://docs.vespa.ai/en/reference/applications/services/content.html#dispatch");
 
             if (index.getTuning() == null)
                 index.setTuning(new Tuning(index));
             index.getTuning().dispatch = DomTuningDispatchBuilder.build(element, logger);
+            index.setCoveragePolicy(CoveragePolicy.from(element.childAsString("coverage-policy")).policy());
         }
 
         private void setupDocumentProcessing(ContentCluster c, ModelElement e) {
+            if (e == null) return;
+
             String docprocCluster = e.stringAttribute("cluster");
             if (docprocCluster != null && !docprocCluster.isBlank())
                 c.getSearch().getIndexingDocproc().setClusterName(docprocCluster.trim());
@@ -247,6 +236,8 @@ public class ContentCluster extends TreeConfigProducer<AnyConfigProducer> implem
         }
 
         private void setupTuning(ContentCluster c, ModelElement tuning) {
+            if (tuning == null) return;
+
             ModelElement distribution = tuning.child("distribution");
             if (distribution != null) {
                 String attr = distribution.stringAttribute("type");
@@ -261,6 +252,10 @@ public class ContentCluster extends TreeConfigProducer<AnyConfigProducer> implem
                         throw new IllegalArgumentException("Distribution type " + attr + " not supported.");
                     }
                 }
+                Boolean pseudoRowCol = distribution.childAsBoolean("pseudo-row-column-mode");
+                if (pseudoRowCol != null) {
+                    c.usePseudoRowColumnDistribution = pseudoRowCol;
+                }
             }
             ModelElement merges = tuning.child("merges");
             if (merges != null) {
@@ -269,17 +264,6 @@ public class ContentCluster extends TreeConfigProducer<AnyConfigProducer> implem
                     c.maxNodesPerMerge = attr;
                 }
             }
-        }
-
-        /** Returns of memory reserved on a host. Memory is reserved for the jvm if the cluster is combined */
-        private double fractionOfMemoryReserved(String clusterId, Collection<ContainerModel> containers) {
-            for (ContainerModel containerModel : containers) {
-                Optional<String> hostClusterId = containerModel.getCluster().getHostClusterId();
-                if (hostClusterId.isPresent() && hostClusterId.get().equals(clusterId) && containerModel.getCluster().getMemoryPercentage().isPresent()) {
-                    return containerModel.getCluster().getMemoryPercentage().get().ofContainerAvailable() * 0.01;
-                }
-            }
-            return 0.0;
         }
 
         private void validateGroupSiblings(String cluster, StorageGroup group) {
@@ -328,11 +312,12 @@ public class ContentCluster extends TreeConfigProducer<AnyConfigProducer> implem
             int warnThreshold = 100; // ... Not scientifically chosen
             if (!deployState.isHosted() && (aggr.highestNodeDistributionKey - aggr.nodeCount) >= warnThreshold) {
                 deployState.getDeployLogger().logApplicationPackage(WARNING,
-                        ("Content cluster '%s' has %d node(s), but the highest distribution key is %d. " +
-                         "Having much higher distribution keys than the number of nodes is not recommended, " +
-                         "as it may negatively affect performance. " +
-                         "See https://docs.vespa.ai/en/reference/services-content.html#node")
-                        .formatted(clusterId, aggr.nodeCount, aggr.highestNodeDistributionKey));
+                        String.format(java.util.Locale.ROOT,
+                                "Content cluster '%s' has %d node(s), but the highest distribution key is %d. " +
+                                "Having much higher distribution keys than the number of nodes is not recommended, " +
+                                "as it may negatively affect performance. " +
+                                "See https://docs.vespa.ai/en/reference/applications/services/content.html#node",
+                                clusterId, aggr.nodeCount, aggr.highestNodeDistributionKey));
             }
         }
 
@@ -350,7 +335,7 @@ public class ContentCluster extends TreeConfigProducer<AnyConfigProducer> implem
                 deployState.getDeployLogger().logApplicationPackage(INFO, "In cluster '" + cluster.getName() +
                         "': min-node-ratio-per-group should be set to 1 when there are 3 or more groups (" +
                         numberOfLeafGroups + ") and there are 3 or fewer nodes in the group (" + numberOfNodes + ")" +
-                        ". See https://docs.vespa.ai/en/reference/services-content.html?mode=cloud#min-node-ratio-per-group");
+                        ". See https://docs.vespa.ai/en/reference/applications/services/content.html#min-node-ratio-per-group");
             }
         }
 
@@ -358,7 +343,6 @@ public class ContentCluster extends TreeConfigProducer<AnyConfigProducer> implem
                                            ModelElement contentElement,
                                            ContentCluster contentCluster,
                                            DeployState deployState) {
-            if (admin == null) return; // only in tests
             if (contentCluster.getPersistence() == null) return;
 
             ClusterControllerContainerCluster clusterControllers;
@@ -393,6 +377,8 @@ public class ContentCluster extends TreeConfigProducer<AnyConfigProducer> implem
                 }
                 clusterControllers = admin.getClusterControllers();
             }
+            // Update node count so we can keep track of how many content nodes there are in total
+            clusterControllers.updateNodeCount(contentCluster.getNodeCount());
 
             addClusterControllerComponentsForThisCluster(clusterControllers, contentCluster);
             ReindexingContext reindexingContext = clusterControllers.reindexingContext();
@@ -414,7 +400,7 @@ public class ContentCluster extends TreeConfigProducer<AnyConfigProducer> implem
                 Collection<HostResource> hosts = spec.provision(admin.hostSystem(),
                                                                 ClusterSpec.Type.admin,
                                                                 ClusterSpec.Id.from(clusterName),
-                                                                context.getDeployLogger(),
+                                                                context.getDeployState(),
                                                                 true,
                                                                 context.clusterInfo().build())
                                                      .keySet();
@@ -491,8 +477,7 @@ public class ContentCluster extends TreeConfigProducer<AnyConfigProducer> implem
     }
 
     public static String getClusterId(ModelElement clusterElem) {
-        String clusterId = clusterElem.stringAttribute("id");
-        return clusterId != null ? clusterId : "content";
+        return clusterElem.stringAttribute("id", "content");
     }
 
     public String getName() { return clusterId; }
@@ -549,6 +534,7 @@ public class ContentCluster extends TreeConfigProducer<AnyConfigProducer> implem
         if (search.usesHierarchicDistribution()) {
             builder.active_per_leaf_group(true);
         }
+        builder.relative_node_order_scoring(usePseudoRowColumnDistribution);
     }
 
     int getNodeCount() {
@@ -722,6 +708,7 @@ public class ContentCluster extends TreeConfigProducer<AnyConfigProducer> implem
         clusterBuilder.ready_copies(config.ready_copies());
         clusterBuilder.redundancy(config.redundancy());
         clusterBuilder.initial_redundancy(config.initial_redundancy());
+        clusterBuilder.relative_node_order_scoring(config.relative_node_order_scoring());
 
         for (StorDistributionConfig.Group group : config.group()) {
             DistributionConfig.Cluster.Group.Builder groupBuilder = new DistributionConfig.Cluster.Group.Builder();

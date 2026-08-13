@@ -1,5 +1,6 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
+#include <vespa/searchlib/common/serialized_query_tree.h>
 #include <vespa/searchlib/query/streaming/phrase_query_node.h>
 #include <vespa/searchlib/query/streaming/query.h>
 #include <vespa/searchlib/query/streaming/queryterm.h>
@@ -8,21 +9,20 @@
 #include <vespa/searchlib/query/tree/stackdumpcreator.h>
 #include <vespa/vespalib/gtest/gtest.h>
 
-using search::query::QueryBuilder;
 using search::query::Node;
+using search::query::QueryBuilder;
 using search::query::SimpleQueryNodeTypes;
 using search::query::StackDumpCreator;
 using search::query::Weight;
 using search::streaming::HitList;
 using search::streaming::PhraseQueryNode;
 using search::streaming::Query;
-using search::streaming::QueryTerm;
 using search::streaming::QueryNodeRefList;
 using search::streaming::QueryNodeResultFactory;
+using search::streaming::QueryTerm;
 using search::streaming::QueryTermList;
 
-TEST(PhraseQueryNodeTest, test_phrase_evaluate)
-{
+TEST(PhraseQueryNodeTest, test_phrase_evaluate) {
     QueryBuilder<SimpleQueryNodeTypes> builder;
     builder.addPhrase(3, "", 0, Weight(0));
     {
@@ -30,12 +30,12 @@ TEST(PhraseQueryNodeTest, test_phrase_evaluate)
         builder.addStringTerm("b", "", 0, Weight(0));
         builder.addStringTerm("c", "", 0, Weight(0));
     }
-    Node::UP node = builder.build();
-    std::string stackDump = StackDumpCreator::create(*node);
+    Node::UP               node = builder.build();
+    auto                   serializedQueryTree = StackDumpCreator::createSerializedQueryTree(*node);
     QueryNodeResultFactory empty;
-    Query q(empty, stackDump);
-    auto& p = dynamic_cast<PhraseQueryNode&>(q.getRoot());
-    auto& terms = p.get_terms();
+    Query                  q(empty, *serializedQueryTree);
+    auto&                  p = dynamic_cast<PhraseQueryNode&>(q.getRoot());
+    auto&                  terms = p.get_terms();
     for (auto& qt : terms) {
         qt->resizeFieldId(1);
     }
@@ -56,9 +56,9 @@ TEST(PhraseQueryNodeTest, test_phrase_evaluate)
     terms[1]->add(2, 0, 1, 2);
     terms[2]->add(2, 0, 1, 4);
     // field 3
-    terms[0]->add(3, 0, 1, 0);
-    terms[1]->add(3, 0, 1, 1);
-    terms[2]->add(3, 0, 1, 2);
+    terms[0]->add(3, 31, 1, 0);
+    terms[1]->add(3, 31, 1, 1);
+    terms[2]->add(3, 31, 1, 2);
     // field 4 (not complete match)
     terms[0]->add(4, 0, 1, 1);
     terms[1]->add(4, 0, 1, 2);
@@ -76,9 +76,10 @@ TEST(PhraseQueryNodeTest, test_phrase_evaluate)
     EXPECT_EQ(0u, hits[1].element_id());
     EXPECT_EQ(4u, hits[1].position());
     EXPECT_EQ(3u, hits[2].field_id());
-    EXPECT_EQ(0u, hits[2].element_id());
+    EXPECT_EQ(31u, hits[2].element_id());
     EXPECT_EQ(0u, hits[2].position());
     EXPECT_TRUE(p.evaluate());
+    std::vector<uint32_t> element_ids;
+    p.get_element_ids(element_ids);
+    EXPECT_EQ((std::vector<uint32_t>{0, 31}), element_ids);
 }
-
-GTEST_MAIN_RUN_ALL_TESTS()

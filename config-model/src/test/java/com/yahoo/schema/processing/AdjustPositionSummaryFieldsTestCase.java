@@ -9,7 +9,12 @@ import com.yahoo.vespa.documentmodel.SummaryField;
 import com.yahoo.vespa.documentmodel.SummaryTransform;
 import org.junit.jupiter.api.Test;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class AdjustPositionSummaryFieldsTestCase {
 
@@ -19,8 +24,8 @@ public class AdjustPositionSummaryFieldsTestCase {
         model.addSummaryField("my_pos", PositionDataType.INSTANCE, null, "pos");
         model.resolve();
         model.assertSummaryField("my_pos", PositionDataType.INSTANCE, SummaryTransform.GEOPOS, "pos_zcurve");
-        model.assertSummaryField("my_pos.position", DataType.getArray(DataType.STRING), SummaryTransform.POSITIONS, "pos_zcurve");
-        model.assertSummaryField("my_pos.distance", DataType.INT, SummaryTransform.DISTANCE, "pos_zcurve");
+        model.assertNoSummaryField("my_pos.position");
+        model.assertNoSummaryField("my_pos.distance");
     }
 
     @Test
@@ -29,8 +34,8 @@ public class AdjustPositionSummaryFieldsTestCase {
         model.addSummaryField("my_pos", PositionDataType.INSTANCE, null, null);
         model.resolve();
         model.assertSummaryField("my_pos", PositionDataType.INSTANCE, SummaryTransform.GEOPOS, "my_pos_zcurve");
-        model.assertSummaryField("my_pos.position", DataType.getArray(DataType.STRING), SummaryTransform.POSITIONS, "my_pos_zcurve");
-        model.assertSummaryField("my_pos.distance", DataType.INT, SummaryTransform.DISTANCE, "my_pos_zcurve");
+        model.assertNoSummaryField("my_pos.position");
+        model.assertNoSummaryField("my_pos.distance");
     }
 
     @Test
@@ -77,8 +82,8 @@ public class AdjustPositionSummaryFieldsTestCase {
         model.addSummaryField("pos", PositionDataType.INSTANCE, null, "pos");
         model.resolve();
         model.assertSummaryField("pos", PositionDataType.INSTANCE, SummaryTransform.GEOPOS, "pos_zcurve");
-        model.assertSummaryField("pos.position", DataType.getArray(DataType.STRING), SummaryTransform.POSITIONS, "pos_zcurve");
-        model.assertSummaryField("pos.distance", DataType.INT, SummaryTransform.DISTANCE, "pos_zcurve");
+        model.assertNoSummaryField("pos.position");
+        model.assertNoSummaryField("pos.distance");
     }
 
     @Test

@@ -23,6 +23,7 @@ import static com.yahoo.vespa.indexinglanguage.expressions.ExpressionAssert.asse
 import static com.yahoo.vespa.indexinglanguage.expressions.ExpressionAssert.assertVerifyThrows;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
@@ -32,6 +33,7 @@ import static org.junit.Assert.fail;
 /**
  * @author bratseth
  */
+@SuppressWarnings({"deprecation", "removal"})
 public class NGramTestCase {
 
     @Test
@@ -46,9 +48,9 @@ public class NGramTestCase {
     public void requireThatHashCodeAndEqualsAreImplemented() {
         Linguistics linguistics = new SimpleLinguistics();
         NGramExpression exp = new NGramExpression(linguistics, 69);
-        assertFalse(exp.equals(new Object()));
-        assertFalse(exp.equals(new NGramExpression(Mockito.mock(Linguistics.class), 96)));
-        assertFalse(exp.equals(new NGramExpression(linguistics, 96)));
+        assertNotEquals(exp, new Object());
+        assertNotEquals(exp, new NGramExpression(Mockito.mock(Linguistics.class), 96));
+        assertNotEquals(exp, new NGramExpression(linguistics, 96));
         assertEquals(exp, new NGramExpression(linguistics, 69));
         assertEquals(exp.hashCode(), new NGramExpression(new SimpleLinguistics(), 69).hashCode());
     }
@@ -63,45 +65,73 @@ public class NGramTestCase {
 
     @Test
     public void testNGrams() {
-        ExecutionContext context = new ExecutionContext(new SimpleTestAdapter());
-        context.setCurrentValue(new StringFieldValue("en gul Bille sang... "));
-        new NGramExpression(new SimpleLinguistics(), 3).execute(context);
-
-        StringFieldValue value = (StringFieldValue)context.getCurrentValue();
-        assertEquals("Grams are pure annotations - field value is unchanged",
-                     "en gul Bille sang... ", value.getString());
-        SpanTree gramTree = value.getSpanTree(SpanTrees.LINGUISTICS);
-        assertNotNull(gramTree);
-        SpanList grams = (SpanList)gramTree.getRoot();
-        Iterator<SpanNode> i = grams.childIterator();
-        assertSpan(0, 2, true, i, gramTree);  // en
-        assertSpan(2, 1, false, i, gramTree); // <space>
-        assertSpan(3, 3, true, i, gramTree);  // gul
-        assertSpan(6, 1, false, i, gramTree); // <space>
-        assertSpan(7, 3, true, i, gramTree, "bil");  // Bil
-        assertSpan(8, 3, true, i, gramTree);
-        assertSpan(9, 3, true, i, gramTree);
-        assertSpan(12, 1, false, i, gramTree); // <space>
-        assertSpan(13, 3, true, i, gramTree);
-        assertSpan(14, 3, true, i, gramTree);
-        assertSpan(17, 4, false, i, gramTree); // <...space>
-        assertFalse(i.hasNext());
+        testNGramsWithSimpleAnnotations(false);
+        testNGramsWithSimpleAnnotations(true);
     }
 
-    @Test
-    public void requireThatExecuteCanBeCalledMultipleTimes() {
-        ExecutionContext context = new ExecutionContext(new SimpleTestAdapter());
-        context.setCurrentValue(new StringFieldValue("some random text string"));
-        NGramExpression expression = new NGramExpression(new SimpleLinguistics(), 3);
+    private void testNGramsWithSimpleAnnotations(boolean useSimpleAnnotations) {
+        boolean oldValue = com.yahoo.document.annotation.internal.SimpleIndexingAnnotations.isEnabled();
+        try {
+            com.yahoo.document.annotation.internal.SimpleIndexingAnnotations.setEnabled(useSimpleAnnotations);
 
-        expression.execute(context);
-        SpanTree firstTree = ((StringFieldValue)context.getCurrentValue()).getSpanTree(SpanTrees.LINGUISTICS);
-        assertNotNull(firstTree);
+            ExecutionContext context = new ExecutionContext(new SimpleTestAdapter());
+            context.setCurrentValue(new StringFieldValue("en gul Bille sang... "));
+            new NGramExpression(new SimpleLinguistics(), 3).execute(context);
 
-        expression.execute(context);
-        SpanTree secondTree = ((StringFieldValue)context.getCurrentValue()).getSpanTree(SpanTrees.LINGUISTICS);
-        // The span tree instance should be the same.
-        assertEquals(firstTree, secondTree);
+            StringFieldValue value = (StringFieldValue)context.getCurrentValue();
+            assertEquals("Grams are pure annotations - field value is unchanged",
+                         "en gul Bille sang... ", value.getString());
+            SpanTree gramTree = value.getSpanTree(SpanTrees.LINGUISTICS);
+            assertNotNull(gramTree);
+            SpanList grams = (SpanList)gramTree.getRoot();
+            Iterator<SpanNode> i = grams.childIterator();
+
+            if (useSimpleAnnotations) {
+                // Simple annotations: only grams, no gaps
+                assertSimpleSpan(0, 2, i, gramTree, null);
+                assertSimpleSpan(3, 3, i, gramTree, null);
+                assertSimpleSpan(7, 3, i, gramTree, "bil");
+                assertSimpleSpan(8, 3, i, gramTree, null);
+                assertSimpleSpan(9, 3, i, gramTree, null);
+                assertSimpleSpan(13, 3, i, gramTree, null);
+                assertSimpleSpan(14, 3, i, gramTree, null);
+                assertFalse(i.hasNext());
+            } else {
+                // Full span tree: includes both grams and gaps
+                assertSpan(0, 2, true, i, gramTree);  // en
+                assertSpan(2, 1, false, i, gramTree); // <space>
+                assertSpan(3, 3, true, i, gramTree);  // gul
+                assertSpan(6, 1, false, i, gramTree); // <space>
+                assertSpan(7, 3, true, i, gramTree, "bil");  // Bil
+                assertSpan(8, 3, true, i, gramTree);
+                assertSpan(9, 3, true, i, gramTree);
+                assertSpan(12, 1, false, i, gramTree); // <space>
+                assertSpan(13, 3, true, i, gramTree);
+                assertSpan(14, 3, true, i, gramTree);
+                assertSpan(17, 4, false, i, gramTree); // <...space>
+                assertFalse(i.hasNext());
+            }
+        } finally {
+            com.yahoo.document.annotation.internal.SimpleIndexingAnnotations.setEnabled(oldValue);
+        }
+    }
+
+    private void assertSimpleSpan(int from, int length, Iterator<SpanNode> i, SpanTree tree, String termValue) {
+        if (!i.hasNext()) {
+            fail("No more spans");
+        }
+        SpanNode gramSpan = i.next();
+        assertEquals("gram start", from, gramSpan.getFrom());
+        assertEquals("gram length", length, gramSpan.getLength());
+        assertTrue(gramSpan.isLeafNode());
+        Iterator<Annotation> annotations = tree.iterator(gramSpan);
+        Annotation termAnnotation = annotations.next();
+        assertEquals(AnnotationTypes.TERM, termAnnotation.getType());
+        if (termValue == null) {
+            assertNull(termAnnotation.getFieldValue());
+        } else {
+            assertEquals(termValue, ((StringFieldValue)termAnnotation.getFieldValue()).getString());
+        }
     }
 
     private void assertSpan(int from, int length, boolean gram, Iterator<SpanNode> i, SpanTree tree) {

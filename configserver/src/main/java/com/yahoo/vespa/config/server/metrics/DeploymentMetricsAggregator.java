@@ -15,6 +15,7 @@ public class DeploymentMetricsAggregator {
     private Double documentCount;
     private ResourceUsage memoryUsage;
     private ResourceUsage diskUsage;
+    private int feedBlockedNodes = 0;
 
     public synchronized DeploymentMetricsAggregator addFeedLatency(double sum, double count) {
         this.feed = combineLatency(this.feed, sum, count);
@@ -43,6 +44,11 @@ public class DeploymentMetricsAggregator {
 
     public synchronized DeploymentMetricsAggregator addMemoryUsage(double feedBlockUtil, double feedBlockLimit) {
         this.memoryUsage = combineResourceUtil(this.memoryUsage, feedBlockUtil, feedBlockLimit);
+        return this;
+    }
+
+    public synchronized DeploymentMetricsAggregator setFeedBlockedNodes(int feedBlockedNodes) {
+        this.feedBlockedNodes = feedBlockedNodes;
         return this;
     }
 
@@ -86,12 +92,17 @@ public class DeploymentMetricsAggregator {
         return Optional.ofNullable(diskUsage);
     }
 
+    public int feedBlockedNodes() {
+        return feedBlockedNodes;
+    }
 
     private static LatencyMetrics combineLatency(LatencyMetrics metricsOrNull, double sum, double count) {
+        if (count == 0) return metricsOrNull;
         return Optional.ofNullable(metricsOrNull).orElseGet(LatencyMetrics::new).combine(sum, count);
     }
 
     private static ResourceUsage combineResourceUtil(ResourceUsage resourceUsageOrNull, double util, double limit) {
+        if (limit <= 0.0) return resourceUsageOrNull;
         return Optional.ofNullable(resourceUsageOrNull).orElseGet(ResourceUsage::new).combine(util, limit);
     }
 

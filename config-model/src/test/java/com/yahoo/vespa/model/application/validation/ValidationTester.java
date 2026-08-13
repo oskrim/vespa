@@ -6,14 +6,10 @@ import com.yahoo.config.application.api.ApplicationPackage;
 import com.yahoo.config.model.api.ApplicationClusterEndpoint;
 import com.yahoo.config.model.api.ConfigChangeAction;
 import com.yahoo.config.model.api.ContainerEndpoint;
-import com.yahoo.config.model.api.Provisioned;
 import com.yahoo.config.model.deploy.DeployState;
 import com.yahoo.config.model.deploy.TestProperties;
 import com.yahoo.config.model.provision.InMemoryProvisioner;
 import com.yahoo.config.model.test.MockApplicationPackage;
-import com.yahoo.config.provision.Environment;
-import com.yahoo.config.provision.RegionName;
-import com.yahoo.config.provision.SystemName;
 import com.yahoo.config.provision.Zone;
 import com.yahoo.vespa.model.VespaModel;
 import com.yahoo.vespa.model.application.validation.Validation.Execution;
@@ -41,6 +37,7 @@ public class ValidationTester {
 
     private final TestProperties properties;
     private final InMemoryProvisioner hostProvisioner;
+    private String schema = null;
 
     /** Creates a validation tester with 1 node available (in addition to cluster controllers) */
     public ValidationTester() {
@@ -69,6 +66,11 @@ public class ValidationTester {
         hostProvisioner.setEnvironment(zone.environment());
     }
 
+    /** Sets the schema to use in deploy invocations. This oveerides the default music and book schemas. */
+    public void setSchema(String schema) {
+        this.schema = schema;
+    }
+
     /**
      * Deploys an application
      *
@@ -85,10 +87,9 @@ public class ValidationTester {
                                                              String validationOverrides,
                                                              String... containerCluster) {
         Instant now = LocalDate.parse("2000-01-01", DateTimeFormatter.ISO_DATE).atStartOfDay().atZone(ZoneOffset.UTC).toInstant();
-        Provisioned provisioned = hostProvisioner.startProvisionedRecording();
         ApplicationPackage newApp = new MockApplicationPackage.Builder()
                 .withServices(services)
-                .withSchemas(List.of(MUSIC_SCHEMA, BOOK_SCHEMA))
+                .withSchemas(schema != null ? List.of(schema) : List.of(MUSIC_SCHEMA, BOOK_SCHEMA))
                 .withValidationOverrides(validationOverrides)
                 .build();
         VespaModelCreatorWithMockPkg newModelCreator = new VespaModelCreatorWithMockPkg(newApp);
@@ -103,7 +104,6 @@ public class ValidationTester {
                                                              .applicationPackage(newApp)
                                                              .properties(properties)
                                                              .modelHostProvisioner(hostProvisioner)
-                                                             .provisioned(provisioned)
                                                              .now(now);
         if (previousModel != null)
             deployStateBuilder.previousModel(previousModel);

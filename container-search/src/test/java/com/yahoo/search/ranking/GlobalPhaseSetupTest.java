@@ -1,6 +1,7 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.search.ranking;
 
+import ai.vespa.modelintegration.evaluator.OnnxRuntime;
 import com.yahoo.config.subscription.ConfigGetter;
 import com.yahoo.filedistribution.fileacquirer.MockFileAcquirer;
 import com.yahoo.tensor.Tensor;
@@ -11,7 +12,9 @@ import com.yahoo.vespa.config.search.core.RankingExpressionsConfig;
 
 import org.junit.jupiter.api.Test;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class GlobalPhaseSetupTest {
     private static final String CONFIG_DIR = "src/test/resources/config/";
@@ -138,10 +141,25 @@ public class GlobalPhaseSetupTest {
         assertEquals("withIndirect(foo1)", wantMF.get(3).matchFeatureName());
     }
 
+    @Test void labeledBm25GlobalPhaseSetup() {
+        RankProfilesConfig rpCfg = readConfig("bm25_label_global_phase");
+        assertEquals(1, rpCfg.rankprofile().size());
+        RankProfilesEvaluator rpEvaluator = createEvaluator(rpCfg);
+        var setup = GlobalPhaseSetup.maybeMakeSetup(rpCfg.rankprofile().get(0), rpEvaluator);
+        assertNotNull(setup);
+        assertEquals(1, setup.matchFeaturesToHide.size());
+        assertTrue(setup.matchFeaturesToHide.contains("bm25(\"field:myfield\",\"label:mylabel\")"));
+        assertEquals(1, setup.globalPhaseEvalSpec.fromMF().size());
+        assertEquals("bm25(\"field:myfield\",\"label:mylabel\")",
+                     setup.globalPhaseEvalSpec.fromMF().get(0).inputName());
+    }
+
     private RankProfilesEvaluator createEvaluator(RankProfilesConfig config) {
         RankingConstantsConfig constantsConfig = new RankingConstantsConfig.Builder().build();
         RankingExpressionsConfig expressionsConfig = new RankingExpressionsConfig.Builder().build();
         OnnxModelsConfig onnxModelsConfig = new OnnxModelsConfig.Builder().build();
-        return new RankProfilesEvaluator(config, constantsConfig, expressionsConfig, onnxModelsConfig, MockFileAcquirer.returnFile(null));
+        return new RankProfilesEvaluator(
+                config, constantsConfig, expressionsConfig, onnxModelsConfig, MockFileAcquirer.returnFile(null),
+                OnnxRuntime.testInstance());
     }
 }

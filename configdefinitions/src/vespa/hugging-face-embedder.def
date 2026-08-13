@@ -26,6 +26,7 @@ normalize bool default=false
 
 poolingStrategy enum { cls, mean, none } default=mean
 
+# TODO: Parameters below are moved to onnx-evaluator.def, remove them after 2026-01-01
 # Settings for ONNX model evaluation
 transformerExecutionMode enum { parallel, sequential } default=sequential
 transformerInterOpThreads int default=1
@@ -33,5 +34,5 @@ transformerIntraOpThreads int default=-4
 # GPU device id, -1 for CPU
 transformerGpuDevice      int default=0
 
-# Internal ONNX config file, e.g for Triton specific configuration
-transformerOnnxConfigPath  path optional
+# Path to model config file, e.g. for Triton. Internal and undocumented for now.
+internalModelConfigPath path optional

@@ -1,6 +1,7 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.prelude.query;
 
+import ai.vespa.searchlib.searchprotocol.protobuf.SearchProtocol;
 import com.yahoo.compress.IntegerCompressor;
 import com.yahoo.prelude.query.textualrepresentation.Discloser;
 
@@ -35,14 +36,14 @@ public class StringInItem extends InItem {
     }
 
     @Override
-    public int encode(ByteBuffer buffer) {
-        encodeThis(buffer);
+    public int encode(ByteBuffer buffer, SerializationContext context) {
+        encodeThis(buffer, context);
         return 1;
     }
 
     @Override
-    protected void encodeThis(ByteBuffer buffer) {
-        super.encodeThis(buffer);
+    protected void encodeThis(ByteBuffer buffer, SerializationContext context) {
+        super.encodeThis(buffer, context);
         IntegerCompressor.putCompressedPositiveNumber(tokens.size(), buffer);
         putString(getIndexName(), buffer);
         for (var entry : tokens) {
@@ -107,6 +108,18 @@ public class StringInItem extends InItem {
         StringInItem clone = (StringInItem) super.clone();
         clone.tokens = new HashSet<>(tokens);
         return clone;
+    }
+
+    @Override
+    SearchProtocol.QueryTreeItem toProtobuf(SerializationContext context) {
+        var builder = SearchProtocol.ItemStringIn.newBuilder();
+        builder.setProperties(ToProtobuf.buildTermProperties(this, getIndexName()));
+        for (String token : tokens) {
+            builder.addWords(token);
+        }
+        return SearchProtocol.QueryTreeItem.newBuilder()
+                .setItemStringIn(builder.build())
+                .build();
     }
 
 }

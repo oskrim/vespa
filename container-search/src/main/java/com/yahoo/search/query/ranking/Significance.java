@@ -19,10 +19,11 @@ public class Significance implements Cloneable {
     /** The type representing the property arguments consumed by this */
     private static final QueryProfileType argumentType;
 
+    public static final String SIGNIFICANCE = "significance";
     public static final String USE_MODEL = "useModel";
 
     static {
-        argumentType = new QueryProfileType(Ranking.SECOND_PHASE);
+        argumentType = new QueryProfileType(SIGNIFICANCE);
         argumentType.setStrict(true);
         argumentType.setBuiltin(true);
         argumentType.addField(new FieldDescription(USE_MODEL, FieldType.booleanType));
@@ -48,11 +49,9 @@ public class Significance implements Cloneable {
     @Override
     public boolean equals(Object o) {
         if (o == this) return true;
-        if (o instanceof Significance other) {
-            if ( ! Objects.equals(this.useModel, other.useModel)) return false;
-            return true;
-        }
-        return false;
+        if ( ! (o instanceof Significance other)) return false;
+        if ( ! Objects.equals(this.useModel, other.useModel)) return false;
+        return true;
     }
 
     @Override

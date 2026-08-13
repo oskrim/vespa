@@ -5,6 +5,7 @@ import ai.vespa.cloud.ZoneInfo;
 import com.google.common.collect.ImmutableMap;
 import com.yahoo.container.jdisc.HttpRequest;
 import com.yahoo.language.process.Embedder;
+import com.yahoo.prelude.query.SerializationContext;
 import com.yahoo.prelude.query.textualrepresentation.TextualQueryRepresentation;
 import com.yahoo.processing.request.CompoundName;
 import com.yahoo.search.schema.SchemaInfo;
@@ -48,6 +49,7 @@ import com.yahoo.yolean.Exceptions;
 import java.net.URI;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -103,7 +105,9 @@ public class Query extends com.yahoo.processing.Request implements Cloneable {
         SELECT(7, "select"),
         WEAKAND(8, "weakAnd"),
         TOKENIZE(9, "tokenize"),
-        LINGUISTICS(10, "linguistics");
+        LINGUISTICS(10, "linguistics"),
+        NEAR(11, "near"),
+        ONEAR(12, "onear");
 
         private final int intValue;
         private final String stringValue;
@@ -154,6 +158,9 @@ public class Query extends com.yahoo.processing.Request implements Cloneable {
 
     /** The synchronous view of the JDisc request causing this query */
     private final HttpRequest httpRequest;
+
+    /** Request map used to construct this query */
+    private final Map<String, String> requestMap;
 
     /** The context, or null if there is no context */
     private QueryContext context = null;
@@ -228,17 +235,17 @@ public class Query extends com.yahoo.processing.Request implements Cloneable {
     private static final Map<String, CompoundName> propertyAliases;
     static {
         Map<String, CompoundName> propertyAliasesBuilder = new HashMap<>();
-        addAliases(Query.getArgumentType(), "", propertyAliasesBuilder);
+        addAliases(Query.getArgumentType(), CompoundName.empty, propertyAliasesBuilder);
         propertyAliases = ImmutableMap.copyOf(propertyAliasesBuilder);
     }
-    private static void addAliases(QueryProfileType arguments, String prefix, Map<String, CompoundName> aliases) {
+    private static void addAliases(QueryProfileType arguments, CompoundName prefix, Map<String, CompoundName> aliases) {
         for (FieldDescription field : arguments.fields().values()) {
             for (String alias : field.getAliases())
-                aliases.put(alias, CompoundName.from(append(prefix, field.getName())));
+                aliases.put(alias, prefix.append(field.getName()));
             if (field.getType() instanceof QueryProfileFieldType) {
                 var type = ((QueryProfileFieldType) field.getType()).getQueryProfileType();
                 if (type != null)
-                    addAliases(type, append(prefix, type.getComponentIdAsCompoundName().toString()), aliases);
+                    addAliases(type, prefix.append(type.getComponentIdAsCompoundName().toString()), aliases);
             }
         }
     }
@@ -261,18 +268,18 @@ public class Query extends com.yahoo.processing.Request implements Cloneable {
 
     /** Returns an unmodifiable list of all the native properties under a Query */
     public static final List<CompoundName> nativeProperties =
-            List.copyOf(namesUnder("", Query.getArgumentType()));
+            List.copyOf(namesUnder(CompoundName.empty, Query.getArgumentType()));
 
-    private static List<CompoundName> namesUnder(String prefix, QueryProfileType type) {
+    private static List<CompoundName> namesUnder(CompoundName prefix, QueryProfileType type) {
         if (type == null) return List.of(); // Names not known statically
         List<CompoundName> names = new ArrayList<>();
         for (Map.Entry<String, FieldDescription> field : type.fields().entrySet()) {
-            String name = append(prefix, field.getKey());
+            var name = prefix.append(field.getKey());
             if (field.getValue().getType() instanceof QueryProfileFieldType) {
                 names.addAll(namesUnder(name, ((QueryProfileFieldType) field.getValue().getType()).getQueryProfileType()));
             }
             else {
-                names.add(CompoundName.from(name));
+                names.add(name);
             }
         }
         return names;
@@ -332,6 +339,7 @@ public class Query extends com.yahoo.processing.Request implements Cloneable {
     public Query(HttpRequest request, Map<String, String> requestMap, CompiledQueryProfile queryProfile) {
         super(new QueryPropertyAliases(propertyAliases));
         this.httpRequest = request;
+        this.requestMap = Collections.unmodifiableMap(requestMap);
         init(requestMap, queryProfile, Embedder.throwsOnUse.asMap(), ZoneInfo.defaultInfo(), SchemaInfo.empty());
     }
 
@@ -354,6 +362,7 @@ public class Query extends com.yahoo.processing.Request implements Cloneable {
                   SchemaInfo schemaInfo) {
         super(new QueryPropertyAliases(propertyAliases));
         this.httpRequest = request;
+        this.requestMap = Collections.unmodifiableMap(requestMap);
         init(requestMap, queryProfile, embedders, zoneInfo, schemaInfo);
     }
 
@@ -412,6 +421,7 @@ public class Query extends com.yahoo.processing.Request implements Cloneable {
         super(query.properties().clone());
         this.startTime = startTime;
         this.httpRequest = query.httpRequest;
+        this.requestMap = query.requestMap;
         query.copyPropertiesTo(this);
     }
 
@@ -438,31 +448,65 @@ public class Query extends com.yahoo.processing.Request implements Cloneable {
     }
 
     /**
-     * For each field in the given query profile type, take the corresponding value from originalProperties
+     * For each field in the given query profile type, take the corresponding value from sourceProperties and
      * (if any) set it to properties(), recursively.
      */
-    private void setFrom(String prefix, Properties originalProperties, QueryProfileType arguments, Map<String, String> context) {
+    private void setFrom(String prefix, Properties sourceProperties, QueryProfileType arguments,
+                         Map<String, String> context) {
         prefix = append(prefix, getPrefix(arguments).toString());
         for (FieldDescription field : arguments.fields().values()) {
-            if (field.getType() == FieldType.genericQueryProfileType) { // Generic map
-                String fullName = append(prefix, field.getCompoundName().toString());
-                for (Map.Entry<String, Object> entry : originalProperties.listProperties(CompoundName.from(fullName), context).entrySet()) {
-                    properties().set(CompoundName.from(append(fullName, entry.getKey())), entry.getValue(), context);
-                }
+            if (field.getType() == FieldType.genericQueryProfileType) {
+                setGenericMapFrom(prefix, sourceProperties, field, context);
             }
             else if (field.getType() instanceof QueryProfileFieldType) { // Nested arguments
-                setFrom(prefix, originalProperties, ((QueryProfileFieldType)field.getType()).getQueryProfileType(), context);
+                setFrom(prefix, sourceProperties, ((QueryProfileFieldType)field.getType()).getQueryProfileType(), context);
             }
             else {
-                CompoundName fullName = prefix.isEmpty()
-                        ? field.getCompoundName()
-                        : CompoundName.from(append(prefix, field.getCompoundName().toString()));
-                Object value = originalProperties.get(fullName, context);
-                if (value != null) {
-                    properties().set(fullName, value, context);
-                }
+                setFieldFrom(prefix, sourceProperties, field, context);
             }
         }
+    }
+
+    private void setGenericMapFrom(String prefix, Properties sourceProperties, FieldDescription field,
+                                   Map<String, String> context) {
+        var fullName = CompoundName.from(append(prefix, field.getCompoundName().toString()));
+        setAllValuesFrom(sourceProperties, fullName, fullName, true, context);
+        if (fullName.size() == 2 && fullName.first().equals("ranking")) {
+            if (fullName.get(1).equals("features")) {
+                setAllValuesFrom(sourceProperties, CompoundName.from("input"), fullName, false, context);
+                setAllValuesFrom(sourceProperties, CompoundName.from("rankfeature"), fullName, false, context);
+            }
+            else if (fullName.get(1).equals("properties")) {
+                setAllValuesFrom(sourceProperties, CompoundName.from("rankproperty"), fullName, false, context);
+            }
+        }
+    }
+
+    private void setAllValuesFrom(Properties sourceProperties, CompoundName sourceName, CompoundName fullName, boolean includeRoot,
+                                  Map<String, String> context) {
+        for (Map.Entry<String, Object> entry : sourceProperties.listProperties(sourceName, context).entrySet()) {
+            if (! includeRoot && entry.getKey().isEmpty()) continue;
+            properties().set(fullName.append(entry.getKey()), entry.getValue(), context);
+        }
+    }
+
+    private void setFieldFrom(String prefix, Properties sourceProperties, FieldDescription field,
+                              Map<String, String> context) {
+        CompoundName fullName = prefix.isEmpty()
+                                ? field.getCompoundName()
+                                : CompoundName.from(append(prefix, field.getCompoundName().toString()));
+        if (setFieldFrom(sourceProperties, fullName, fullName, context)) return;
+        for (String alias : field.getAliases()) {
+            if (setFieldFrom(sourceProperties, new CompoundName(alias), fullName, context)) return;
+        }
+    }
+
+    private boolean setFieldFrom(Properties sourceProperties, CompoundName sourceName, CompoundName name,
+                                 Map<String, String> context) {
+        Object value = sourceProperties.get(sourceName, context);
+        if (value == null) return false;
+        properties().set(name, value, context);
+        return true;
     }
 
     /** Calls properties#set on all entries in requestMap */
@@ -655,8 +699,8 @@ public class Query extends com.yahoo.processing.Request implements Cloneable {
      * @param buffer the buffer to encode the query to
      * @return the number of encoded query tree items
      */
-    public int encode(ByteBuffer buffer) {
-        return model.getQueryTree().encode(buffer);
+    public int encode(ByteBuffer buffer, SerializationContext context) {
+        return model.getQueryTree().encode(buffer, context);
     }
 
     /** Calls getTrace().trace(message, traceLevel). */
@@ -711,11 +755,11 @@ public class Query extends com.yahoo.processing.Request implements Cloneable {
 
     /**
      * Serialize this query as YQL+. This method will never throw exceptions,
-     * but instead return a human readable error message if a problem occurred while
+     * but instead return a human-readable error message if a problem occurred while
      * serializing the query. Hits and offset information will be included if
      * different from default, while linguistics metadata are not added.
      *
-     * @return a valid YQL+ query string or a human readable error message
+     * @return a valid YQL+ query string or a human-readable error message
      * @see Query#yqlRepresentation(boolean)
      */
     public String yqlRepresentation() {
@@ -895,7 +939,7 @@ public class Query extends com.yahoo.processing.Request implements Cloneable {
         clone.select = select.cloneFor(clone);
         clone.ranking = ranking.cloneFor(clone);
         clone.trace = trace.cloneFor(clone);
-        clone.presentation = (Presentation) presentation.clone();
+        clone.presentation = presentation.clone();
         clone.context = getContext(true).cloneFor(clone);
 
         // Correct the Query instance in properties
@@ -933,6 +977,14 @@ public class Query extends com.yahoo.processing.Request implements Cloneable {
      * when running with queries from the network.
      */
     public HttpRequest getHttpRequest() { return httpRequest; }
+
+    /**
+     * Return the request map used to construct this query.
+     * Falls back to the HTTP request parameters if no request map was explicitly specified.
+     */
+    public Map<String, String> getRequestMap() {
+        return this.requestMap != null ? this.requestMap : httpRequest.propertyMap();
+    }
 
     public URI getUri() { return httpRequest != null ? httpRequest.getUri() : null; }
 

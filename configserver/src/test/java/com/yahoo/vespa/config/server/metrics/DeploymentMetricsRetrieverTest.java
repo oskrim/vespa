@@ -8,9 +8,12 @@ import com.yahoo.config.model.api.Model;
 import com.yahoo.config.model.api.ServiceInfo;
 import com.yahoo.config.provision.AllocatedHosts;
 import com.yahoo.config.provision.ApplicationId;
+import com.yahoo.config.provision.NodeSuspensionProvider;
 import com.yahoo.vespa.config.ConfigKey;
 import com.yahoo.vespa.config.buildergen.ConfigDefinition;
 import com.yahoo.vespa.config.server.application.Application;
+import com.yahoo.vespa.flags.Flags;
+import com.yahoo.vespa.flags.InMemoryFlagSource;
 import org.junit.Test;
 
 import java.net.URI;
@@ -22,6 +25,7 @@ import java.util.Map;
 import java.util.Set;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 
 /**
  * @author olaa
@@ -35,10 +39,77 @@ public class DeploymentMetricsRetrieverTest {
         Application application = new Application(mockModel, null, 0,
                                                   null, null, ApplicationId.fromSerializedForm("tenant:app:instance"));
 
-        DeploymentMetricsRetriever clusterMetricsRetriever = new DeploymentMetricsRetriever(mockMetricsRetriever);
+        DeploymentMetricsRetriever clusterMetricsRetriever =
+                new DeploymentMetricsRetriever(mockMetricsRetriever, NodeSuspensionProvider.EMPTY, new InMemoryFlagSource());
         clusterMetricsRetriever.getMetrics(application);
 
         assertEquals(2, mockMetricsRetriever.hosts.size()); // Verify that logserver was ignored
+    }
+
+    @Test
+    public void defaultConsumerIsVespa() {
+        MockModel mockModel = new MockModel(mockHosts());
+        MockDeploymentMetricsRetriever mockMetricsRetriever = new MockDeploymentMetricsRetriever();
+        Application application = new Application(mockModel, null, 0,
+                                                  null, null, ApplicationId.fromSerializedForm("tenant:app:instance"));
+
+        DeploymentMetricsRetriever clusterMetricsRetriever =
+                new DeploymentMetricsRetriever(mockMetricsRetriever, NodeSuspensionProvider.EMPTY, new InMemoryFlagSource());
+        clusterMetricsRetriever.getMetrics(application);
+
+        assertTrue(mockMetricsRetriever.hosts.stream().allMatch(uri -> uri.getQuery().equals("consumer=Vespa")));
+    }
+
+    @Test
+    public void consumerCanBeOverriddenByFlag() {
+        MockModel mockModel = new MockModel(mockHosts());
+        MockDeploymentMetricsRetriever mockMetricsRetriever = new MockDeploymentMetricsRetriever();
+        Application application = new Application(mockModel, null, 0,
+                                                  null, null, ApplicationId.fromSerializedForm("tenant:app:instance"));
+
+        InMemoryFlagSource flagSource = new InMemoryFlagSource()
+                .withStringFlag(Flags.DEPLOYMENT_METRICS_CONSUMER.id(), "cluster-deployment-metrics");
+        DeploymentMetricsRetriever clusterMetricsRetriever =
+                new DeploymentMetricsRetriever(mockMetricsRetriever, NodeSuspensionProvider.EMPTY, flagSource);
+        clusterMetricsRetriever.getMetrics(application);
+
+        assertTrue(mockMetricsRetriever.hosts.stream().allMatch(uri -> uri.getQuery().equals("consumer=cluster-deployment-metrics")));
+    }
+
+    @Test
+    public void suspendedHostsAreFiltered() {
+        MockModel mockModel = new MockModel(mockHosts());
+        MockDeploymentMetricsRetriever mockMetricsRetriever = new MockDeploymentMetricsRetriever();
+        ApplicationId applicationId = ApplicationId.fromSerializedForm("tenant:app:instance");
+        Application application = new Application(mockModel, null, 0,
+                                                  null, null, applicationId);
+
+        NodeSuspensionProvider suspensionProvider = id -> Set.of("host1");
+        DeploymentMetricsRetriever retriever =
+                new DeploymentMetricsRetriever(mockMetricsRetriever, suspensionProvider, new InMemoryFlagSource());
+        retriever.getMetrics(application);
+
+        assertEquals(1, mockMetricsRetriever.hosts.size()); // logserver (host3) and suspended host1 are ignored
+        assertTrue(mockMetricsRetriever.hosts.stream().anyMatch(uri -> uri.getHost().equals("host2")));
+        assertTrue(mockMetricsRetriever.hosts.stream().noneMatch(uri -> uri.getHost().equals("host1")));
+    }
+
+    @Test
+    public void noSuspendedHostsWhenProviderReturnsEmptySet() {
+        MockModel mockModel = new MockModel(mockHosts());
+        MockDeploymentMetricsRetriever mockMetricsRetriever = new MockDeploymentMetricsRetriever();
+        ApplicationId applicationId = ApplicationId.fromSerializedForm("tenant:app:instance");
+        Application application = new Application(mockModel, null, 0,
+                null, null, applicationId);
+
+        NodeSuspensionProvider suspensionProvider = id -> Set.of();
+        DeploymentMetricsRetriever retriever =
+                new DeploymentMetricsRetriever(mockMetricsRetriever, suspensionProvider, new InMemoryFlagSource());
+        retriever.getMetrics(application);
+        // With an empty suspension set, behavior should be the same as without a provider: only logserver is ignored
+        assertEquals(2, mockMetricsRetriever.hosts.size());
+        assertTrue(mockMetricsRetriever.hosts.stream().anyMatch(uri -> uri.getHost().equals("host1")));
+        assertTrue(mockMetricsRetriever.hosts.stream().anyMatch(uri -> uri.getHost().equals("host2")));
     }
 
     private Collection<HostInfo> mockHosts() {

@@ -18,12 +18,16 @@ public class GlobalPhase implements Cloneable {
     /** The type representing the property arguments consumed by this */
     private static final QueryProfileType argumentType;
 
+    public static final String GLOBAL_PHASE = "globalPhase";
+    public static final String RERANK_COUNT = "rerankCount";
+    public static final String RANK_SCORE_DROP_LIMIT = "rankScoreDropLimit";
+
     static {
-        argumentType = new QueryProfileType(Ranking.GLOBAL_PHASE);
+        argumentType = new QueryProfileType(GLOBAL_PHASE);
         argumentType.setStrict(true);
         argumentType.setBuiltin(true);
-        argumentType.addField(new FieldDescription(Ranking.RERANKCOUNT, FieldType.integerType));
-        argumentType.addField(new FieldDescription(Ranking.RANKSCOREDROPLIMIT, FieldType.doubleType));
+        argumentType.addField(new FieldDescription(RERANK_COUNT, FieldType.integerType));
+        argumentType.addField(new FieldDescription(RANK_SCORE_DROP_LIMIT, FieldType.doubleType));
         argumentType.freeze();
     }
     public static QueryProfileType getArgumentType() { return argumentType; }
@@ -61,21 +65,16 @@ public class GlobalPhase implements Cloneable {
     @Override
     public boolean equals(Object o) {
         if (o == this) return true;
-        if (o instanceof GlobalPhase other) {
-            if ( ! Objects.equals(this.rerankCount, other.rerankCount)) return false;
-            if ( ! Objects.equals(this.rankScoreDropLimit, other.rankScoreDropLimit)) return false;
-            return true;
-        }
-        return false;
+        if ( ! (o instanceof GlobalPhase other)) return false;
+        if ( ! Objects.equals(this.rerankCount, other.rerankCount)) return false;
+        if ( ! Objects.equals(this.rankScoreDropLimit, other.rankScoreDropLimit)) return false;
+        return true;
     }
 
     @Override
     public GlobalPhase clone() {
         try {
-            GlobalPhase clone = (GlobalPhase)super.clone();
-            clone.rerankCount = this.rerankCount;
-            clone.rankScoreDropLimit = this.rankScoreDropLimit;
-            return clone;
+            return (GlobalPhase)super.clone();
         }
         catch (CloneNotSupportedException e) {
             throw new RuntimeException("Won't happen", e);

@@ -37,7 +37,7 @@ public class ConfigSourceSet implements ConfigSource {
      */
     public ConfigSourceSet(List<String> addresses) {
         for (String a : addresses) {
-           sources.add(a.trim().toLowerCase());
+           sources.add(a.trim().toLowerCase(java.util.Locale.ROOT));
         }
     }
 
@@ -57,7 +57,7 @@ public class ConfigSourceSet implements ConfigSource {
      * @param address  Connection endpoint on the format "tcp/host:port".
      */
     public ConfigSourceSet(String address) {
-        this(new String[] { address });
+        this(List.of(address));
     }
 
     /**
@@ -74,10 +74,9 @@ public class ConfigSourceSet implements ConfigSource {
         if (o == this) {
             return true;
         }
-        if (! (o instanceof ConfigSourceSet)) {
+        if (! (o instanceof ConfigSourceSet css)) {
             return false;
         }
-        ConfigSourceSet css = (ConfigSourceSet)o;
         return sources.equals(css.sources);
     }
 

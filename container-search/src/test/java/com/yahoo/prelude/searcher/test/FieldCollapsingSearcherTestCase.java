@@ -26,7 +26,12 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Tests the FieldCollapsingSearcher class
@@ -50,6 +55,7 @@ public class FieldCollapsingSearcherTestCase {
         assertEquals(0, r.getHitCount());
         assertNull(r.hits().getError());
         assertEquals(1, checker.queryCount);
+        assertEquals(0, r.getTotalHitCount());
     }
 
     @Test
@@ -66,6 +72,7 @@ public class FieldCollapsingSearcherTestCase {
         assertEquals(0, r.getHitCount());
         assertNull(r.hits().getError());
         assertEquals(1, checker.queryCount);
+        assertEquals(0, r.getTotalHitCount());
     }
 
     /**
@@ -102,6 +109,7 @@ public class FieldCollapsingSearcherTestCase {
         assertHitAmid("http://acme.org/b.html", 9, 1, r.hits().get(1));
         assertHitWithoutFields("http://acme.org/c.html", 9, r.hits().get(2));
         assertHitAmid("http://acme.org/d.html", 8, 2, r.hits().get(3));
+        assertEquals(4, r.getTotalHitCount());
     }
 
     @Test
@@ -134,6 +142,7 @@ public class FieldCollapsingSearcherTestCase {
         assertHitBmid("http://acme.org/b.html", 9, 1, r.hits().get(1));
         assertHitAmid("http://acme.org/c.html", 9, 1, r.hits().get(2));
         assertHit("http://acme.org/e.html", 8, 2, 2, r.hits().get(3));
+        assertEquals(4, r.getTotalHitCount());
     }
 
     @Test
@@ -168,6 +177,7 @@ public class FieldCollapsingSearcherTestCase {
         assertHitAmid("http://acme.org/c.html", 9, 1, r.hits().get(1));
         assertHitAmid("http://acme.org/e.html", 8, 2, r.hits().get(2));
         assertHitAmid("http://acme.org/g.html", 7, 3, r.hits().get(3));
+        assertEquals(4, r.getTotalHitCount());
     }
 
     /**
@@ -205,6 +215,7 @@ public class FieldCollapsingSearcherTestCase {
         assertHitAmid("http://acme.org/c.html", 9, 1, r.hits().get(1));
         assertHitAmid("http://acme.org/e.html", 8, 2, r.hits().get(2));
         assertHitAmid("http://acme.org/g.html", 7, 3, r.hits().get(3));
+        assertEquals(4, r.getTotalHitCount());
     }
 
     @Test
@@ -234,6 +245,7 @@ public class FieldCollapsingSearcherTestCase {
 
         assertEquals(8, r.getHitCount());
         assertEquals(1, docsource.getQueryCount());
+        assertEquals(8, r.getTotalHitCount());
     }
 
     /**
@@ -278,6 +290,7 @@ public class FieldCollapsingSearcherTestCase {
         assertEquals(1, r.getHitCount());
         assertEquals(2, docsource.getQueryCount());
         assertHitAmid("http://acme.org/j.html", 4, 2, r.hits().get(0));
+        assertEquals(3, r.getTotalHitCount());
     }
 
     /**
@@ -319,6 +332,7 @@ public class FieldCollapsingSearcherTestCase {
         assertEquals(1, r.getHitCount());
         assertEquals(1, docsource.getQueryCount());
         assertHit("http://acme.org/a.html", 10, 1, 0, r.hits().get(0));
+        assertEquals(1, r.getTotalHitCount());
     }
 
     /**
@@ -350,6 +364,7 @@ public class FieldCollapsingSearcherTestCase {
         assertEquals(1, docsource.getQueryCount());
         assertHit("http://acme.org/a.html", 10, 1, 1, r.hits().get(0));
         assertHit("http://acme.org/c.html", 9, 0, 1, r.hits().get(1));
+        assertEquals(2, r.getTotalHitCount());
     }
 
     /**
@@ -386,11 +401,12 @@ public class FieldCollapsingSearcherTestCase {
         assertHit("http://acme.org/b.html", 9, 1, 0, r.hits().get(1));
         assertHit("http://acme.org/c.html", 9, 0, 1, r.hits().get(2));
         assertHit("http://acme.org/d.html", 8, 1, 0, r.hits().get(3));
+        assertEquals(4, r.getTotalHitCount());
     }
 
     /**
      * Tests that collapsing on multiple fields works if we have to search multiple
-     * time to get enough hits
+     * times to get enough hits
      */
     @Test
     void testCollapsingOnMoreFieldsWithManySimilarFieldValues() {
@@ -434,6 +450,7 @@ public class FieldCollapsingSearcherTestCase {
         assertEquals(1, r.getHitCount());
         assertEquals(3, docsource.getQueryCount());
         assertHit("http://acme.org/m.html", 4, 4, 6, 3, r.hits().get(0));
+        assertEquals(3, r.getTotalHitCount());
     }
 
     /**
@@ -469,6 +486,7 @@ public class FieldCollapsingSearcherTestCase {
         assertEquals(2, r.getHitCount());
         assertHitAmid("http://acme.org/a.html", 10, 1, r.hits().get(0));
         assertHitAmid("http://acme.org/c.html", 10, 0, r.hits().get(1));
+        assertEquals(2, r.getTotalHitCount());
     }
 
     @Test
@@ -503,6 +521,7 @@ public class FieldCollapsingSearcherTestCase {
         assertEquals(2, r.getHitCount());
         assertHitAmid("http://acme.org/a.html", 10, 0, r.hits().get(0));
         assertHitAmid("http://acme.org/h.html", 6, 1, r.hits().get(1));
+        assertEquals(2, r.getTotalHitCount());
     }
 
     @Test
@@ -551,6 +570,7 @@ public class FieldCollapsingSearcherTestCase {
         assertHitAmid("http://acme.org/c.html", 9, 1, r.hits().get(1));
         assertHitAmid("http://acme.org/e.html", 8, 2, r.hits().get(2));
         assertHitAmid("http://acme.org/g.html", 7, 3, r.hits().get(3));
+        assertEquals(4, r.getTotalHitCount());
     }
 
     @Test
@@ -596,6 +616,7 @@ public class FieldCollapsingSearcherTestCase {
         assertEquals(1, groupList.size());
         HitGroup group = (HitGroup) groupList.get("group:long:37");
         assertNotNull(group);
+        assertEquals(8, r.getTotalHitCount());
     }
 
     private Group getFirstGroupIn(HitGroup hits) {
@@ -631,15 +652,15 @@ public class FieldCollapsingSearcherTestCase {
         @Override
         public Result search(Query query, Execution execution) {
             Result r = execution.search(query);
-            r.hits().add(createAggregationGroup("g1"));
+            r.hits().add(createAggregationGroup("g1", query));
             return r;
         }
 
-        private HitGroup createAggregationGroup(String label) {
-            Group root = new Group(new RootId(0), new Relevance(1));
+        private HitGroup createAggregationGroup(String label, Query query) {
+            Group root = new Group(new RootId(0), new Relevance(1), query);
             GroupList groupList = new GroupList(label);
             root.add(groupList);
-            Group value = new Group(new LongId(37L), new Relevance(2.11));
+            Group value = new Group(new LongId(37L), new Relevance(2.11), query);
             groupList.add(value);
             return root;
         }

@@ -42,6 +42,37 @@ class NodeResourcesTest {
     }
 
     @Test
+    void testSatisfiesWithUnspecifiedDisk() {
+        // When disk is unspecified (0), it should satisfy any disk requirement
+        var unspecifiedDisk = new NodeResources(2, 8, 0, 0.3);
+        var specifiedDisk = new NodeResources(2, 8, 300, 0.3);
+
+        // Unspecified disk (0) should satisfy specified disk requirement
+        assertTrue(unspecifiedDisk.satisfies(specifiedDisk),
+                "Unspecified disk (0) should satisfy any disk requirement");
+
+        // Specified disk should satisfy unspecified disk requirement
+        assertTrue(specifiedDisk.satisfies(unspecifiedDisk),
+                "Any disk should satisfy unspecified disk requirement (0)");
+
+        // Both unspecified should satisfy each other
+        var anotherUnspecified = new NodeResources(2, 8, 0, 0.3);
+        assertTrue(unspecifiedDisk.satisfies(anotherUnspecified),
+                "Unspecified disk should satisfy unspecified disk");
+    }
+
+    @Test
+    void testClusterResourcesIsWithinWithUnspecifiedDisk() {
+        // Simulates the autoscaling scenario: min/max have disk=0, target has actual disk
+        var min = new ClusterResources(2, 1, new NodeResources(0.5, 8, 0, 0.3));
+        var max = new ClusterResources(6, 1, new NodeResources(0.5, 8, 0, 0.3));
+        var target = new ClusterResources(3, 1, new NodeResources(0.5, 8, 300, 0.3));
+
+        assertTrue(target.isWithin(min, max),
+                "Target with specified disk should be within min/max that have unspecified disk");
+    }
+
+    @Test
     void testSatisfies() {
         var hostResources = new NodeResources(1, 2, 3, 1);
         assertTrue(hostResources.satisfies(new NodeResources(1, 2, 3, 1)));
@@ -79,6 +110,29 @@ class NodeResourcesTest {
                                                                  NodeResources.StorageType.local,
                                                                  NodeResources.Architecture.any,
                                                                  new NodeResources.GpuResources(NodeResources.GpuType.L40S, 1, 48))));
+    }
+
+    @Test
+    public void testCompatible() {
+        var reference = new NodeResources(64, 256, 100, 1);
+        var close =     new NodeResources(64, 252, 100, 1);
+        var far =       new NodeResources(64, 198, 100, 1);
+        assertTrue(reference.compatibleWith(reference));
+
+        assertFalse(reference.compatibleWith(close));
+        assertFalse(    close.compatibleWith(reference));
+        assertFalse(reference.compatibleWith(far));
+        assertFalse(    close.compatibleWith(far));
+
+        assertTrue( reference.compatibleWith(close,     0.02));
+        assertTrue(     close.compatibleWith(reference, 0.02));
+        assertFalse(reference.compatibleWith(far,       0.02));
+        assertFalse(    close.compatibleWith(far,       0.02));
+
+        assertTrue( reference.compatibleWith(close,     0.32));
+        assertTrue(     close.compatibleWith(reference, 0.32));
+        assertTrue( reference.compatibleWith(far,       0.32));
+        assertTrue(     close.compatibleWith(far,       0.32));
     }
 
     @Test
@@ -156,10 +210,6 @@ class NodeResourcesTest {
         assertEquals(expected, actual);
     }
 
-    private static NodeResources.GpuResources makeGpus(String t, int cnt, double mem) {
-        return new NodeResources.GpuResources(t, cnt, mem);
-    }
-
     @Test
     void testGpuArithmetic() {
         var zero = NodeResources.GpuResources.zero();
@@ -193,6 +243,9 @@ class NodeResourcesTest {
         assertEquals(makeGpus("L40S", 1, 64), lovelace.plus(one));
     }
 
+    private static NodeResources.GpuResources makeGpus(String t, int cnt, double mem) {
+        return new NodeResources.GpuResources(t, cnt, mem);
+    }
 
     // Comparing AWS (not Vespa) approx pricing for different disk options
     // @Test

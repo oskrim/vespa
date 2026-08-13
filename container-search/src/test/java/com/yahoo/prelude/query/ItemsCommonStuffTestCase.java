@@ -1,7 +1,14 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.prelude.query;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 import java.nio.ByteBuffer;
 import java.util.List;
@@ -11,6 +18,7 @@ import java.util.regex.PatternSyntaxException;
 
 import org.junit.jupiter.api.Test;
 import com.yahoo.prelude.query.Item.ItemType;
+import static com.yahoo.prelude.query.WordAlternativesItem.Alternative;
 
 /**
  * Check basic contracts common to "many" item implementations.
@@ -288,7 +296,7 @@ public class ItemsCommonStuffTestCase {
         n.setIndexName("nalle");
         boolean caught = false;
         try {
-            n.encode(ByteBuffer.allocate(100));
+            n.encode(ByteBuffer.allocate(100), new SerializationContext(1.0));
         } catch (RuntimeException e) {
             caught = true;
         }
@@ -343,11 +351,16 @@ public class ItemsCommonStuffTestCase {
             caught = true;
         }
         assertTrue(caught);
-        assertEquals("blbl", p.getWordItem(3).getWord());
+        assertEquals("blbl", p.getTermItem(3).stringValue());
         ByteBuffer b = ByteBuffer.allocate(5000);
-        int i = p.encode(b);
+        int i = p.encode(b, new SerializationContext(1.0));
         assertEquals(5, i);
         assertEquals("nalle bamse teddy blbl", p.getIndexedString());
+
+        var alts = List.of(new Alternative("towers", 0.75), new Alternative("tower", 0.5));
+        var wa = new WordAlternativesItem("ignore", true, new Substring("Towers"), alts);
+        p.addItem(wa);
+        assertEquals("'nalle bamse teddy blbl WORD_ALTERNATIVES [ tower(0.5) towers(0.75) ]'", p.toString());
     }
 
     @Test
@@ -364,7 +377,7 @@ public class ItemsCommonStuffTestCase {
     void testBaseClassPhraseSegments() {
         PhraseSegmentItem p = new PhraseSegmentItem("g", false, true);
         fill(p);
-        assertEquals(4, p.encode(ByteBuffer.allocate(5000)));
+        assertEquals(4, p.encode(ByteBuffer.allocate(5000), new SerializationContext(1.0)));
         p.setIndexName(null);
         assertEquals("", p.getIndexName());
         PhraseSegmentItem p2 = new PhraseSegmentItem("g", false, true);
@@ -374,11 +387,9 @@ public class ItemsCommonStuffTestCase {
     @Test
     void testTermTypeBasic() {
         assertNotEquals(TermType.AND, TermType.DEFAULT);
-        assertNotEquals(TermType.AND, Integer.valueOf(10));
-        assertEquals(TermType.AND, TermType.AND);
+        assertNotEquals(TermType.AND, 10);
         assertSame(AndItem.class, TermType.DEFAULT.createItemClass().getClass());
         assertSame(CompositeItem.class, TermType.DEFAULT.getItemClass());
-        assertNotNull(TermType.PHRASE.hashCode());
         assertEquals("term type 'not'", TermType.NOT.toString());
     }
 
@@ -404,4 +415,3 @@ public class ItemsCommonStuffTestCase {
     }
 
 }
-

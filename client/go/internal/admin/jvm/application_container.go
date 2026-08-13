@@ -159,6 +159,7 @@ func (a *ApplicationContainer) configureOptions() {
 	a.configureMemory(qrStartCfg)
 	a.configureGC(qrStartCfg)
 	a.configureClasspath(qrStartCfg)
+	a.addJdkVersionSpecificArgs()
 	a.addJdiscProperties()
 	svcName := a.ServiceName()
 	if svcName == "container" || svcName == "container-clustercontroller" {
@@ -175,4 +176,9 @@ func (c *ApplicationContainer) exportExtraEnv(ps *prog.Spec) {
 	} else {
 		osutil.ExitMsg("application container requires a config id")
 	}
+}
+
+// addJdkVersionSpecificArgs appends JVM args depending on detected JDK major version.
+func (a *ApplicationContainer) addJdkVersionSpecificArgs() {
+	a.JvmOptions().VersionOptions(PreviewJvmFeatures)
 }

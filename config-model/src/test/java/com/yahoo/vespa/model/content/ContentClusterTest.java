@@ -7,6 +7,7 @@ import com.yahoo.config.model.api.ApplicationClusterEndpoint;
 import com.yahoo.config.model.api.ContainerEndpoint;
 import com.yahoo.config.model.api.ModelContext;
 import com.yahoo.config.model.deploy.DeployState;
+import com.yahoo.config.model.deploy.TestDeployState;
 import com.yahoo.config.model.deploy.TestProperties;
 import com.yahoo.config.model.provision.InMemoryProvisioner;
 import com.yahoo.config.model.provision.SingleNodeProvisioner;
@@ -44,8 +45,13 @@ import com.yahoo.vespa.model.routing.DocumentProtocol;
 import com.yahoo.vespa.model.routing.Routing;
 import com.yahoo.vespa.model.test.utils.ApplicationPackageUtils;
 import com.yahoo.vespa.model.test.utils.VespaModelCreatorWithMockPkg;
+import com.yahoo.vespa.model.utils.ResourceUtils;
+import com.yahoo.text.Text;
 import com.yahoo.yolean.Exceptions;
 import org.junit.jupiter.api.Test;
+
+import static com.yahoo.vespa.model.utils.ResourceUtils.GiB;
+import static com.yahoo.vespa.model.utils.ResourceUtils.GB;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -120,6 +126,7 @@ public class ContentClusterTest extends ContentBaseTest {
         assertEquals(15, distributionConfig.cluster("storage").initial_redundancy());
         assertEquals(15, distributionConfig.cluster("storage").redundancy());
         assertEquals(4, distributionConfig.cluster("storage").group().size());
+        assertFalse(distributionConfig.cluster("storage").relative_node_order_scoring());
         assertEquals(1, distributionConfig.cluster().size());
 
         StorDistributionConfig.Builder storBuilder = new StorDistributionConfig.Builder();
@@ -128,6 +135,7 @@ public class ContentClusterTest extends ContentBaseTest {
         assertEquals(15, storConfig.initial_redundancy());
         assertEquals(15, storConfig.redundancy());
         assertEquals(3, storConfig.ready_copies());
+        assertFalse(storConfig.relative_node_order_scoring());
 
         ProtonConfig.Builder protonBuilder = new ProtonConfig.Builder();
         cc.getSearch().getConfig(protonBuilder);
@@ -165,15 +173,12 @@ public class ContentClusterTest extends ContentBaseTest {
                 messages.add(message);
             }
         };
-        var deployState = new DeployState.Builder()
-                .applicationPackage(new MockApplicationPackage.Builder().withServices(services).build())
-                .deployLogger(logger)
-                .build();
+        var deployState = TestDeployState.create(logger, new MockApplicationPackage.Builder().withServices(services).build());
         new TestDriver().buildModel(deployState);
         assertEquals(1, messages.size());
         assertEquals("In cluster 'storage': min-node-ratio-per-group should be set to 1 when there are 3 or more groups (3)" +
                              " and there are 3 or fewer nodes in the group (2)." +
-                             " See https://docs.vespa.ai/en/reference/services-content.html?mode=cloud#min-node-ratio-per-group",
+                             " See https://docs.vespa.ai/en/reference/applications/services/content.html#min-node-ratio-per-group",
                      messages.get(0));
     }
 
@@ -203,6 +208,7 @@ public class ContentClusterTest extends ContentBaseTest {
         assertEquals(3, distributionConfig.cluster("storage").ready_copies());
         assertEquals(4, distributionConfig.cluster("storage").initial_redundancy());
         assertEquals(5, distributionConfig.cluster("storage").redundancy());
+        assertFalse(distributionConfig.cluster("storage").relative_node_order_scoring());
 
         StorDistributionConfig.Builder storBuilder = new StorDistributionConfig.Builder();
         cc.getConfig(storBuilder);
@@ -210,12 +216,89 @@ public class ContentClusterTest extends ContentBaseTest {
         assertEquals(4, storConfig.initial_redundancy());
         assertEquals(5, storConfig.redundancy());
         assertEquals(3, storConfig.ready_copies());
+        assertFalse(storConfig.relative_node_order_scoring());
 
         ProtonConfig.Builder protonBuilder = new ProtonConfig.Builder();
         cc.getSearch().getConfig(protonBuilder);
         ProtonConfig protonConfig = new ProtonConfig(protonBuilder);
         assertEquals(3, protonConfig.distribution().searchablecopies());
         assertEquals(5, protonConfig.distribution().redundancy());
+    }
+
+    @Test
+    void testSchemaDocumentIdAttributeSettingIsPropagated() {
+        String schema_fromdisk =
+                """
+                schema type1 {
+                    documentid: from-disk
+                    document type1 {
+                    }
+                }""";
+        String schema_attribute =
+                """
+                schema type2 {
+                    documentid: attribute
+                    document type2 {
+                    }
+                }""";
+
+        String xml = "<?xml version='1.0' encoding='UTF-8' ?>" +
+                "<services version='1.0'>" +
+                "  <container id='default' version='1.0'>" +
+                "    <search/>" +
+                "  </container>" +
+                "  <content id='search' version='1.0'>" +
+                "    <redundancy>1</redundancy>" +
+                "    <documents>" +
+                "      <document type='type1' mode='index'/>" +
+                "      <document type='type2' mode='index'/>" +
+                "    </documents>" +
+                "  </content>" +
+                "</services>";
+
+        List<String> sds = List.of(schema_fromdisk, schema_attribute);
+        VespaModel model = new VespaModelCreatorWithMockPkg(null, xml, sds).create();
+        ContentCluster cc = model.getContentClusters().get("search");
+
+        ProtonConfig.Builder protonBuilder = new ProtonConfig.Builder();
+        cc.getSearch().getConfig(protonBuilder);
+        ProtonConfig protonConfig = new ProtonConfig(protonBuilder);
+
+        var foo_documentdb = protonConfig.documentdb().get(0);
+        assertEquals("type1", foo_documentdb.inputdoctypename());
+        assertFalse(foo_documentdb.document_id_attribute());
+
+        var bar_documentdb = protonConfig.documentdb().get(1);
+        assertEquals("type2", bar_documentdb.inputdoctypename());
+        assertTrue(bar_documentdb.document_id_attribute());
+    }
+
+    @Test
+    void pseudo_row_column_distribution_setting_is_propagated_to_distribution_config() {
+        ContentCluster cc = parse("""
+              <content version="1.0" id="storage">
+                <documents/>
+                <redundancy>1</redundancy>
+                <group>
+                  <node hostalias='mockhost' distribution-key='0'/>
+                </group>
+                <tuning>
+                  <distribution>
+                    <pseudo-row-column-mode>true</pseudo-row-column-mode>
+                  </distribution>
+                </tuning>
+              </content>
+            """);
+
+        var storBuilder = new StorDistributionConfig.Builder();
+        cc.getConfig(storBuilder);
+        var storConfig = new StorDistributionConfig(storBuilder);
+        assertTrue(storConfig.relative_node_order_scoring());
+
+        var distributionBuilder = new DistributionConfig.Builder();
+        cc.getConfig(distributionBuilder);
+        var distributionConfig = distributionBuilder.build();
+        assertTrue(distributionConfig.cluster("storage").relative_node_order_scoring());
     }
 
     @Test
@@ -731,7 +814,7 @@ public class ContentClusterTest extends ContentBaseTest {
         assertDistributionBitsInConfig(root.getConfigModels(Content.class).get(0).getCluster(), 8);
 
         // Build model and supply previous model that was a model built with 5 nodes
-        var deployState = new DeployState.Builder().applicationPackage(appTwoNodes).previousModel(modelForAppWithFiveNodes).build();
+        var deployState = TestDeployState.createBuilder().applicationPackage(appTwoNodes).previousModel(modelForAppWithFiveNodes).build();
         root = new TestDriver().buildModel(deployState);
         // But reducing number of nodes for a running system should not change distribution bits (should still be 16 bits)
         assertDistributionBitsInConfig(root.getConfigModels(Content.class).get(0).getCluster(), 16);
@@ -987,23 +1070,13 @@ public class ContentClusterTest extends ContentBaseTest {
     }
 
     @Test
-    void flush_on_shutdown_is_default_on_for_hosted() throws Exception {
-        assertPrepareRestartCommand(createOneNodeCluster(true));
+    void flush_on_shutdown_is_default_off_for_hosted() throws Exception {
+        assertNoPreShutdownCommand(createOneNodeCluster(true));
     }
 
     @Test
     void flush_on_shutdown_can_be_turned_on_for_hosted() throws Exception {
         assertPrepareRestartCommand(createClusterWithFlushOnShutdownOverride(true, true));
-    }
-
-    @Test
-    void flush_on_shutdown_follows_feature_flag_for_use_new_prepare_for_restart() throws Exception {
-        assertNoPreShutdownCommand(createOneNodeCluster(new TestProperties().setHostedVespa(true).useNewPrepareForRestart(true)));
-        assertPrepareRestartCommand(createOneNodeCluster(new TestProperties().setHostedVespa(true).useNewPrepareForRestart(false)));
-
-        // Always flush on non-hosted
-        assertPrepareRestartCommand(createOneNodeCluster(new TestProperties().setHostedVespa(false).useNewPrepareForRestart(true)));
-        assertPrepareRestartCommand(createOneNodeCluster(new TestProperties().setHostedVespa(false).useNewPrepareForRestart(false)));
     }
 
     private static String oneNodeClusterXml() {
@@ -1055,7 +1128,7 @@ public class ContentClusterTest extends ContentBaseTest {
                                                        Optional<Flavor> flavor, StringBuffer deployWarningsBuffer) throws Exception {
         DeployLogger logger = (level, message) -> {
             if (level == Level.WARNING) { // only care about warnings
-                deployWarningsBuffer.append("%s\n".formatted(message));
+                deployWarningsBuffer.append(Text.format("%s\n", message));
             }
         };
         DeployState.Builder deployStateBuilder = new DeployState.Builder()
@@ -1323,6 +1396,21 @@ public class ContentClusterTest extends ContentBaseTest {
         assertEquals(2_000_000_000, resolveMaxTLSSize(Optional.of(flavor)));
     }
 
+    private double resolveSearchNodeReservedMemoryFactor(double searchNodeReservedMemoryFactor) {
+        var model = createEnd2EndOneNode(new TestProperties().setSearchNodeReservedMemoryFactor(searchNodeReservedMemoryFactor));
+        var cc = model.getContentClusters().get("storage");
+        var protonBuilder = new ProtonConfig.Builder();
+        cc.getSearch().getConfig(protonBuilder);
+        var protonConfig = new ProtonConfig(protonBuilder);
+        return protonConfig.writefilter().reserved_memory_factor();
+    }
+
+    @Test
+    public void defaultSearchNodeReservedMemoryFactorIsControlledByProperties() {
+        assertEquals(0.0, resolveSearchNodeReservedMemoryFactor(0.0), 0.0);
+        assertEquals(0.3, resolveSearchNodeReservedMemoryFactor(0.3), 0.0);
+    }
+
     void assertZookeeperServerImplementation(String expectedClassName,
                                              ClusterControllerContainerCluster clusterControllerCluster) {
         for (ClusterControllerContainer c : clusterControllerCluster.getContainers()) {
@@ -1533,39 +1621,9 @@ public class ContentClusterTest extends ContentBaseTest {
         return resolveStorDistributormanagerConfig(properties);
     }
 
-    private boolean resolveDistributorOperationCancellationConfig(Integer featureLevel) throws Exception {
-        return resolveDistributorConfig((props) -> {
-            if (featureLevel != null) {
-                props.setContentLayerMetadataFeatureLevel(featureLevel);
-            }
-        }).enable_operation_cancellation();
-    }
-
     @Test
-    void distributor_operation_cancelling_config_controlled_by_properties() throws Exception {
-        assertFalse(resolveDistributorOperationCancellationConfig(null)); // defaults to false
-        assertFalse(resolveDistributorOperationCancellationConfig(0));
-        assertTrue(resolveDistributorOperationCancellationConfig(1));
-        assertTrue(resolveDistributorOperationCancellationConfig(2));
-    }
-
-    private int resolveMaxDistributorDocOperationSizeConfig(Integer flagValue) throws Exception {
-        return resolveDistributorConfig((props) -> {
-            if (flagValue != null) {
-                props.setMaxDistributorDocumentOperationSizeMib(flagValue);
-            }
-        }).max_document_operation_message_size_bytes();
-    }
-
-    @Test
-    void distributor_max_document_operation_size_config_is_controlled_by_properties() throws Exception {
-        int mi = 1024 * 1024;
-        assertEquals( 128 * mi, resolveMaxDistributorDocOperationSizeConfig(null)); // defaults to 134217728 (128 MiB)
-        assertEquals( 128 * mi, resolveMaxDistributorDocOperationSizeConfig(-2));
-        assertEquals( 128 * mi, resolveMaxDistributorDocOperationSizeConfig(0));
-        assertEquals( 100 * mi, resolveMaxDistributorDocOperationSizeConfig(100));
-        assertEquals(2047 * mi, resolveMaxDistributorDocOperationSizeConfig(2047));
-        assertEquals( 128 * mi, resolveMaxDistributorDocOperationSizeConfig(2048));
+    void distributor_operation_cancelling_config() throws Exception {
+        assertTrue(resolveDistributorConfig((props) -> {}).enable_operation_cancellation());
     }
 
     @Test
@@ -1574,15 +1632,15 @@ public class ContentClusterTest extends ContentBaseTest {
         // sentinel value that must never be used by actual nodes.
         for (int distKey : List.of(-1, 65535, 65536, 100000)) {
             assertThrows(IllegalArgumentException.class, () ->
-                    parse("""
+                    parse(Text.format("""
                             <content version="1.0" id="storage">
                               <documents/>
                               <redundancy>1</redundancy>
                               <group>
                                 <node hostalias='mockhost' distribution-key='%d' />
                               </group>
-                            </content>""".formatted(distKey)
-                        ));
+                            </content>""", distKey))
+                        );
         }
     }
 
@@ -1601,7 +1659,7 @@ public class ContentClusterTest extends ContentBaseTest {
                "  <redundancy>1</redundancy>" +
                "  <documents/>" +
                "  <group>" +
-               "    <node distribution-key=\"%d\" hostalias=\"mockhost\"/>".formatted(key) +
+               Text.format("    <node distribution-key=\"%d\" hostalias=\"mockhost\"/>", key) +
                "  </group>" +
                "</content>";
     }
@@ -1613,7 +1671,7 @@ public class ContentClusterTest extends ContentBaseTest {
         assertEquals(warnings, "Content cluster 'mockcluster' has 1 node(s), but the highest distribution " +
                                "key is 101. Having much higher distribution keys than the number of nodes " +
                                "is not recommended, as it may negatively affect performance. " +
-                               "See https://docs.vespa.ai/en/reference/services-content.html#node\n");
+                               "See https://docs.vespa.ai/en/reference/applications/services/content.html#node\n");
     }
 
     @Test
@@ -1679,7 +1737,7 @@ public class ContentClusterTest extends ContentBaseTest {
         // Resource limits for content cluster should be changed based on new values above
         var protonConfigBuilder = new ProtonConfig.Builder();
         model.getConfig(protonConfigBuilder, "foo/search/cluster.foo");
-        assertEquals(0.864, protonConfigBuilder.build().writefilter().disklimit(), 0.001);
+        assertEquals(0.83, protonConfigBuilder.build().writefilter().disklimit(), 0.001);
         assertEquals(0.875, protonConfigBuilder.build().writefilter().memorylimit(), 0.001);
 
         // Resource limits for content nodes should be changed based on new values above
@@ -1688,7 +1746,7 @@ public class ContentClusterTest extends ContentBaseTest {
         contentCluster.getSearch().getSearchNodes().get(0).getConfig(protonConfigBuilder2);
         var config2 = protonConfigBuilder2.build();
         assertEquals(0, config2.distributionkey());
-        assertEquals(0.864, config2.writefilter().disklimit(), 0.001);
+        assertEquals(0.83, config2.writefilter().disklimit(), 0.001);
         assertEquals(0.875, config2.writefilter().memorylimit(), 0.001);
     }
 
@@ -1705,26 +1763,6 @@ public class ContentClusterTest extends ContentBaseTest {
     @Test
     void search_node_transaction_log_replay_memory_limit_is_configurable_via_feature_flag() {
         assertEquals(-3L, txnLogReplayMemoryLimitFromFlag());
-    }
-
-
-    private int inferSearchCoreMaxOutstandingMoveOps(Integer flagValueOrNull) {
-        var props = new TestProperties();
-        if (flagValueOrNull != null) {
-            props.setSearchCoreMaxOutstandingMoveOps(flagValueOrNull);
-        }
-        VespaModel model = createEnd2EndOneNode(props);
-        ContentCluster cc = model.getContentClusters().get("storage");
-        var builder = new ProtonConfig.Builder();
-        cc.getSearch().getConfig(builder);
-        var cfg = new ProtonConfig(builder);
-        return cfg.maintenancejobs().maxoutstandingmoveops();
-    }
-
-    @Test
-    void search_core_max_outstanding_move_ops_is_configurable_via_feature_flag() {
-        assertEquals(100, inferSearchCoreMaxOutstandingMoveOps(null)); // Default is 100
-        assertEquals(8, inferSearchCoreMaxOutstandingMoveOps(8));
     }
 
     private int inferSearchNodeInitializerThreadsFromFlag(Integer flagValueOrNull) {
@@ -1748,8 +1786,37 @@ public class ContentClusterTest extends ContentBaseTest {
         assertEquals(8, inferSearchNodeInitializerThreadsFromFlag(8));
     }
 
+    private static void assertResourceSettingsPropagated(StorDistributormanagerConfig.Hwinfo hw, NodeResources expected) {
+        assertEquals((long)Math.ceil(expected.vcpu()), hw.cpu().cores()); // rounded up
+        assertEquals((long)(ResourceUtils.usableMemoryGb(expected.memoryGiB()) * GiB), hw.memory().size());
+        assertEquals((long)(expected.diskGb() * GB), hw.disk().size());
+    }
+
+    @Test
+    void present_node_resources_are_propagate_to_distributor_config() throws Exception {
+        var resources = new NodeResources(9.5/*vCPU*/, 16/*mem*/, 300/*disk*/, 100/*bandwidth*/);
+        var flavor = new Flavor("chocolate_and_pistachio", resources);
+        var cc = createOneNodeCluster(new TestProperties(), Optional.of(flavor));
+
+        var builder = new StorDistributormanagerConfig.Builder();
+        cc.getDistributorNodes().getConfig(builder);
+        cc.getDistributorNodes().getChildren().get("0").getConfig(builder);
+        assertResourceSettingsPropagated(builder.build().hwinfo(), resources);
+    }
+
+    @Test
+    void non_present_node_resources_emit_default_values_in_distributor_config() throws Exception {
+        var emptyResources = new NodeResources(0/*vCPU*/, 0/*mem*/, 0/*disk*/, 0/*bandwidth*/);
+        var cc = createOneNodeCluster(new TestProperties(), Optional.empty());
+
+        var builder = new StorDistributormanagerConfig.Builder();
+        cc.getDistributorNodes().getConfig(builder);
+        cc.getDistributorNodes().getChildren().get("0").getConfig(builder);
+        assertResourceSettingsPropagated(builder.build().hwinfo(), emptyResources);
+    }
+
     private String servicesWithGroups(int groupCount, double minGroupUpRatio) {
-        String services = String.format("<?xml version='1.0' encoding='UTF-8' ?>" +
+        String services = Text.format("<?xml version='1.0' encoding='UTF-8' ?>" +
                 "<services version='1.0'>" +
                 "  <container id='default' version='1.0' />" +
                 "  <content id='storage' version='1.0'>" +
@@ -1768,7 +1835,7 @@ public class ContentClusterTest extends ContentBaseTest {
         };
         services += distribution;
         for (int i = 0; i < groupCount; i++) {
-            services += String.format("    <group name='g-%d' distribution-key='%d'>" +
+            services += Text.format("    <group name='g-%d' distribution-key='%d'>" +
                                               "      <node hostalias='mockhost' distribution-key='%d'/>" +
                                               "    </group>",
                                       i, i, i);

@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include <cstdint>
 #include <memory>
 
 namespace search::docsummary {
@@ -11,8 +12,7 @@ class IDocsumStoreDocument;
 /**
  * Interface used to fetch docsum specific abstract of documents based on local document id.
  **/
-class IDocsumStore
-{
+class IDocsumStore {
 public:
     using UP = std::unique_ptr<IDocsumStore>;
 
@@ -24,4 +24,4 @@ public:
     virtual std::unique_ptr<const IDocsumStoreDocument> get_document(uint32_t docid) = 0;
 };
 
-}
+} // namespace search::docsummary

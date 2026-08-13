@@ -1,9 +1,10 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+#include <vespa/vespalib/data/slime/slime.h>
 #include <vespa/vespalib/gtest/gtest.h>
-#include <vespa/vespalib/util/time.h>
 #include <vespa/vespalib/util/size_literals.h>
 #include <vespa/vespalib/util/stringfmt.h>
-#include <vespa/vespalib/data/slime/slime.h>
+#include <vespa/vespalib/util/time.h>
+
 #include <cassert>
 
 using namespace vespalib;
@@ -13,12 +14,12 @@ struct MyBuffer : public Output {
     std::vector<char> data;
     size_t            used;
     MyBuffer() : data(1_Mi), used(0) {}
-    ~MyBuffer();
+    ~MyBuffer() override;
     WritableMemory reserve(size_t bytes) override {
         assert(data.size() >= (used + bytes));
         return WritableMemory(&data[used], data.size() - used);
     }
-    Output &commit(size_t bytes) override {
+    Output& commit(size_t bytes) override {
         used += bytes;
         return *this;
     }
@@ -37,7 +38,7 @@ double make_value(size_t idx) {
 struct FeatureFixture {
     Slime slime;
     FeatureFixture() {
-        Cursor &obj = slime.setObject();
+        Cursor& obj = slime.setObject();
         for (size_t i = 0; i < 1000; ++i) {
             obj.setDouble(make_name(i), make_value(i));
         }
@@ -46,9 +47,9 @@ struct FeatureFixture {
 
 TEST(SummaryFeatureBenchmarkTest, slime_to_json_speed) {
     FeatureFixture f1;
-    size_t size = 0;
-    double minTime = 1000000.0;
-    MyBuffer buffer;
+    size_t         size = 0;
+    double         minTime = 1000000.0;
+    MyBuffer       buffer;
     for (size_t i = 0; i < 16; ++i) {
         vespalib::Timer timer;
         for (size_t j = 0; j < 256; ++j) {
@@ -63,9 +64,9 @@ TEST(SummaryFeatureBenchmarkTest, slime_to_json_speed) {
 
 TEST(SummaryFeatureBenchmarkTest, slime_to_binary_speed) {
     FeatureFixture f1;
-    size_t size = 0;
-    double minTime = 1000000.0;
-    MyBuffer buffer;
+    size_t         size = 0;
+    double         minTime = 1000000.0;
+    MyBuffer       buffer;
     for (size_t i = 0; i < 16; ++i) {
         vespalib::Timer timer;
         for (size_t j = 0; j < 256; ++j) {

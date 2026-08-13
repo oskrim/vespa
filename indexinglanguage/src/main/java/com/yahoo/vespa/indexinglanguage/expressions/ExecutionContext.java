@@ -7,8 +7,9 @@ import com.yahoo.document.FieldPath;
 import com.yahoo.document.datatypes.FieldValue;
 import com.yahoo.language.Language;
 import com.yahoo.language.Linguistics;
-import com.yahoo.language.detect.Detection;
 
+
+import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
@@ -22,11 +23,13 @@ public class ExecutionContext {
     private final Map<String, FieldValue> variables = new HashMap<>();
     private final FieldValues fieldValues;
     private FieldValue currentValue;
-    private Language language;
+    private Language assignedLanguage = Language.UNKNOWN;
+    private Language detectedLanguage = Language.UNKNOWN;
     private final Map<Object, Object> cache = LazyMap.newHashMap();
     // Document id is practical for logging and informative error messages
     private DocumentId documentId;
-    private boolean isReindexingOperation;
+    private boolean isReindexingOperation = false;
+    private Instant deadline;
 
     public ExecutionContext() {
         this(null);
@@ -34,7 +37,6 @@ public class ExecutionContext {
 
     public ExecutionContext(FieldValues fieldValue) {
         this.fieldValues = fieldValue;
-        this.language = Language.UNKNOWN;
     }
 
     public ExecutionContext execute(Expression expression) {
@@ -96,23 +98,37 @@ public class ExecutionContext {
         return cache;
     }
 
-    public Language getLanguage() { return language; }
+    /** Returns the explicitly set or last detected language. Returns UNKNOWN if neither set nor detected. */
+    public Language getLanguage() {
+        if (assignedLanguage != Language.UNKNOWN) return assignedLanguage;
+        return detectedLanguage;
+    }
 
     public ExecutionContext setLanguage(Language language) {
-        this.language = Objects.requireNonNull(language);
+        this.assignedLanguage = Objects.requireNonNull(language);
         return this;
     }
 
     public Language resolveLanguage(Linguistics linguistics) {
-        if (language != Language.UNKNOWN) return language;
+        if (assignedLanguage != Language.UNKNOWN) return assignedLanguage;
+        if (detectedLanguage != Language.UNKNOWN) return detectedLanguage;
         if (linguistics == null) return Language.ENGLISH;
+        detectedLanguage = detectLanguage(linguistics);
+        return detectedLanguage;
+    }
 
-        Detection detection = linguistics.getDetector().detect(String.valueOf(currentValue), null);
+    // Caching the result as language detection is expensive
+    private Language detectLanguage(Linguistics linguistics) {
+        record DetectedLanguageCacheKey(String text) {}
+        var text = String.valueOf(currentValue);
+        var cacheKey = new DetectedLanguageCacheKey(text);
+        if (cache.get(cacheKey) instanceof Language cached) return cached;
+        var detection = linguistics.getDetector().detect(text, null);
         if (detection == null) return Language.ENGLISH;
-
-        Language detected = detection.getLanguage();
-        if (detected == Language.UNKNOWN) return Language.ENGLISH;
-        return detected;
+        var language = detection.getLanguage();
+        if (language == Language.UNKNOWN) language = Language.ENGLISH;
+        cache.put(cacheKey, language);
+        return language;
     }
 
     public boolean isReindexingOperation() { return isReindexingOperation; }
@@ -121,13 +137,23 @@ public class ExecutionContext {
     public Optional<DocumentId> getDocumentId() { return Optional.ofNullable(documentId); }
     public ExecutionContext setDocumentId(DocumentId id) { documentId = Objects.requireNonNull(id); return this; }
 
-    /** Clears all state in this except the cache. */
+    public Optional<Instant> getDeadline() { return Optional.ofNullable(deadline); }
+    public ExecutionContext setDeadline(Instant deadline) { this.deadline = deadline; return this; }
+
+    /**
+     * Clears all state in this pertaining to the current indexing statement
+     * Does not clear the cache.
+     * Note that assignLanguage is not cleared; an indexing statement doing
+     * set_language should affect the following statements.
+     */
     public ExecutionContext clear() {
-        // Why is language not cleared?
+        // We do not really want to clear variables here, but because
+        // indexing statements are re-ordered letting them survive
+        // will be even more confusing than clearing them.
         variables.clear();
+        detectedLanguage = Language.UNKNOWN;
         currentValue = null;
-        documentId = null;
-        isReindexingOperation = false;
+        // note: must not reset per-document or global values (like isReindexingOperation, deadline)
         return this;
     }
 

@@ -3,6 +3,7 @@ package com.yahoo.language.process;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * @author Simon Thoresen Hult
@@ -27,7 +28,7 @@ public class StemmerImpl implements Stemmer {
         int len;
         if (token.isSpecialToken() || (len = token.getNumComponents()) == 0) {
             if (token.isIndexable()) {
-                StemList word = new StemList();
+                StemList word = new StemList(Optional.of(token.getOrig()));
                 word.add(token.getTokenString()); // takes care of getStem(0)
                 for (int i = 1; i < token.getNumStems(); i++) {
                     word.add(token.getStem(i));
@@ -39,6 +40,11 @@ public class StemmerImpl implements Stemmer {
                 findStems(token.getComponent(i), out);
             }
         }
+    }
+
+    @Override
+    public String toString() {
+        return this.getClass().getName() + " using " + tokenizer;
     }
 
 }

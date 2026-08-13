@@ -5,13 +5,16 @@ import com.yahoo.component.Version;
 import com.yahoo.config.ConfigInstance;
 import com.yahoo.config.FileReference;
 import com.yahoo.config.provision.AllocatedHosts;
+import com.yahoo.config.provision.TelemetryExporterConfiguration;
 import com.yahoo.vespa.config.ConfigKey;
 import com.yahoo.vespa.config.buildergen.ConfigDefinition;
 
 import java.time.Instant;
+import java.util.Collection;
 import java.util.Map;
 import java.util.Set;
-import java.util.Collection;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 /**
  * A {@link Model} represents the interface towards the model of an entire tenant, and defines methods
@@ -84,4 +87,21 @@ public interface Model {
 
     /** Returns the set of container clusters */
     default Set<ApplicationClusterInfo> applicationClusterInfo() { return Set.of(); }
+
+    /**
+     * Mark container clusters for deferred reconfiguration.
+     * This is used during activation when clusters need to defer changes until after restart.
+     */
+    default void markClustersForDeferredReconfiguration(Set<String> clusterNames) {
+        if (!clusterNames.isEmpty()) {
+            Logger.getLogger(Model.class.getName()).log(Level.INFO,
+                    String.format(java.util.Locale.ROOT,
+                            "Deferred reconfiguration requested for clusters %s, but not supported for model of version %s",
+                            clusterNames, version()));
+        }
+    }
+
+    /** Returns the telemetry exporter config derived from the admin section of this model, or empty if not configured. */
+    default TelemetryExporterConfiguration telemetryExporterConfiguration() { return TelemetryExporterConfiguration.empty(); }
+
 }

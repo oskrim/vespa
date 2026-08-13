@@ -4,7 +4,10 @@ package com.yahoo.schema.processing;
 
 import com.yahoo.config.application.api.DeployLogger;
 import com.yahoo.schema.RankProfileRegistry;
-import com.yahoo.document.*;
+import com.yahoo.document.ArrayDataType;
+import com.yahoo.document.DataType;
+import com.yahoo.document.StructDataType;
+import com.yahoo.document.WeightedSetDataType;
 import com.yahoo.schema.Schema;
 import com.yahoo.schema.document.SDField;
 import com.yahoo.vespa.documentmodel.SummaryField;
@@ -13,7 +16,7 @@ import com.yahoo.vespa.model.container.search.QueryProfiles;
 
 /**
  * Fail if:
- * An SD field explicitly says summary:dynamic , but the field is non-string array, wset, or struct.
+ * A schemas field explicitly says summary:dynamic , but the field is non-string array, wset, or struct.
  * If there is an explicitly defined summary class, saying dynamic in one of its summary
  * fields is always legal.
  *

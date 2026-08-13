@@ -5,6 +5,7 @@ import com.yahoo.component.ComponentId;
 import com.yahoo.component.chain.dependencies.After;
 import com.yahoo.component.chain.dependencies.Provides;
 import com.yahoo.prelude.fastsearch.GroupingListHit;
+import com.yahoo.prelude.fastsearch.PartialSummaryHandler;
 import com.yahoo.prelude.query.Item;
 import com.yahoo.prelude.query.QueryCanonicalizer;
 import com.yahoo.processing.request.CompoundName;
@@ -93,7 +94,7 @@ public class GroupingExecutor extends Searcher {
         // Convert Vespa style results to hits.
         HitConverter hitConverter = new HitConverter(this);
         for (RequestContext context : requestContextList) {
-            RootGroup group = convertResult(context, groupingMap, hitConverter);
+            RootGroup group = convertResult(query, context, groupingMap, hitConverter);
             result.hits().add(group);
         }
         return result;
@@ -102,14 +103,8 @@ public class GroupingExecutor extends Searcher {
     private String extractSummaryClass(Hit hit, String summaryClass) {
         Object metaData = hit.getSearcherSpecificMetaData(this);
         if (metaData instanceof String metaDataString) {
-            // Use the summary class specified by grouping, set in HitConverter, for the first fill request
-            // after grouping. This assumes the first fill request is using the default summary class,
-            // which may be a fragile assumption. But currently we cannot do better because the difference
-            // between explicit and implicit summary class in fill is erased by the Execution.
-            //
-            // We reset the summary class here such that following fill calls will execute with the
-            // summary class they specify
-            hit.setSearcherSpecificMetaData(this, null);
+            // Use the summary class specified by grouping, set in
+            // HitConverter, in the fill request intended for presentation.
             return metaDataString;
         }
         return summaryClass;
@@ -117,19 +112,33 @@ public class GroupingExecutor extends Searcher {
 
     @Override
     public void fill(Result result, String summaryClass, Execution execution) {
+        Trace trace = result.getQuery().getTrace();
+        // is this the implicit fill for presentation?
+        // if not, no special handling.
+        if (! PartialSummaryHandler.PRESENTATION.equals(summaryClass)) {
+            if (trace.isTraceable(6)) {
+                trace.trace("GroupingExector.fill(): pass-through for summaryClass='" + summaryClass + "'", 6);
+            }
+            execution.fill(result, summaryClass);
+            return;
+        }
         Map<String, Result> summaryMap = new HashMap<>();
         for (Iterator<Hit> it = result.hits().unorderedDeepIterator(); it.hasNext(); ) {
             Hit hit = it.next();
             Result summaryResult = summaryMap.computeIfAbsent(extractSummaryClass(hit, summaryClass), key -> new Result(result.getQuery()));
             summaryResult.hits().add(hit);
         }
-        Trace trace = result.getQuery().getTrace();
         if (trace.isTraceable(2)) {
-            trace.trace("GroupingExecutor.fill(" + summaryClass + ") = {" + summaryMap.keySet() + "}", 2);
+            trace.trace("GroupingExecutor.fill(" + summaryClass + ") ==> {" + summaryMap.keySet() + "}", 2);
         }
         for (Map.Entry<String, Result> entry : summaryMap.entrySet()) {
             Result res = entry.getValue();
-            execution.fill(res, entry.getKey());
+            String fillName = entry.getKey();
+            if (fillName == null || fillName.equals("")) {
+                execution.fill(res, summaryClass);
+            } else {
+                execution.fill(res, fillName);
+            }
             result.hits().addErrorsFrom(res.hits());
         }
         Result defaultResult = summaryMap.get(ExpressionConverter.DEFAULT_SUMMARY_NAME);
@@ -139,6 +148,15 @@ public class GroupingExecutor extends Searcher {
             // "default" to signal the same
             for (Hit hit : defaultResult.hits()) {
                 hit.setFilled(null);
+            }
+        }
+        for (Iterator<Hit> it = result.hits().unorderedDeepIterator(); it.hasNext(); ) {
+            Hit hit = it.next();
+            if (hit.getSearcherSpecificMetaData(this) instanceof String metaDataString) {
+                if (hit.isFilled(metaDataString)) {
+                    // mark as fully filled:
+                    hit.setUnfillable();
+                }
             }
         }
     }
@@ -184,9 +202,9 @@ public class GroupingExecutor extends Searcher {
      * @param hitConverter   the converter to use for {@link Hit} conversion
      * @return the corresponding root RootGroup.
      */
-    private RootGroup convertResult(RequestContext requestContext, Map<Integer, Grouping> groupingMap,
+    private RootGroup convertResult(Query query, RequestContext requestContext, Map<Integer, Grouping> groupingMap,
                                     HitConverter hitConverter) {
-        ResultBuilder builder = new ResultBuilder();
+        ResultBuilder builder = new ResultBuilder(query);
         builder.setHitConverter(hitConverter);
         builder.setTransform(requestContext.transform);
         builder.setRequestId(requestContext.request.getRequestId());

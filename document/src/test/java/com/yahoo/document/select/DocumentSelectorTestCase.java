@@ -148,6 +148,9 @@ public class DocumentSelectorTestCase {
         assertParse("music.expire > now() - 300");
         assertParse("now or now_search");
         assertParse("(music.expire / 1000) > (now() - 300)");
+        assertParse("music.foo{bananas} == 1");
+        assertParse("music.foo{\"bananas with bandanas\"} == 1");
+        assertParse("music.foo[0]{0}[1]{1}{bananas}.yes.with{\"oh so much\"}{$exciting}[$potassium]");
     }
 
     @Test
@@ -413,6 +416,7 @@ public class DocumentSelectorTestCase {
         MapFieldValue<StringFieldValue, Array> amval =
                 new MapFieldValue<>((MapDataType)documents.get(1).getDocument().getField("structarrmap").getDataType());
         amval.put(new StringFieldValue("foo"), aval);
+        amval.put(new StringFieldValue("key that needs escaping"), aval);
 
         Array<Struct> abval = new Array<>(documents.get(1).getDocument().getField("structarray").getDataType());
         {
@@ -712,10 +716,22 @@ public class DocumentSelectorTestCase {
         assertEquals(Result.FALSE, evaluate("test.intarray > 80", documents.get(1)));
         assertEquals(Result.TRUE, evaluate("test.intarray >= 84", documents.get(0)));
         assertEquals(Result.TRUE, evaluate("test.intarray <= 3", documents.get(1)));
+        assertEquals(Result.TRUE, evaluate("not test.intarray < 5", documents.get(0)));
+        assertEquals(Result.FALSE, evaluate("not test.intarray < 5", documents.get(1)));
+        assertEquals(Result.FALSE, evaluate("5 > test.intarray", documents.get(0)));
+        assertEquals(Result.TRUE, evaluate("5 > test.intarray", documents.get(1)));
+        assertEquals(Result.TRUE, evaluate("not 5 > test.intarray", documents.get(0)));
+        assertEquals(Result.FALSE, evaluate("not 5 > test.intarray", documents.get(1)));
 
         // Interesting property ...
         assertEquals(Result.TRUE, evaluate("test.intarray == 84", documents.get(0)));
         assertEquals(Result.TRUE, evaluate("test.intarray != 84", documents.get(0)));
+        assertEquals(Result.FALSE, evaluate("not test.intarray == 84", documents.get(0)));
+        assertEquals(Result.FALSE, evaluate("not test.intarray != 84", documents.get(0)));
+        assertEquals(Result.TRUE, evaluate("84 == test.intarray", documents.get(0)));
+        assertEquals(Result.TRUE, evaluate("84 != test.intarray", documents.get(0)));
+        assertEquals(Result.FALSE, evaluate("not 84 == test.intarray", documents.get(0)));
+        assertEquals(Result.FALSE, evaluate("not 84 != test.intarray", documents.get(0)));
 
         assertEquals(Result.TRUE, evaluate("test.structarray[$x].key == 15 AND test.structarray[$x].value == \"structval1\"", documents.get(1)));
         assertEquals(Result.FALSE, evaluate("test.structarray[$x].key == 15 AND test.structarray[$x].value == \"structval2\"", documents.get(1)));
@@ -741,6 +757,10 @@ public class DocumentSelectorTestCase {
         assertEquals(Result.FALSE, evaluate("test.mymap == 4", documents.get(1)));
         assertEquals(Result.TRUE, evaluate("test.mymap = 3", documents.get(1))); // Fallback to ==
         assertEquals(Result.FALSE, evaluate("test.mymap = 4", documents.get(1))); // Fallback to ==
+        assertEquals(Result.FALSE, evaluate("test.structarrmap{\"key that needs escaping\"}", documents.get(0)));
+        assertEquals(Result.TRUE, evaluate("test.structarrmap{\"key that needs escaping\"}", documents.get(1)));
+        assertEquals(Result.FALSE, evaluate("test.structarrmap == \"key that needs escaping\"", documents.get(0)));
+        assertEquals(Result.TRUE, evaluate("test.structarrmap == \"key that needs escaping\"", documents.get(1)));
 
         assertEquals(Result.TRUE, evaluate("test.structarrmap{$x}[$y].key == 15 AND test.structarrmap{$x}[$y].value == \"structval1\"", documents.get(1)));
         assertEquals(Result.TRUE, evaluate("test.structarrmap.value[$y].key == 15 AND test.structarrmap.value[$y].value == \"structval1\"", documents.get(1)));
@@ -750,8 +770,10 @@ public class DocumentSelectorTestCase {
 
         assertEquals(Result.TRUE, evaluate("test.stringweightedset", documents.get(1)));
         assertEquals(Result.TRUE, evaluate("test.stringweightedset{val1}", documents.get(1)));
+        assertEquals(Result.TRUE, evaluate("test.stringweightedset{\"val1\"}", documents.get(1)));
         assertEquals(Result.TRUE, evaluate("test.stringweightedset{val1} == 1", documents.get(1)));
         assertEquals(Result.FALSE, evaluate("test.stringweightedset{val1} == 2", documents.get(1)));
+        assertEquals(Result.FALSE, evaluate("test.stringweightedset{\"val1\"} == 2", documents.get(1)));
         assertEquals(Result.TRUE, evaluate("test.stringweightedset == \"val1\"", documents.get(1)));
         assertEquals(Result.TRUE, evaluate("test.stringweightedset = \"val*\"", documents.get(1)));
         assertEquals(Result.TRUE, evaluate("test.stringweightedset =~ \"val[0-9]\"", documents.get(1)));

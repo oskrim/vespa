@@ -4,9 +4,8 @@
 
 namespace search::streaming {
 
-const HitList & QueryNode::evaluateHits(HitList & hl) const
-{
+const HitList& QueryNode::evaluateHits(HitList& hl) {
     return hl;
 }
 
-}
+} // namespace search::streaming

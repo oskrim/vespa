@@ -65,6 +65,7 @@ vespa_define_module(
     src/tests/aggregator
     src/tests/alignment
     src/tests/attribute
+    src/tests/attribute/array_bool_attribute
     src/tests/attribute/attribute_header
     src/tests/attribute/attribute_operation
     src/tests/attribute/attributefilewriter
@@ -98,7 +99,7 @@ vespa_define_module(
     src/tests/attribute/save_target
     src/tests/attribute/searchable
     src/tests/attribute/searchcontext
-    src/tests/attribute/searchcontextelementiterator
+    src/tests/attribute/search_iterator_element_ids
     src/tests/attribute/sort_blob_writers
     src/tests/attribute/sourceselector
     src/tests/attribute/stringattribute
@@ -136,6 +137,8 @@ vespa_define_module(
     src/tests/expression/filter_predicate_node
     src/tests/expression/float_bucket_result_node
     src/tests/expression/interpolated_document_field_lookup_node
+    src/tests/expression/position_document_field_node
+    src/tests/expression/resultvector_iterator
     src/tests/features
     src/tests/features/beta
     src/tests/features/bm25
@@ -145,6 +148,7 @@ vespa_define_module(
     src/tests/features/element_similarity_feature
     src/tests/features/elementwise
     src/tests/features/euclidean_distance
+    src/tests/features/first_phase_max
     src/tests/features/first_phase_rank
     src/tests/features/imported_dot_product
     src/tests/features/internal_max_reduce_prod_join_feature
@@ -154,11 +158,14 @@ vespa_define_module(
     src/tests/features/nns_closeness
     src/tests/features/nns_distance
     src/tests/features/onnx_feature
+    src/tests/features/query_term_document_frequency
     src/tests/features/ranking_expression
     src/tests/features/raw_score
     src/tests/features/subqueries
     src/tests/features/tensor
     src/tests/features/tensor_from_labels
+    src/tests/features/tensor_from_labels_with_offset
+    src/tests/features/tensor_from_structs
     src/tests/features/tensor_from_weighted_set
     src/tests/features/text_similarity_feature
     src/tests/features/util
@@ -199,10 +206,12 @@ vespa_define_module(
     src/tests/query
     src/tests/query/streaming
     src/tests/queryeval
+    src/tests/queryeval/array_bool
     src/tests/queryeval/blueprint
     src/tests/queryeval/dot_product
     src/tests/queryeval/equiv
     src/tests/queryeval/exact_nearest_neighbor
+    src/tests/queryeval/fake_index
     src/tests/queryeval/fake_searchable
     src/tests/queryeval/filter_search
     src/tests/queryeval/flow
@@ -230,6 +239,7 @@ vespa_define_module(
     src/tests/ranksetup
     src/tests/ranksetup/verify_feature
     src/tests/searchcommon/attribute/config
+    src/tests/searchcommon/attribute/initialization_status
     src/tests/searchcommon/schema
     src/tests/sort
     src/tests/sortresults
@@ -257,6 +267,7 @@ vespa_define_module(
     src/tests/util/slime_output_raw_buf_adapter
     src/tests/util/token_extractor
     src/tests/vespa-fileheader-inspect
+    src/tests/query/word_alternatives
 )
 
 install_jar(searchlib.jar)

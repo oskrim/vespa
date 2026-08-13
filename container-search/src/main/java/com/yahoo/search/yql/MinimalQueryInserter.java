@@ -32,6 +32,7 @@ import java.util.logging.Logger;
  */
 // TODO: The query model should do this
 @Beta
+@SuppressWarnings("removal")
 @Provides(MinimalQueryInserter.EXTERNAL_YQL)
 @Before(PhaseNames.TRANSFORMED_QUERY)
 @After("com.yahoo.prelude.statistics.StatisticsSearcher")
@@ -142,7 +143,7 @@ public class MinimalQueryInserter extends Searcher {
         if (query.getModel().getFilter() != null && query.getModel().getQueryString() == null) {
             query.errors().add(ErrorMessage.createInvalidQueryParameter(
                     "Filter can only be combined with query string. " +
-                            "See https://docs.vespa.ai/en/reference/query-api-reference.html#model.filter"));
+                            "See https://docs.vespa.ai/en/reference/api/query.html#model.filter"));
         }
         return null;
     }

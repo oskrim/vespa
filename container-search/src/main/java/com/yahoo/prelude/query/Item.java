@@ -1,6 +1,7 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.prelude.query;
 
+import ai.vespa.searchlib.searchprotocol.protobuf.SearchProtocol;
 import com.yahoo.collections.CopyOnWriteHashMap;
 import com.yahoo.compress.IntegerCompressor;
 import com.yahoo.language.Language;
@@ -247,9 +248,12 @@ public abstract class Item implements Cloneable {
         return parent;
     }
 
-    public abstract int encode(ByteBuffer buffer);
+    public abstract int encode(ByteBuffer buffer, SerializationContext context);
 
-    protected void encodeThis(ByteBuffer buffer) {
+    /** Convert this item to protobuf format */
+    abstract SearchProtocol.QueryTreeItem toProtobuf(SerializationContext context);
+
+    protected void encodeThis(ByteBuffer buffer, SerializationContext context) {
         byte CODE_MASK =     0b00011111;
         byte FEAT_WEIGHT =   0b00100000;
         byte FEAT_UNIQUEID = 0b01000000;

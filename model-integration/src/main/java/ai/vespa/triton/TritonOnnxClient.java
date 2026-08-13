@@ -11,6 +11,8 @@ import com.yahoo.tensor.DimensionSizes;
 import com.yahoo.tensor.IndexedTensor;
 import com.yahoo.tensor.Tensor;
 import com.yahoo.tensor.TensorType;
+import com.yahoo.text.Text;
+import com.yahoo.language.process.TimeoutException;
 import grpc.health.v1.HealthGrpc;
 import grpc.health.v1.HealthOuterClass.HealthCheckRequest;
 import grpc.health.v1.HealthOuterClass.HealthCheckResponse;
@@ -18,66 +20,110 @@ import inference.GRPCInferenceServiceGrpc;
 import inference.GrpcService;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
+import io.grpc.Status;
+import io.grpc.StatusException;
 import io.grpc.StatusRuntimeException;
 import io.grpc.stub.AbstractBlockingStub;
 import io.grpc.stub.AbstractStub;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.time.Duration;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.function.Function;
+import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
 
+import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static java.util.concurrent.TimeUnit.SECONDS;
 
 /**
  * Experimental model inference using Nvidia Triton as ONNX backend.
  *
  * @author bjorncs
+ * @author glebashnik
  */
 @Beta
 public class TritonOnnxClient implements AutoCloseable {
+    private static final int MAX_INBOUND_MESSAGE_SIZE_MIB = 128;
+    private static final int MAX_MODEL_LOAD_ATTEMPTS = 5;
+    private static final int MAX_MODEL_LOAD_WAIT_MILLIS = 1000;
+    private static final int MAX_MODEL_UNLOAD_ATTEMPTS = 5;
+    private static final int MAX_MODEL_UNLOAD_WAIT_MILLIS = 1000;
 
     private static final Logger log = Logger.getLogger(TritonOnnxClient.class.getName());
 
     private final GRPCInferenceServiceGrpc.GRPCInferenceServiceBlockingV2Stub grpcInferenceStub;
     private final HealthGrpc.HealthBlockingV2Stub grpcHealthStub;
+    private final Duration defaultTimeout;
 
     public static class TritonException extends RuntimeException {
-        public TritonException(Throwable cause) { super(cause); }
-        public TritonException(String message) { super(message); }
-        public TritonException(String message, Throwable cause) { super(message, cause); }
+        public TritonException(String message) {
+            super(message);
+        }
+
+        public TritonException(String message, Throwable cause) {
+            super(message, cause);
+        }
+    }
+
+    @FunctionalInterface
+    private interface GrpcInvocation<T, S extends AbstractBlockingStub<S>> {
+        T apply(S stub) throws StatusException;
     }
 
     @Inject
     public TritonOnnxClient(TritonConfig config) {
         var ch = ManagedChannelBuilder.forTarget(config.target())
                 .usePlaintext()
+                .maxInboundMessageSize(MAX_INBOUND_MESSAGE_SIZE_MIB * 1024 * 1024)
                 .build();
         this.grpcInferenceStub = GRPCInferenceServiceGrpc.newBlockingV2Stub(ch);
         this.grpcHealthStub = HealthGrpc.newBlockingV2Stub(ch);
+        this.defaultTimeout = Duration.ofMillis(config.timeout());
     }
 
-    public record ModelMetadata(Map<String, TensorType> inputs, Map<String, TensorType> outputs) {}
+    public static class ModelMetadata {
+        public final Map<String, TensorType> inputs;
+        public final Map<String, TensorType> outputs;
+        // Only used by `evaluate` inside the client, thus `private`.
+        private final List<GrpcService.ModelMetadataResponse.TensorMetadata> tritonInputs;
+
+        private ModelMetadata(
+                Map<String, TensorType> inputs,
+                Map<String, TensorType> outputs,
+                List<GrpcService.ModelMetadataResponse.TensorMetadata> tritonInputs) {
+            this.inputs = Collections.unmodifiableMap(inputs);
+            this.outputs = Collections.unmodifiableMap(outputs);
+            this.tritonInputs = Collections.unmodifiableList(tritonInputs);
+        }
+    }
+
     public ModelMetadata getModelMetadata(String modelName) {
-        var request = GrpcService.ModelMetadataRequest.newBuilder()
-                .setName(modelName)
-                .build();
-        var response = invokeGrpc(grpcInferenceStub, s -> s.modelMetadata(request));
+        var request =
+                GrpcService.ModelMetadataRequest.newBuilder().setName(modelName).build();
+        var response = invokeGrpc(grpcInferenceStub, s -> s.modelMetadata(request), "Failed to get model metadata");
         var inputs = toTensorTypes(response.getInputsList());
         var outputs = toTensorTypes(response.getOutputsList());
-        return new ModelMetadata(inputs, outputs);
+        return new ModelMetadata(inputs, outputs, response.getInputsList());
     }
 
+    public boolean isModelReady(String modelName) {
+        var request =
+                GrpcService.ModelReadyRequest.newBuilder().setName(modelName).build();
+        var response = invokeGrpc(
+                grpcInferenceStub, invocation -> invocation.modelReady(request), "Failed to check model ready");
+        return response.getReady();
+    }
 
     public boolean isHealthy() {
         var req = HealthCheckRequest.newBuilder().build();
-        var response = invokeGrpc(grpcHealthStub, s -> s.check(req));
+        var response = invokeGrpc(grpcHealthStub, s -> s.check(req), "Failed to check Triton health");
         log.fine(() -> "Triton health status: " + response.getStatus());
         return response.getStatus() == HealthCheckResponse.ServingStatus.SERVING;
     }
@@ -87,52 +133,175 @@ public class TritonOnnxClient implements AutoCloseable {
         var request = GrpcService.RepositoryModelLoadRequest.newBuilder()
                 .setModelName(modelName)
                 .build();
-        invokeGrpc(grpcInferenceStub, s -> s.repositoryModelLoad(request));
+        invokeGrpc(grpcInferenceStub, s -> s.repositoryModelLoad(request), "Failed to load model");
     }
 
     public void unloadModel(String modelName) {
+        log.fine(() -> "Unloading model " + modelName);
         var request = GrpcService.RepositoryModelUnloadRequest.newBuilder()
                 .setModelName(modelName)
                 .build();
-        invokeGrpc(grpcInferenceStub, s -> s.repositoryModelUnload(request));
+        invokeGrpc(grpcInferenceStub, s -> s.repositoryModelUnload(request), "Failed to unload model");
     }
 
-    public Map<String, Tensor> evaluate(String modelName, Map<String, Tensor> inputs) {
-        return evaluate(modelName, inputs, Set.of());
+    public void unloadAllModels() {
+        log.fine(() -> "Unloading all models");
+        var request =
+                GrpcService.RepositoryIndexRequest.newBuilder().setReady(true).build();
+        var response = invokeGrpc(grpcInferenceStub, s -> s.repositoryIndex(request), "Failed to get repository index");
+
+        for (var modelIndex : response.getModelsList()) {
+            var modelName = modelIndex.getName();
+
+            try {
+                unloadModel(modelName);
+            } catch (TritonException e) {
+                log.log(Level.SEVERE, e, () -> "Failed to unload model " + modelName);
+            }
+        }
     }
 
-    public Tensor evaluate(String modelName, Map<String, Tensor> inputs, String outputName) {
-        return evaluate(modelName, inputs, Set.of(outputName)).get(outputName);
+    /**
+     * Makes several attempts to load the model and checks its readiness.
+     * This mitigates the timing issue because of delay between model files are copied to model repository
+     * and the model can be loaded.
+     */
+    public void loadUntilModelReady(String modelName) {
+        if (isModelReady(modelName)) {
+            return;
+        }
+
+        boolean isLoaded = false;
+        TritonException lastException = null;
+        long startMillis = System.currentTimeMillis();
+
+        for (int attempt = 0; attempt < MAX_MODEL_LOAD_ATTEMPTS; attempt++) {
+            try {
+                if (!isLoaded) { // We only need one successful load request.
+                    loadModel(modelName);
+                    isLoaded = true;
+                }
+
+                if (isModelReady(modelName)) {
+                    return;
+                }
+            } catch (TritonException e) {
+                lastException = e;
+            }
+
+            if (attempt < MAX_MODEL_LOAD_ATTEMPTS - 1) {
+                try {
+                    Thread.sleep(MAX_MODEL_LOAD_WAIT_MILLIS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new TritonException("Interrupted loading model " + modelName, e);
+                }
+            }
+        }
+
+        var waitMillis = System.currentTimeMillis() - startMillis;
+        var exceptionMessage = "Failed loading model " + modelName + " after " + waitMillis + " ms";
+        throw new TritonException(exceptionMessage, lastException);
     }
 
-    public Map<String, Tensor> evaluate(String modelName, Map<String, Tensor> inputs, Set<String> outputNames) {
-        var requestBuilder = GrpcService.ModelInferRequest.newBuilder()
-                .setModelName(modelName);
+    /**
+     * Makes several attempts to unload the model and check until it's not ready.
+     * This helps to mitigate a timing issue because of the delay between model unload request and the model not ready
+     * so that model files can be deleted.
+     */
+    public void unloadUntilModelNotReady(String modelName) {
+        if (!isModelReady(modelName)) {
+            return;
+        }
 
-        // Get model metadata to convert vespa tensor types to onnx types
-        var metadata = invokeGrpc(grpcInferenceStub, s -> s.modelMetadata(
-                GrpcService.ModelMetadataRequest.newBuilder()
-                        .setName(modelName)
-                        .build()));
+        boolean isUnloaded = false;
+        TritonException lastException = null;
+        long startMillis = System.currentTimeMillis();
 
-        inputs.forEach((name, tensor) -> addInputToBuilder(metadata.getInputsList(), requestBuilder, tensor, name));
+        for (int attempt = 0; attempt < MAX_MODEL_UNLOAD_ATTEMPTS; attempt++) {
+            try {
+                if (!isUnloaded) { // We only need one successful unload request.
+                    unloadModel(modelName);
+                    isUnloaded = true;
+                }
+
+                if (!isModelReady(modelName)) {
+                    return;
+                }
+            } catch (TritonException e) {
+                lastException = e;
+            }
+
+            if (attempt < MAX_MODEL_UNLOAD_ATTEMPTS - 1) {
+                try {
+                    Thread.sleep(MAX_MODEL_UNLOAD_WAIT_MILLIS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new TritonException("Interrupted unloading model " + modelName, e);
+                }
+            }
+        }
+
+        var waitMillis = System.currentTimeMillis() - startMillis;
+        var exceptionMessage = "Failed unloading model " + modelName + " after " + waitMillis + " ms";
+        throw new TritonException(exceptionMessage, lastException);
+    }
+
+    public Map<String, Tensor> evaluate(String modelName, ModelMetadata modelMetadata, Map<String, Tensor> inputs) {
+        return evaluate(modelName, modelMetadata, inputs, Set.of(), null);
+    }
+
+    public Map<String, Tensor> evaluate(
+            String modelName, ModelMetadata modelMetadata, Map<String, Tensor> inputs, Duration timeout) {
+        return evaluate(modelName, modelMetadata, inputs, Set.of(), timeout);
+    }
+
+    public Tensor evaluate(
+            String modelName, ModelMetadata modelMetadata, Map<String, Tensor> inputs, String outputName) {
+        return evaluate(modelName, modelMetadata, inputs, Set.of(outputName), null).get(outputName);
+    }
+
+    public Tensor evaluate(
+            String modelName, ModelMetadata modelMetadata, Map<String, Tensor> inputs, String outputName,
+            Duration timeout) {
+        return evaluate(modelName, modelMetadata, inputs, Set.of(outputName), timeout).get(outputName);
+    }
+
+    public Map<String, Tensor> evaluate(
+            String modelName, ModelMetadata modelMetadata, Map<String, Tensor> inputs, Set<String> outputNames) {
+        return evaluate(modelName, modelMetadata, inputs, outputNames, null);
+    }
+
+    public Map<String, Tensor> evaluate(
+            String modelName, ModelMetadata modelMetadata, Map<String, Tensor> inputs, Set<String> outputNames,
+            Duration timeout) {
+        Duration effectiveTimeout = timeout != null ? timeout : defaultTimeout;
+        if (effectiveTimeout.toMillis() <= 0) {
+            throw new TimeoutException(
+                    "Request deadline exceeded before Triton ONNX evaluation of model " + modelName);
+        }
+
+        var requestBuilder = GrpcService.ModelInferRequest.newBuilder().setModelName(modelName);
+
+        inputs.forEach((name, tensor) -> addInputToBuilder(modelMetadata.tritonInputs, requestBuilder, tensor, name));
 
         // Returns all output if none is specified
-        outputNames.forEach(name -> requestBuilder.addOutputs(
-                GrpcService.ModelInferRequest.InferRequestedOutputTensor.newBuilder()
+        outputNames.forEach(
+                name -> requestBuilder.addOutputs(GrpcService.ModelInferRequest.InferRequestedOutputTensor.newBuilder()
                         .setName(name)
                         .build()));
 
-        var response = invokeGrpc(grpcInferenceStub, s -> s.modelInfer(requestBuilder.build()));
+        var stub = grpcInferenceStub.withDeadlineAfter(effectiveTimeout.toMillis(), MILLISECONDS);
+        var response = invokeGrpc(stub, s -> s.modelInfer(requestBuilder.build()), "Failed to evaluate model");
 
         Map<String, Tensor> outputs = new HashMap<>();
         for (int i = 0; i < response.getOutputsCount(); i++) {
             var tritonTensor = response.getOutputs(i);
             var name = OnnxImporter.asValidIdentifier(tritonTensor.getName());
-            var outputBuffer =
-                    ByteBuffer.wrap(response.getRawOutputContents(i).toByteArray())
-                            .order(ByteOrder.LITTLE_ENDIAN);
-            var tensor = createTensorFromRawOutput(outputBuffer, tritonTensor.getDatatype(), tritonTensor.getShapeList());
+            var outputBuffer = ByteBuffer.wrap(response.getRawOutputContents(i).toByteArray())
+                    .order(ByteOrder.LITTLE_ENDIAN);
+            var tensor =
+                    createTensorFromRawOutput(outputBuffer, tritonTensor.getDatatype(), tritonTensor.getShapeList());
             outputs.put(name, tensor);
         }
 
@@ -141,11 +310,10 @@ public class TritonOnnxClient implements AutoCloseable {
 
     @Override
     public void close() {
-        var ch = (ManagedChannel) invokeGrpc(grpcInferenceStub, AbstractStub::getChannel);
+        var ch = (ManagedChannel) invokeGrpc(grpcInferenceStub, AbstractStub::getChannel, "Failed to get channel");
         ch.shutdown();
         try {
-            if (!ch.awaitTermination(5, SECONDS))
-                throw new IllegalStateException("Failed to close channel");
+            if (!ch.awaitTermination(5, SECONDS)) throw new IllegalStateException("Failed to close channel");
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new TritonException("Failed to close channel", e);
@@ -154,10 +322,11 @@ public class TritonOnnxClient implements AutoCloseable {
         }
     }
 
-    private static void addInputToBuilder(List<GrpcService.ModelMetadataResponse.TensorMetadata> onnxInputTypes,
-                                          GrpcService.ModelInferRequest.Builder builder,
-                                          Tensor vespaTensor,
-                                          String vespaName) {
+    private static void addInputToBuilder(
+            List<GrpcService.ModelMetadataResponse.TensorMetadata> onnxInputTypes,
+            GrpcService.ModelInferRequest.Builder builder,
+            Tensor vespaTensor,
+            String vespaName) {
         if (!(vespaTensor instanceof IndexedTensor indexedTensor)) {
             throw new TritonException("Nvidia Triton currently only supports tensors with indexed dimensions");
         }
@@ -174,13 +343,13 @@ public class TritonOnnxClient implements AutoCloseable {
 
     private static GrpcService.ModelMetadataResponse.TensorMetadata findMatchingInput(
             List<GrpcService.ModelMetadataResponse.TensorMetadata> onnxInputTypes, String vespaName) {
-            for (var inputType : onnxInputTypes) {
-                if (inputType.getName().equals(vespaName)) return inputType;
-            }
-            for (var inputType : onnxInputTypes) {
-                if (OnnxImporter.asValidIdentifier(inputType.getName()).equals(vespaName)) return inputType;
-            }
-            throw new TritonException("No matching input type found for " + vespaName);
+        for (var inputType : onnxInputTypes) {
+            if (inputType.getName().equals(vespaName)) return inputType;
+        }
+        for (var inputType : onnxInputTypes) {
+            if (OnnxImporter.asValidIdentifier(inputType.getName()).equals(vespaName)) return inputType;
+        }
+        throw new TritonException("No matching input type found for " + vespaName);
     }
 
     private static ByteString createRawInputContent(
@@ -305,31 +474,32 @@ public class TritonOnnxClient implements AutoCloseable {
                     builder.cellByDirectIndex(i, longBuffer.get(i));
                 }
             }
-            default -> throw new TritonException("Unsupported type from ONNX output: %s".formatted(tritonType));
+            default -> throw new TritonException(Text.format("Unsupported type from ONNX output: %s", tritonType));
         }
         return builder.build();
     }
 
     /** Converts {@link TensorType} using mapping rule similar to TensorConverter */
-    private static Map<String, TensorType> toTensorTypes(Collection<GrpcService.ModelMetadataResponse.TensorMetadata> list) {
+    private static Map<String, TensorType> toTensorTypes(
+            Collection<GrpcService.ModelMetadataResponse.TensorMetadata> list) {
         return list.stream()
                 .collect(Collectors.toMap(
                         tm -> OnnxImporter.asValidIdentifier(tm.getName()),
-                        tm -> toVespaTensorType(tm.getDatatype(), tm.getShapeList())
-                ));
+                        tm -> toVespaTensorType(tm.getDatatype(), tm.getShapeList())));
     }
 
     private static TensorType toVespaTensorType(String tritonType, List<Long> shapes) {
-        var dataType = switch (tritonType) {
-            case "INT8" -> TensorType.Value.INT8;
-            case "BF16" -> TensorType.Value.BFLOAT16;
-            case "FP16", "FP32" -> TensorType.Value.FLOAT;
-            default -> TensorType.Value.DOUBLE;
-        };
+        var dataType =
+                switch (tritonType) {
+                    case "INT8" -> TensorType.Value.INT8;
+                    case "BF16" -> TensorType.Value.BFLOAT16;
+                    case "FP16", "FP32" -> TensorType.Value.FLOAT;
+                    default -> TensorType.Value.DOUBLE;
+                };
         var builder = new TensorType.Builder(dataType);
         for (int i = 0; i < shapes.size(); i++) {
             long shape = shapes.get(i);
-            String dimName = "d" + i;  // Using index instead of shape value as in TensorConverter
+            String dimName = "d" + i; // Using index instead of shape value as in TensorConverter
             if (shape >= 0) {
                 builder.indexed(dimName, shape);
             } else {
@@ -339,13 +509,21 @@ public class TritonOnnxClient implements AutoCloseable {
         return builder.build();
     }
 
-
-    // Converts StatusRuntimeException to TritonException
-    private <T, S extends AbstractBlockingStub<S>> T invokeGrpc(S stub, Function<S, T> invocation) {
+    // Converts StatusRuntimeException and StatusException to TritonException
+    private <T, S extends AbstractBlockingStub<S>> T invokeGrpc(
+            S stub, GrpcInvocation<T, S> invocation, String errorMessage) {
         try {
             return invocation.apply(stub);
+        } catch (StatusException e) {
+            throw translateGrpcFailure(e.getStatus(), errorMessage, e);
         } catch (StatusRuntimeException e) {
-            throw new TritonException(e);
+            throw translateGrpcFailure(e.getStatus(), errorMessage, e);
         }
+    }
+
+    private static RuntimeException translateGrpcFailure(Status status, String errorMessage, Throwable cause) {
+        if (status.getCode() == Status.Code.DEADLINE_EXCEEDED)
+            return new TimeoutException(errorMessage + ": deadline exceeded", cause);
+        return new TritonException(errorMessage, cause);
     }
 }

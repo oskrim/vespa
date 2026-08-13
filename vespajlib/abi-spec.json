@@ -1,4 +1,32 @@
 {
+  "com.yahoo.data.JsonProducer" : {
+    "superClass" : "java.lang.Object",
+    "interfaces" : [ ],
+    "attributes" : [
+      "public",
+      "interface",
+      "abstract"
+    ],
+    "methods" : [
+      "public abstract java.lang.StringBuilder writeJson(java.lang.StringBuilder)",
+      "public java.lang.String toJson()"
+    ],
+    "fields" : [ ]
+  },
+  "com.yahoo.data.XmlProducer" : {
+    "superClass" : "java.lang.Object",
+    "interfaces" : [ ],
+    "attributes" : [
+      "public",
+      "interface",
+      "abstract"
+    ],
+    "methods" : [
+      "public abstract java.lang.StringBuilder writeXML(java.lang.StringBuilder)",
+      "public java.lang.String toXML()"
+    ],
+    "fields" : [ ]
+  },
   "com.yahoo.data.access.ArrayTraverser" : {
     "superClass" : "java.lang.Object",
     "interfaces" : [ ],
@@ -28,7 +56,8 @@
   "com.yahoo.data.access.Inspector" : {
     "superClass" : "java.lang.Object",
     "interfaces" : [
-      "com.yahoo.data.access.Inspectable"
+      "com.yahoo.data.access.Inspectable",
+      "com.yahoo.data.disclosure.DataSource"
     ],
     "attributes" : [
       "public",
@@ -57,7 +86,8 @@
       "public abstract com.yahoo.data.access.Inspector entry(int)",
       "public abstract com.yahoo.data.access.Inspector field(java.lang.String)",
       "public abstract java.lang.Iterable entries()",
-      "public abstract java.lang.Iterable fields()"
+      "public abstract java.lang.Iterable fields()",
+      "public void emit(com.yahoo.data.disclosure.DataSink)"
     ],
     "fields" : [ ]
   },
@@ -278,7 +308,8 @@
       "public java.lang.String asString()",
       "public java.lang.String asString(java.lang.String)",
       "public byte[] asUtf8()",
-      "public byte[] asUtf8(byte[])"
+      "public byte[] asUtf8(byte[])",
+      "public void emit(com.yahoo.data.disclosure.DataSink)"
     ],
     "fields" : [ ]
   },
@@ -337,7 +368,6 @@
       "public boolean equals(java.lang.Object)",
       "public java.lang.String toString()",
       "public static java.io.Reader of(java.lang.CharSequence)",
-      "public static java.io.Reader nullReader()",
       "public int read(java.nio.CharBuffer)",
       "public int read()",
       "public int read(char[])",
@@ -351,6 +381,18 @@
       "public long transferTo(java.io.Writer)",
       "public static void closeAll(java.util.List)",
       "public static java.io.Reader nullReader()"
+    ],
+    "fields" : [ ]
+  },
+  "com.yahoo.net.AcceptHeaderMatcher" : {
+    "superClass" : "java.lang.Object",
+    "interfaces" : [ ],
+    "attributes" : [
+      "public"
+    ],
+    "methods" : [
+      "public void <init>(java.lang.String)",
+      "public varargs java.util.List preferredExactMediaTypes(java.lang.String[])"
     ],
     "fields" : [ ]
   },
@@ -1353,6 +1395,20 @@
       "public com.yahoo.tensor.TensorAddress fullAddressOf(java.util.List, int[])",
       "public com.yahoo.tensor.TensorAddress mappedPartialAddress(com.yahoo.tensor.TensorType, java.util.List)",
       "public bridge synthetic int compareTo(java.lang.Object)"
+    ],
+    "fields" : [ ]
+  },
+  "com.yahoo.tensor.TensorDataSource" : {
+    "superClass" : "java.lang.Object",
+    "interfaces" : [
+      "com.yahoo.data.disclosure.DataSource"
+    ],
+    "attributes" : [
+      "public"
+    ],
+    "methods" : [
+      "public void <init>(com.yahoo.tensor.Tensor, com.yahoo.tensor.serialization.JsonFormat$EncodeOptions)",
+      "public void emit(com.yahoo.data.disclosure.DataSink)"
     ],
     "fields" : [ ]
   },
@@ -3509,7 +3565,11 @@
       "public static int encode(int, byte[], int)",
       "public static void encode(int, java.nio.ByteBuffer)",
       "public static int encode(int, java.io.OutputStream)",
-      "public static int codePointAsUtf8Length(int)"
+      "public static int codePointAsUtf8Length(int)",
+      "public static java.io.FileReader createReader(java.io.File)",
+      "public static java.io.FileReader createReader(java.lang.String)",
+      "public static java.io.FileWriter createWriter(java.io.File)",
+      "public static java.io.FileWriter createWriter(java.lang.String)"
     ],
     "fields" : [ ]
   },
@@ -3947,6 +4007,7 @@
       "public void <init>()",
       "public static java.lang.String toMessageString(java.lang.Throwable)",
       "public static java.util.Optional findCause(java.lang.Throwable, java.lang.Class)",
+      "public static java.util.Optional findRootCause(java.lang.Throwable, java.lang.Class)",
       "public static void uncheck(com.yahoo.yolean.Exceptions$RunnableThrowingIOException)",
       "public static varargs void uncheck(com.yahoo.yolean.Exceptions$RunnableThrowingIOException, java.lang.String, java.lang.String[])",
       "public static void uncheckAndIgnore(com.yahoo.yolean.Exceptions$RunnableThrowingIOException, java.lang.Class)",
@@ -4263,7 +4324,8 @@
       "public static final java.lang.String OPTION_FREQUENCY_PENALTY",
       "public static final java.lang.String OPTION_PRESENCE_PENALTY",
       "public static final java.lang.String OPTION_SEED",
-      "public static final java.lang.String OPTION_JSON_SCHEMA"
+      "public static final java.lang.String OPTION_JSON_SCHEMA",
+      "public static final java.lang.String OPTION_REASONING_EFFORT"
     ]
   },
   "ai.vespa.llm.LanguageModel" : {

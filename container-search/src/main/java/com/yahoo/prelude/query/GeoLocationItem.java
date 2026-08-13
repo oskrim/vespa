@@ -2,6 +2,7 @@
 
 package com.yahoo.prelude.query;
 
+import ai.vespa.searchlib.searchprotocol.protobuf.SearchProtocol;
 import com.yahoo.prelude.Location;
 import java.nio.ByteBuffer;
 
@@ -99,8 +100,8 @@ public class GeoLocationItem extends TermItem {
     }
 
     @Override
-    protected void encodeThis(ByteBuffer buffer) {
-        super.encodeThis(buffer); // takes care of index bytes
+    protected void encodeThis(ByteBuffer buffer, SerializationContext context) {
+        super.encodeThis(buffer, context); // takes care of index bytes
         // TODO: use a better format for encoding the location on the wire.
         putString(location.backendString(), buffer);
     }
@@ -118,6 +119,34 @@ public class GeoLocationItem extends TermItem {
     @Override
     public boolean isWords() {
         return false;
+    }
+
+    @Override
+    SearchProtocol.QueryTreeItem toProtobuf(SerializationContext context) {
+        var builder = SearchProtocol.ItemGeoLocationTerm.newBuilder();
+        builder.setProperties(ToProtobuf.buildTermProperties(this, getIndexName()));
+
+        // Set the circle/bounding box properties based on the location
+        if (location.isGeoCircle()) {
+            builder.setHasGeoCircle(true);
+            builder.setLatitude(location.degNS());
+            builder.setLongitude(location.degEW());
+            double radius = location.degRadius();
+            builder.setRadius(radius);
+        }
+
+        if (location.hasBoundingBox()) {
+            builder.setHasBoundingBox(true);
+            var bbox = location.getBoundingBox();
+            builder.setN(bbox.north());
+            builder.setS(bbox.south());
+            builder.setE(bbox.east());
+            builder.setW(bbox.west());
+        }
+
+        return SearchProtocol.QueryTreeItem.newBuilder()
+                .setItemGeoLocationTerm(builder.build())
+                .build();
     }
 
 }

@@ -16,8 +16,7 @@ using namespace search::query;
 
 namespace {
 
-template <class Base>
-struct InitTerm : Base {
+template <class Base> struct InitTerm : Base {
     InitTerm() : Base(typename Base::Type(), "view", 0, Weight(0)) {}
 };
 
@@ -34,12 +33,12 @@ struct MyEquiv : Equiv {
 };
 
 struct MyNear : Near {
-    MyNear() : Near(1) {}
+    MyNear() : Near(1, 0, 0) {}
     ~MyNear() override;
 };
 
 struct MyONear : ONear {
-    MyONear() : ONear(1) {}
+    MyONear() : ONear(1, 0, 0) {}
     ~MyONear() override;
 };
 
@@ -61,7 +60,7 @@ struct MyRank : Rank {
     ~MyRank() override;
 };
 
-struct MyNumberTerm : InitTerm<NumberTerm>  {
+struct MyNumberTerm : InitTerm<NumberTerm> {
     ~MyNumberTerm() override;
 };
 
@@ -69,7 +68,7 @@ struct MyLocationTerm : InitTerm<LocationTerm> {
     ~MyLocationTerm() override;
 };
 
-struct MyPrefixTerm : InitTerm<PrefixTerm>  {
+struct MyPrefixTerm : InitTerm<PrefixTerm> {
     ~MyPrefixTerm() override;
 };
 
@@ -85,7 +84,7 @@ struct MySubstrTerm : InitTerm<SubstringTerm> {
     ~MySubstrTerm() override;
 };
 
-struct MySuffixTerm : InitTerm<SuffixTerm>  {
+struct MySuffixTerm : InitTerm<SuffixTerm> {
     ~MySuffixTerm() override;
 };
 
@@ -123,8 +122,16 @@ struct MyRegExpTerm : InitTerm<RegExpTerm> {
 };
 
 struct MyNearestNeighborTerm : NearestNeighborTerm {
-    MyNearestNeighborTerm() : NearestNeighborTerm("qt", "fn", 0, Weight(42), 10, true, 666, 1234.5) {}
+    MyNearestNeighborTerm() : NearestNeighborTerm("qt", "fn", 0, Weight(42), 10, true, make_hnsw_params()) {}
     ~MyNearestNeighborTerm() override;
+
+private:
+    static HnswParams make_hnsw_params() {
+        HnswParams params;
+        params.distance_threshold = 1234.5;
+        params.explore_additional_hits = 666;
+        return params;
+    }
 };
 
 struct MyTrue : TrueQueryNode {
@@ -136,11 +143,13 @@ struct MyFalse : FalseQueryNode {
 };
 
 struct MyInTerm : InTerm {
-    MyInTerm()
-        : InTerm(std::make_unique<StringTermVector>(0), MultiTerm::Type::STRING, "view", 0, Weight(0))
-    {
-    }
+    MyInTerm() : InTerm(std::make_unique<StringTermVector>(0), MultiTerm::Type::STRING, "view", 0, Weight(0)) {}
     ~MyInTerm() override;
+};
+
+struct MyWordAlternatives : WordAlternatives {
+    MyWordAlternatives() : WordAlternatives(std::make_unique<StringTermVector>(0), "view", 0, Weight(0)) {}
+    ~MyWordAlternatives() override;
 };
 
 MyAnd::~MyAnd() = default;
@@ -197,6 +206,8 @@ MyFalse::~MyFalse() = default;
 
 MyInTerm::~MyInTerm() = default;
 
+MyWordAlternatives::~MyWordAlternatives() = default;
+
 struct MyQueryNodeTypes {
     using And = MyAnd;
     using AndNot = MyAndNot;
@@ -225,52 +236,51 @@ struct MyQueryNodeTypes {
     using FalseQueryNode = MyFalse;
     using TrueQueryNode = MyTrue;
     using InTerm = MyInTerm;
+    using WordAlternatives = MyWordAlternatives;
 };
 
-class MyCustomVisitor : public CustomTypeVisitor<MyQueryNodeTypes>
-{
+class MyCustomVisitor : public CustomTypeVisitor<MyQueryNodeTypes> {
 public:
-    template <typename T>
-    bool &isVisited() {
+    template <typename T> bool& isVisited() {
         static bool b;
         return b;
     }
 
     template <typename T> void setVisited() { isVisited<T>() = true; }
 
-    void visit(MyAnd &) override { setVisited<MyAnd>(); }
-    void visit(MyAndNot &) override { setVisited<MyAndNot>(); }
-    void visit(MyEquiv &) override { setVisited<MyEquiv>(); }
-    void visit(MyNumberTerm &) override { setVisited<MyNumberTerm>(); }
-    void visit(MyLocationTerm &) override { setVisited<MyLocationTerm>(); }
-    void visit(MyNear &) override { setVisited<MyNear>(); }
-    void visit(MyONear &) override { setVisited<MyONear>(); }
-    void visit(MyOr &) override { setVisited<MyOr>(); }
-    void visit(MyPhrase &) override { setVisited<MyPhrase>(); }
-    void visit(MySameElement &) override { setVisited<MySameElement>(); }
-    void visit(MyPrefixTerm &) override { setVisited<MyPrefixTerm>(); }
-    void visit(MyRangeTerm &) override { setVisited<MyRangeTerm>(); }
-    void visit(MyRank &) override { setVisited<MyRank>(); }
-    void visit(MyStringTerm &) override { setVisited<MyStringTerm>(); }
-    void visit(MySubstrTerm &) override { setVisited<MySubstrTerm>(); }
-    void visit(MySuffixTerm &) override { setVisited<MySuffixTerm>(); }
-    void visit(MyWeakAnd &) override { setVisited<MyWeakAnd>(); }
-    void visit(MyWeightedSetTerm &) override { setVisited<MyWeightedSetTerm>(); }
-    void visit(MyDotProduct &) override { setVisited<MyDotProduct>(); }
-    void visit(MyWandTerm &) override { setVisited<MyWandTerm>(); }
-    void visit(MyPredicateQuery &) override { setVisited<MyPredicateQuery>(); }
-    void visit(MyRegExpTerm &) override { setVisited<MyRegExpTerm>(); }
-    void visit(MyNearestNeighborTerm &) override { setVisited<MyNearestNeighborTerm>(); }
-    void visit(MyTrue &) override { setVisited<MyTrue>(); }
-    void visit(MyFalse &) override { setVisited<MyFalse>(); }
-    void visit(MyFuzzyTerm &) override { setVisited<MyFuzzyTerm>(); }
+    void visit(MyAnd&) override { setVisited<MyAnd>(); }
+    void visit(MyAndNot&) override { setVisited<MyAndNot>(); }
+    void visit(MyEquiv&) override { setVisited<MyEquiv>(); }
+    void visit(MyNumberTerm&) override { setVisited<MyNumberTerm>(); }
+    void visit(MyLocationTerm&) override { setVisited<MyLocationTerm>(); }
+    void visit(MyNear&) override { setVisited<MyNear>(); }
+    void visit(MyONear&) override { setVisited<MyONear>(); }
+    void visit(MyOr&) override { setVisited<MyOr>(); }
+    void visit(MyPhrase&) override { setVisited<MyPhrase>(); }
+    void visit(MySameElement&) override { setVisited<MySameElement>(); }
+    void visit(MyPrefixTerm&) override { setVisited<MyPrefixTerm>(); }
+    void visit(MyRangeTerm&) override { setVisited<MyRangeTerm>(); }
+    void visit(MyRank&) override { setVisited<MyRank>(); }
+    void visit(MyStringTerm&) override { setVisited<MyStringTerm>(); }
+    void visit(MySubstrTerm&) override { setVisited<MySubstrTerm>(); }
+    void visit(MySuffixTerm&) override { setVisited<MySuffixTerm>(); }
+    void visit(MyWeakAnd&) override { setVisited<MyWeakAnd>(); }
+    void visit(MyWeightedSetTerm&) override { setVisited<MyWeightedSetTerm>(); }
+    void visit(MyDotProduct&) override { setVisited<MyDotProduct>(); }
+    void visit(MyWandTerm&) override { setVisited<MyWandTerm>(); }
+    void visit(MyPredicateQuery&) override { setVisited<MyPredicateQuery>(); }
+    void visit(MyRegExpTerm&) override { setVisited<MyRegExpTerm>(); }
+    void visit(MyNearestNeighborTerm&) override { setVisited<MyNearestNeighborTerm>(); }
+    void visit(MyTrue&) override { setVisited<MyTrue>(); }
+    void visit(MyFalse&) override { setVisited<MyFalse>(); }
+    void visit(MyFuzzyTerm&) override { setVisited<MyFuzzyTerm>(); }
     void visit(MyInTerm&) override { setVisited<MyInTerm>(); }
+    void visit(MyWordAlternatives&) override { setVisited<MyWordAlternatives>(); }
 };
 
-template <class T>
-void requireThatNodeIsVisited() {
+template <class T> void requireThatNodeIsVisited() {
     MyCustomVisitor visitor;
-    Node::UP query(new T);
+    Node::UP        query(new T);
     visitor.isVisited<T>() = false;
     query->accept(visitor);
     ASSERT_TRUE(visitor.isVisited<T>());
@@ -302,7 +312,8 @@ TEST(CustomTypeVisitorTest, all_query_nodes_are_visited) {
     requireThatNodeIsVisited<MyTrue>();
     requireThatNodeIsVisited<MyFalse>();
     requireThatNodeIsVisited<MyFuzzyTerm>();
+    requireThatNodeIsVisited<MyWordAlternatives>();
 }
-}  // namespace
+} // namespace
 
 GTEST_MAIN_RUN_ALL_TESTS()

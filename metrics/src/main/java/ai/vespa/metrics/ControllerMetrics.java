@@ -42,6 +42,7 @@ public enum ControllerMetrics implements VespaMetrics {
     DNS_QUEUED_REQUESTS("dns.queuedRequests", Unit.REQUEST, "Queued DNS requests"),
     CLOUD_QUOTA_USAGE("cloud.quota.usage", Unit.FRACTION, "Cloud Quota usage per resource type"),
     ZMS_QUOTA_USAGE("zms.quota.usage", Unit.FRACTION, "ZMS Quota usage per resource type"),
+    STRONGDM_RESOURCES("strongdm.resources", Unit.ITEM, "The number of StrongDM resources"),
     COREDUMP_PROCESSED("coredump.processed", Unit.FAILURE,"Controller: Core dumps processed"),
     AUTH0_EXCEPTIONS("auth0.exceptions", Unit.FAILURE, "Controller: Auth0 exceptions"),
     CERTIFICATE_POOL_AVAILABLE("certificate_pool_available", Unit.FRACTION, "Available certificates in the pool, fraction of configured size"),
@@ -83,7 +84,14 @@ public enum ControllerMetrics implements VespaMetrics {
 
     MAIL_SENT("mail.sent", Unit.OPERATION, "Mail sent"),
     MAIL_FAILED("mail.failed", Unit.OPERATION, "Mail delivery failed"),
-    MAIL_THROTTLED("mail.throttled", Unit.OPERATION, "Mail delivery throttled");
+    MAIL_THROTTLED("mail.throttled", Unit.OPERATION, "Mail delivery throttled"),
+
+    AWS_S3_POOL_LEASED_CONCURRENCY("aws.s3.pool.leased_concurrency", Unit.CONNECTION, "Controller: S3 connection pool leased connections"),
+    AWS_S3_POOL_AVAILABLE_CONCURRENCY("aws.s3.pool.available_concurrency", Unit.CONNECTION, "Controller: S3 connection pool available connections"),
+    AWS_S3_POOL_MAX_CONCURRENCY("aws.s3.pool.max_concurrency", Unit.CONNECTION, "Controller: S3 connection pool max connections"),
+    AWS_S3_POOL_PENDING_CONCURRENCY_ACQUIRES("aws.s3.pool.pending_concurrency_acquires", Unit.CONNECTION, "Controller: S3 connection pool pending acquire requests"),
+    AWS_S3_POOL_CONCURRENCY_ACQUIRE_DURATION("aws.s3.pool.concurrency_acquire_duration", Unit.MILLISECOND, "Controller: S3 connection pool acquire duration"),
+    AWS_S3_POOL_OPEN_STREAMS("aws.s3.pool.open_streams", Unit.CONNECTION, "Controller: S3 open response streams not yet closed");
 
 
     private final String name;

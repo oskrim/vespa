@@ -119,12 +119,6 @@
     </dependency>
     <dependency>
       <groupId>com.yahoo.vespa</groupId>
-      <artifactId>container-disc</artifactId>
-      <version>${project.version}</version>
-      <scope>provided</scope>
-    </dependency>
-    <dependency>
-      <groupId>com.yahoo.vespa</groupId>
       <artifactId>searchcore</artifactId>
       <version>${project.version}</version>
       <scope>provided</scope>
@@ -179,7 +173,7 @@
     </dependency>
     <dependency>
       <groupId>com.yahoo.vespa</groupId>
-      <artifactId>container-core</artifactId>
+      <artifactId>container-disc</artifactId>
       <version>${project.version}</version>
       <scope>provided</scope>
     </dependency>
@@ -270,8 +264,15 @@
     <dependency>
       <groupId>com.fasterxml.jackson.core</groupId>
       <artifactId>jackson-annotations</artifactId>
-      <version>${jackson2.vespa.version}</version>
+      <version>${jackson-annotations.vespa.version}</version>
       <scope>provided</scope>
+    </dependency>
+    <!-- OkHttp for VoyageAI embedder HTTP client -->
+    <dependency>
+      <groupId>com.squareup.okhttp3</groupId>
+      <artifactId>okhttp</artifactId>
+      <version>${okhttp.vespa.version}</version>
+      <scope>compile</scope>
     </dependency>
     <dependency>
       <!-- For openai-java -->
@@ -282,7 +283,7 @@
     </dependency>
 
     <dependency>
-      <groupId>org.lz4</groupId>
+      <groupId>at.yawk.lz4</groupId>
       <artifactId>lz4-java</artifactId>
     </dependency>
 
@@ -350,6 +351,13 @@
       <artifactId>mockito-core</artifactId>
       <scope>test</scope>
     </dependency>
+    <!-- MockWebServer for testing VoyageAI embedder HTTP calls -->
+    <dependency>
+      <groupId>com.squareup.okhttp3</groupId>
+      <artifactId>mockwebserver</artifactId>
+      <version>${okhttp.vespa.version}</version>
+      <scope>test</scope>
+    </dependency>
     <dependency>
       <groupId>org.testcontainers</groupId>
       <artifactId>testcontainers</artifactId>
@@ -361,6 +369,10 @@
       <artifactId>junit-jupiter</artifactId>
       <version>${testcontainers.vespa.version}</version>
       <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>com.dev-smart</groupId>
+      <artifactId>ubjson</artifactId>
     </dependency>
   </dependencies>
   <build>
@@ -418,5 +430,9 @@
       </plugin>
     </plugins>
   </build>
+
+  <properties>
+      <test.hide>false</test.hide>
+  </properties>
 
 </project>

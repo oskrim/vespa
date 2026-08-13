@@ -23,7 +23,9 @@ import java.io.IOException;
 import java.util.logging.Level;
 
 import static helpers.CompareConfigTestHelper.assertSerializedConfigFileEquals;
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Tests generation of config from query profiles (XML reading is tested elsewhere)
@@ -183,7 +185,7 @@ public class QueryProfilesTestCase {
         assertEquals(1, logger.entries.size());
         assertEquals("This application define query profile types, but has no query profiles referencing them " +
                 "so they have no effect. " +
-                "See https://docs.vespa.ai/en/query-profiles.html",
+                "See https://docs.vespa.ai/en/querying/query-profiles.html",
                 logger.entries.get(0).message);
     }
 
@@ -203,7 +205,7 @@ public class QueryProfilesTestCase {
         assertEquals("This application define query profile types, but has no query profiles referencing them " +
                 "so they have no effect. " +
                 "In particular, the tensors (vector, matrix) will be interpreted as strings, not tensors if sent in requests. " +
-                "See https://docs.vespa.ai/en/query-profiles.html",
+                "See https://docs.vespa.ai/en/querying/query-profiles.html",
                 logger.entries.get(0).message);
     }
 

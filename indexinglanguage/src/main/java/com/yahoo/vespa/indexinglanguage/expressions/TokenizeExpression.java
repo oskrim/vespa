@@ -3,12 +3,12 @@ package com.yahoo.vespa.indexinglanguage.expressions;
 
 import com.yahoo.document.DataType;
 import com.yahoo.document.datatypes.StringFieldValue;
-import com.yahoo.language.Language;
 import com.yahoo.language.Linguistics;
 import com.yahoo.vespa.indexinglanguage.linguistics.AnnotatorConfig;
 import com.yahoo.vespa.indexinglanguage.linguistics.LinguisticsAnnotator;
 
 import java.util.Objects;
+import java.util.Optional;
 
 /**
  * @author Simon Thoresen Hult
@@ -46,11 +46,9 @@ public final class TokenizeExpression extends Expression {
         StringFieldValue output = input.clone();
         context.setCurrentValue(output);
 
-        AnnotatorConfig configWithLanguage = new AnnotatorConfig(config);
-        Language lang = context.resolveLanguage(linguistics);
-        if (lang != null)
-            configWithLanguage.setLanguage(lang);
-        LinguisticsAnnotator annotator = new LinguisticsAnnotator(linguistics, configWithLanguage);
+        AnnotatorConfig contextualizedConfig = new AnnotatorConfig(config);
+        Optional.ofNullable(context.resolveLanguage(linguistics)).ifPresent(contextualizedConfig::setLanguage);
+        LinguisticsAnnotator annotator = new LinguisticsAnnotator(linguistics, contextualizedConfig);
         annotator.annotate(output, context.getDocumentId().orElse(null), context.isReindexingOperation());
     }
 

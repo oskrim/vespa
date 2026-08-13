@@ -1,5 +1,6 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.search.query.profile.config;
+import java.nio.charset.StandardCharsets;
 
 import com.yahoo.component.ComponentId;
 import com.yahoo.component.ComponentSpecification;
@@ -11,6 +12,7 @@ import com.yahoo.search.query.profile.types.FieldDescription;
 import com.yahoo.search.query.profile.types.FieldType;
 import com.yahoo.search.query.profile.types.QueryProfileType;
 import com.yahoo.search.query.profile.types.QueryProfileTypeRegistry;
+import com.yahoo.text.Utf8;
 import com.yahoo.text.XML;
 import org.w3c.dom.Element;
 
@@ -44,13 +46,13 @@ public class QueryProfileXMLReader {
 
             for (File file : sortFiles(dir)) {
                 if ( ! file.getName().endsWith(".xml")) continue;
-                queryProfileReaders.add(new NamedReader(file.getName(), new FileReader(file)));
+                queryProfileReaders.add(new NamedReader(file.getName(), Utf8.createReader(file)));
             }
             File typeDir = new File(dir,"types");
             if (typeDir.isDirectory()) {
                 for (File file : sortFiles(typeDir)) {
                     if ( ! file.getName().endsWith(".xml")) continue;
-                    queryProfileTypeReaders.add(new NamedReader(file.getName(), new FileReader(file)));
+                    queryProfileTypeReaders.add(new NamedReader(file.getName(), Utf8.createReader(file)));
                 }
             }
 
@@ -140,7 +142,7 @@ public class QueryProfileXMLReader {
                 QueryProfileType type = registry.getType(typeId);
                 if (type == null)
                     throw new IllegalArgumentException("Query profile '" + reader.getName() +
-                                                       "': Type id '" + typeId + "' can not be resolved");
+                                                       "': Type id '" + typeId + "' cannot be resolved");
                 queryProfile.setType(type);
             }
 
@@ -196,10 +198,10 @@ public class QueryProfileXMLReader {
 
     private void readInheritedTypes(Element element,QueryProfileType type, QueryProfileTypeRegistry registry) {
         String inheritedString = element.getAttribute("inherits");
-        if (inheritedString.equals("")) return;
+        if (inheritedString.isEmpty()) return;
         for (String inheritedId : inheritedString.split(" ")) {
             inheritedId = inheritedId.trim();
-            if (inheritedId.equals("")) continue;
+            if (inheritedId.isEmpty()) continue;
             QueryProfileType inheritedType = registry.getComponent(inheritedId);
             if (inheritedType == null)
                 throw new IllegalArgumentException("Could not resolve inherited query profile type '" + inheritedId);
@@ -249,7 +251,7 @@ public class QueryProfileXMLReader {
         if (inheritedString.isEmpty()) return;
         for (String inheritedId : inheritedString.split(" ")) {
             inheritedId = inheritedId.trim();
-            if (inheritedId.equals("")) continue;
+            if (inheritedId.isEmpty()) continue;
             QueryProfile inheritedProfile = registry.getComponent(inheritedId);
             if (inheritedProfile == null)
                 throw new IllegalArgumentException("Could not resolve inherited query profile '" +
@@ -266,6 +268,7 @@ public class QueryProfileXMLReader {
             String name = field.getAttribute("name");
             if (name.isEmpty())
                 throw new IllegalArgumentException("A field in " + sourceDescription + " has no 'name' attribute");
+
             try {
                 Boolean overridable = getBooleanAttribute("overridable", null, field);
                 if (overridable != null)

@@ -168,8 +168,9 @@ public class MapEvaluationTypeContext extends FunctionReferenceContext implement
 
             // A reference to an attribute, query or constant feature?
             if (FeatureNames.isSimpleFeature(reference)) {
+                String argument = reference.simpleArgument()
+                        .orElse(reference.arguments().expressions().get(0).toString());
                 // The argument may be a local identifier bound to the actual value
-                String argument = reference.simpleArgument().get();
                 String argumentBinding = resolveBinding(argument);
                 reference = Reference.simple(reference.name(), argumentBinding);
                 return featureTypes.get(reference);
@@ -296,22 +297,41 @@ public class MapEvaluationTypeContext extends FunctionReferenceContext implement
     }
 
     /**
-     * There are three features which may return some (non-empty) tensor type:
+     * There are 8 features which may return (non-empty) tensor type:
      * - tensorFromLabels
+     * - tensorFromLabelsWithOffset
      * - tensorFromWeightedSet
+     * - tensorFromStructs
      * - closest
      * - elementwise
+     * - queryTermDocumentFrequency
+     * - bm25_for_labels
      * This returns the type of those features if this is a reference to either of them, or empty otherwise.
      */
     private Optional<TensorType> tensorFeatureType(Reference reference) {
+        if (reference.name().equals("queryTermDocumentFrequency")) {
+            if (reference.arguments().size() != 1)
+                throw new IllegalArgumentException(reference.name() + " must have one argument");
+            return Optional.of(new TensorType.Builder(TensorType.Value.FLOAT).mapped("term").build());
+        }
+        if (reference.name().equals("bm25_for_labels")) {
+            if (reference.arguments().size() != 1)
+                throw new IllegalArgumentException(reference.name() + " must have one argument");
+            return Optional.of(new TensorType.Builder(TensorType.Value.FLOAT).mapped("label").build());
+        }
         if ( ! reference.name().equals("tensorFromLabels") &&
+             ! reference.name().equals("tensorFromLabelsWithOffset") &&
              ! reference.name().equals("tensorFromWeightedSet") &&
+             ! reference.name().equals("tensorFromStructs") &&
              ! reference.name().equals("elementwise") &&
              ! reference.name().equals("closest"))
         {
             return Optional.empty();
         }
         ExpressionNode arg0 = getArgExp(reference, 0);
+        ExpressionNode arg1 = getArgExp(reference, 1);
+        ExpressionNode arg2 = getArgExp(reference, 2);
+        ExpressionNode arg3 = getArgExp(reference, 3);
 
         if (reference.name().equals("closest")) {
             if (arg0 == null || reference.arguments().size() > 2)
@@ -339,9 +359,6 @@ public class MapEvaluationTypeContext extends FunctionReferenceContext implement
         String dimension = null;
         var cellType = TensorType.Value.DOUBLE;
 
-        ExpressionNode arg1 = getArgExp(reference, 1);
-        ExpressionNode arg2 = getArgExp(reference, 2);
-
         if (reference.name().equals("elementwise")) {
             // arg1 is required to name the dimension
             if (arg1 == null || reference.arguments().size() > 3)
@@ -350,8 +367,26 @@ public class MapEvaluationTypeContext extends FunctionReferenceContext implement
                 cellType = TensorType.Value.fromId(arg2.toString());
             }
         }
+        if (reference.name().equals("tensorFromStructs")) {
+            int numArgs = reference.arguments().size();
+            if (numArgs < 4 || numArgs > 8) {
+                throw new IllegalArgumentException(reference + " should have 4-8 arguments, not " + numArgs + ": (attribute(myarray), mykeyfield1[, ...[, mykeyfield5]], myvaluefield, celltype)");
+            }
+            if ( ! (arg0 instanceof ReferenceNode arg0ref && FeatureNames.isAttributeFeature(arg0ref.reference()))) {
+                throw new IllegalArgumentException("Bad first argument of " + reference.name() +
+                                                   " must be an attribute feature, not " + arg0);
+            }
+            int numKeys = numArgs - 3;
+            cellType = TensorType.Value.fromId(String.valueOf(getArgExp(reference, numArgs - 1)));
+            var builder = new TensorType.Builder(cellType);
+            for (int i = 0; i < numKeys; i++) {
+                builder.mapped(String.valueOf(getArgExp(reference, 1 + i)));
+            }
+            return Optional.of(builder.build());
+        }
         if (reference.name().equals("tensorFromLabels") ||
-            reference.name().equals("tensorFromWeightedSet"))
+            reference.name().equals("tensorFromWeightedSet") ||
+            reference.name().equals("tensorFromLabelsWithOffset"))
         {
             if (arg0 instanceof ReferenceNode arg0ref && FeatureNames.isSimpleFeature(arg0ref.reference())) {
                 if (arg1 == null) {
@@ -374,6 +409,25 @@ public class MapEvaluationTypeContext extends FunctionReferenceContext implement
                 throw new IllegalArgumentException("The second argument of " + reference.name() +
                                                    " must be a dimension name, not " + arg1);
             }
+        }
+
+        if (reference.name().equals("tensorFromLabelsWithOffset")) {
+            int numArgs = reference.arguments().size();
+            if (numArgs != 3) {
+                throw new IllegalArgumentException(reference + " must have 3 arguments, not " + numArgs + ": (attribute(myarray), label-dimension, offset-dimension)");
+            }
+
+            var builder = new TensorType.Builder(TensorType.Value.FLOAT);
+            // the first dimension is already checked
+            builder.mapped(dimension);
+            if ((arg2 instanceof NameNode) || (arg2 instanceof ReferenceNode ref2 && ref2.reference().isIdentifier())) {
+                  // it is safe to add a second dimension
+                  builder.mapped(arg2.toString());
+            } else  {
+                  throw new IllegalArgumentException("The third argument of " + reference.name() +
+                          " must be a dimension name, not " + arg2);
+            }
+            return Optional.of(builder.build());
         }
 
         if (dimension == null) {

@@ -3,28 +3,35 @@ package com.yahoo.config.provision;
 
 import com.yahoo.component.Version;
 
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
 /**
  * A node's membership in a cluster. This is a value object.
- * The format is "clusterType/clusterId/groupId/index[/exclusive][/retired][/stateful][/combinedId]"
+ * The format is "clusterType/clusterId/groupId/index[/exclusive][/retired][/stateful]"
  *
  * @author bratseth
  */
 public class ClusterMembership {
 
     private final ClusterSpec cluster;
+
+    private final ClusterSpec.Type type;
+    private final ClusterSpec.Id id;
+    private final int group;
     private final int index;
     private final boolean retired;
+
     private final String stringValue;
 
     private ClusterMembership(String stringValue, Version vespaVersion, Optional<DockerImage> dockerImageRepo,
-                              ZoneEndpoint zoneEndpoint) {
+                              ZoneEndpoint zoneEndpoint, List<SidecarSpec> sidecars, List<AzName> availabilityZones,
+                              Optional<String> profile) {
         String[] components = stringValue.split("/");
         if (components.length < 3)
             throw new RuntimeException("Could not parse '" + stringValue + "' to a cluster membership. " +
-                                       "Expected 'clusterType/clusterId/groupId/index[/retired][/exclusive][/stateful][/combinedId]'");
+                                       "Expected 'clusterType/clusterId/groupId/index[/retired][/exclusive][/stateful]'");
 
         Integer groupIndex = components[2].isEmpty() ? null : Integer.parseInt(components[2]);
         Integer nodeIndex;
@@ -40,7 +47,6 @@ public class ClusterMembership {
 
         boolean exclusive = false;
         boolean stateful = false;
-        var combinedId = Optional.<String>empty();
         boolean retired = false;
         if (components.length > (4 - missingElements)) {
             for (int i = (4 - missingElements); i < components.length; i++) {
@@ -49,7 +55,6 @@ public class ClusterMembership {
                     case "exclusive" -> exclusive = true;
                     case "retired" -> retired = true;
                     case "stateful" -> stateful = true;
-                    default -> combinedId = Optional.of(component);
                 }
             }
         }
@@ -59,11 +64,16 @@ public class ClusterMembership {
                                   .group(groupIndex == null ? null : ClusterSpec.Group.from(groupIndex))
                                   .vespaVersion(vespaVersion)
                                   .exclusive(exclusive)
-                                  .combinedId(combinedId.map(ClusterSpec.Id::from))
                                   .dockerImageRepository(dockerImageRepo)
                                   .loadBalancerSettings(zoneEndpoint)
                                   .stateful(stateful)
+                                  .sidecars(sidecars)
+                                  .availabilityZones(availabilityZones)
+                                  .profile(profile.orElse(null))
                                   .build();
+        this.type = cluster.type();
+        this.id = cluster.id();
+        this.group = groupIndex == null ? 0 : groupIndex;
         this.index = nodeIndex;
         this.retired = retired;
         this.stringValue = toStringValue();
@@ -71,6 +81,9 @@ public class ClusterMembership {
 
     private ClusterMembership(ClusterSpec cluster, int index, boolean retired) {
         this.cluster = cluster;
+        this.type = cluster.type();
+        this.id = cluster.id();
+        this.group = cluster.group().map(ClusterSpec.Group::index).orElse(0);
         this.index = index;
         this.retired = retired;
         this.stringValue = toStringValue();
@@ -83,13 +96,20 @@ public class ClusterMembership {
                "/" + index +
                ( cluster.isExclusive() ? "/exclusive" : "") +
                ( retired ? "/retired" : "") +
-               ( cluster.isStateful() ? "/stateful" : "") +
-               ( cluster.combinedId().isPresent() ? "/" + cluster.combinedId().get().value() : "");
-
+               ( cluster.isStateful() ? "/stateful" : "");
     }
 
     /** Returns the cluster this node is a member of */
     public ClusterSpec cluster() { return cluster; }
+
+    /** Returns the type of the cluster this belongs to. */
+    public ClusterSpec.Type type() { return type; }
+
+    /** Returns the id of the cluster this belongs to. */
+    public ClusterSpec.Id id() { return id; }
+
+    /** Returns the index of the group this node belongs to. */
+    public int group() { return group; }
 
     /** Returns the index of this node within the cluster */
     public int index() { return index; }
@@ -109,6 +129,10 @@ public class ClusterMembership {
 
     public ClusterMembership with(ClusterSpec newCluster) {
         return new ClusterMembership(newCluster, index, retired);
+    }
+
+    public ClusterMembership withGroup(int group) {
+        return with(cluster.with(Optional.of(ClusterSpec.Group.from(group))));
     }
 
     /**
@@ -142,7 +166,27 @@ public class ClusterMembership {
 
     public static ClusterMembership from(String stringValue, Version vespaVersion, Optional<DockerImage> dockerImageRepo,
                                          ZoneEndpoint zoneEndpoint) {
-        return new ClusterMembership(stringValue, vespaVersion, dockerImageRepo, zoneEndpoint);
+        return from(stringValue, vespaVersion, dockerImageRepo, zoneEndpoint, List.of());
+    }
+
+    public static ClusterMembership from(String stringValue, Version vespaVersion, Optional<DockerImage> dockerImageRepo, List<SidecarSpec> sidecars) {
+        return from(stringValue, vespaVersion, dockerImageRepo, ZoneEndpoint.defaultEndpoint, sidecars);
+    }
+
+    public static ClusterMembership from(String stringValue, Version vespaVersion, Optional<DockerImage> dockerImageRepo,
+                                         ZoneEndpoint zoneEndpoint, List<SidecarSpec> sidecars) {
+        return from(stringValue, vespaVersion, dockerImageRepo, zoneEndpoint, sidecars, List.of());
+    }
+
+    public static ClusterMembership from(String stringValue, Version vespaVersion, Optional<DockerImage> dockerImageRepo,
+                                         ZoneEndpoint zoneEndpoint, List<SidecarSpec> sidecars, List<AzName> availabilityZones) {
+        return from(stringValue, vespaVersion, dockerImageRepo, zoneEndpoint, sidecars, availabilityZones, Optional.empty());
+    }
+
+    public static ClusterMembership from(String stringValue, Version vespaVersion, Optional<DockerImage> dockerImageRepo,
+                                         ZoneEndpoint zoneEndpoint, List<SidecarSpec> sidecars, List<AzName> availabilityZones,
+                                         Optional<String> profile) {
+        return new ClusterMembership(stringValue, vespaVersion, dockerImageRepo, zoneEndpoint, sidecars, availabilityZones, profile);
     }
 
     public static ClusterMembership from(ClusterSpec cluster, int index) {

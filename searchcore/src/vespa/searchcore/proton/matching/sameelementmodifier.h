@@ -3,6 +3,7 @@
 #pragma once
 
 #include "querynodes.h"
+
 #include <vespa/searchlib/query/tree/templatetermvisitor.h>
 
 namespace proton::matching {
@@ -11,13 +12,12 @@ namespace proton::matching {
  * Prefix the indexname of the terms under the SameElement node.
  *
  */
-class SameElementModifier : public search::query::TemplateTermVisitor<SameElementModifier, ProtonNodeTypes>
-{
+class SameElementModifier : public search::query::TemplateTermVisitor<SameElementModifier, ProtonNodeTypes> {
 public:
-    template <class TermNode>
-    void visitTerm(TermNode &) {  }
-    void visit(ProtonNodeTypes::SameElement &n) override;
+    SameElementModifier();
+    ~SameElementModifier() override;
+    template <class TermNode> void visitTerm(TermNode&) {}
+    void visit(ProtonNodeTypes::SameElement& n) override;
 };
 
-}
-
+} // namespace proton::matching

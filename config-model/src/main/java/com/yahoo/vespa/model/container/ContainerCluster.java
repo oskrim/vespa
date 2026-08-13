@@ -1,6 +1,7 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.model.container;
 
+import ai.vespa.telemetry.TelemetryConfig;
 import com.yahoo.cloud.config.ClusterInfoConfig;
 import com.yahoo.cloud.config.ConfigserverConfig;
 import com.yahoo.cloud.config.CuratorConfig;
@@ -13,6 +14,7 @@ import com.yahoo.config.model.deploy.DeployState;
 import com.yahoo.config.model.producer.AnyConfigProducer;
 import com.yahoo.config.model.producer.TreeConfigProducer;
 import com.yahoo.config.provision.ClusterSpec;
+import com.yahoo.config.provision.OpenTelemetryConfiguration;
 import com.yahoo.config.provision.Zone;
 import com.yahoo.container.ComponentsConfig;
 import com.yahoo.container.QrSearchersConfig;
@@ -35,6 +37,7 @@ import com.yahoo.search.config.SchemaInfoConfig;
 import com.yahoo.search.pagetemplates.PageTemplatesConfig;
 import com.yahoo.search.query.profile.config.QueryProfilesConfig;
 import com.yahoo.vespa.configdefinition.IlscriptsConfig;
+import com.yahoo.vespa.defaults.Defaults;
 import com.yahoo.vespa.model.PortsMeta;
 import com.yahoo.vespa.model.Service;
 import com.yahoo.vespa.model.VespaModel;
@@ -109,7 +112,8 @@ public abstract class ContainerCluster<CONTAINER extends Container>
         ClusterInfoConfig.Producer,
         ConfigserverConfig.Producer,
         CuratorConfig.Producer,
-        SchemaInfoConfig.Producer
+        SchemaInfoConfig.Producer,
+        TelemetryConfig.Producer
 {
 
     /**
@@ -164,30 +168,28 @@ public abstract class ContainerCluster<CONTAINER extends Container>
     /** The zone this is deployed in, or the default zone if not on hosted Vespa */
     private Zone zone;
 
-    private String hostClusterId = null;
     private String jvmGCOptions = null;
 
     private volatile boolean deferChangesUntilRestart = false;
+    private final OpenTelemetryConfiguration opentelemetrySdk;
+    private final Map<String, String> telemetryResourceAttributes;
     private boolean clientsLegacyMode;
     private List<Client> clients = List.of();
 
     public ContainerCluster(TreeConfigProducer<?> parent, String configSubId, String clusterId, DeployState deployState, boolean zooKeeperLocalhostAffinity) {
-        this(parent, configSubId, clusterId, deployState, zooKeeperLocalhostAffinity, 4);
-    }
-
-    public ContainerCluster(TreeConfigProducer<?> parent, String configSubId, String clusterId, DeployState deployState, boolean zooKeeperLocalhostAffinity, int defaultPoolNumThreads) {
         super(parent, configSubId);
         this.name = clusterId;
         this.isHostedVespa = stateIsHosted(deployState);
         this.zone = (deployState != null) ? deployState.zone() : Zone.defaultZone();
         this.zooKeeperLocalhostAffinity = zooKeeperLocalhostAffinity;
         this.compressionType = "zstd";
+        opentelemetrySdk = deployState.featureFlags().opentelemetrySdk();
+        telemetryResourceAttributes = telemetryResourceAttributes(deployState, clusterId);
 
         componentGroup = new ComponentGroup<>(this, "component");
 
         addCommonVespaBundles();
         addSimpleComponent(VoidRequestLog.class);
-        addComponent(new DefaultThreadpoolProvider(this, defaultPoolNumThreads));
         defaultHandlerThreadpool = new Handler.DefaultHandlerThreadpool(deployState, null);
         addComponent(defaultHandlerThreadpool);
         addSimpleComponent(com.yahoo.concurrent.classlock.ClassLocking.class);
@@ -203,6 +205,8 @@ public abstract class ContainerCluster<CONTAINER extends Container>
         addSimpleComponent(com.yahoo.container.handler.ClustersStatus.class.getName());
         addSimpleComponent("com.yahoo.container.jdisc.DisabledConnectionLogProvider");
         addSimpleComponent(com.yahoo.jdisc.http.server.jetty.Janitor.class);
+        // Telemetry (tracing) provider: present in all container types; hands out a no-op instance unless enabled.
+        addSimpleComponent("com.yahoo.container.jdisc.telemetry.TelemetryProvider");
     }
 
     protected abstract boolean messageBusEnabled();
@@ -434,6 +438,10 @@ public abstract class ContainerCluster<CONTAINER extends Container>
         return Optional.ofNullable(secretStore);
     }
 
+    public void setDefaultThreadpoolProvider(DefaultThreadpoolProvider defaultThreadpoolProvider) {
+        addComponent(defaultThreadpoolProvider);
+    }
+
     public Map<ComponentId, Component<?, ?>> getComponentsMap() {
         return componentGroup.getComponentMap();
     }
@@ -459,7 +467,7 @@ public abstract class ContainerCluster<CONTAINER extends Container>
 
     @Override
     public void getConfig(ComponentsConfig.Builder builder) {
-        builder.setApplyOnRestart(getDeferChangesUntilRestart()); //  Sufficient to set on one config
+        builder.setApplyOnRestart(getDeferChangesUntilRestart());
         builder.components.addAll(ComponentsConfigGenerator.generate(getAllComponents()));
         builder.components(new ComponentsConfig.Components.Builder().id("com.yahoo.container.core.config.HandlersConfigurerDi$RegistriesHack"));
     }
@@ -508,7 +516,9 @@ public abstract class ContainerCluster<CONTAINER extends Container>
      */
     public void addCommonVespaBundles() {
         PlatformBundles.COMMON_VESPA_BUNDLES.forEach(this::addPlatformBundle);
-        PlatformBundles.VESPA_SECURITY_BUNDLES.forEach(this::addPlatformBundle);
+        if (isHostedVespa) {
+            PlatformBundles.VESPA_SECURITY_BUNDLES.forEach(this::addPlatformBundle);
+        }
         PlatformBundles.VESPA_ZK_BUNDLES.forEach(this::addPlatformBundle);
     }
 
@@ -555,6 +565,36 @@ public abstract class ContainerCluster<CONTAINER extends Container>
     @Override
     public void getConfig(QrSearchersConfig.Builder builder) {
         if (containerSearch != null) containerSearch.getConfig(builder);
+    }
+
+    @Override
+    public void getConfig(TelemetryConfig.Builder builder) {
+        builder.enabled(opentelemetrySdk.enabled())
+               .samplingRatio(opentelemetrySdk.samplingRatio())
+               .endpointHostnameFile(Defaults.OPENTELEMETRY_HOST_HOSTNAME_FILE);
+        builder.resourceAttribute.putAll(telemetryResourceAttributes);
+    }
+
+    /**
+     * Resource attributes describing this container service, filled from the deployment identity available
+     * in the model. Used by the OpenTelemetry provider to build the OTel {@code Resource}.
+     */
+    private Map<String, String> telemetryResourceAttributes(DeployState deployState, String clusterId) {
+        var applicationId = deployState.getProperties().applicationId();
+        String serviceName = applicationId.application().value() + "." +
+                applicationId.instance().value() + "." + clusterId;
+
+        Map<String, String> attributes = new LinkedHashMap<>();
+        attributes.put("service.name", serviceName);
+        attributes.put("service.version", deployState.getWantedNodeVespaVersion().toFullString());
+        attributes.put("application", applicationId.application().value());
+        attributes.put("tenant", applicationId.tenant().value());
+        attributes.put("zone", this.zone.systemLocalValue());
+        attributes.put("environment", this.zone.environment().value());
+        attributes.put("cloud", this.zone.cloud().toString());
+        attributes.put("cluster.type", "container");
+        attributes.put("cluster.id", clusterId);
+        return attributes;
     }
 
     @Override
@@ -686,15 +726,6 @@ public abstract class ContainerCluster<CONTAINER extends Container>
     }
 
     public Map<String, String> concreteDocumentTypes() { return concreteDocumentTypes; }
-
-    public void setHostClusterId(String clusterId) { hostClusterId = clusterId; }
-
-    /**
-     * Returns the id of the content cluster which hosts this container cluster, if any.
-     * This is only set with hosted clusters where this container cluster is set up to run on the nodes
-     * of a content cluster.
-     */
-    public Optional<String> getHostClusterId() { return Optional.ofNullable(hostClusterId); }
 
     public void setJvmGCOptions(String opts) { this.jvmGCOptions = opts; }
 

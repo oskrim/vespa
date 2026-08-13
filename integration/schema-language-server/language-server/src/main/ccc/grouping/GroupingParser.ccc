@@ -105,6 +105,16 @@ INJECT Token :
 
 }
 
+INJECT BaseNode  :
+{
+    private IllegalArgumentException illegalArgumentException;
+    public IllegalArgumentException getIllegalArgumentException() { return illegalArgumentException; }
+
+    public void addIllegalArgumentException(IllegalArgumentException e) {
+        illegalArgumentException = e;
+    }
+}
+
 TOKEN :
     <INTEGER: <DECIMAL> (["l","L"])? | <HEX> (["l","L"])? | <OCTAL> (["l","L"])?> |
         <#DECIMAL: ["1"-"9"] (["0"-"9"])*> |
@@ -174,9 +184,11 @@ TOKEN :
     <FILTER: "filter"> |
     <FIXEDWIDTH: "fixedwidth"> |
     <FLOOR: "floor"> |
+    <GEO_DISTANCE: "geo_distance"> |
     <GROUP: "group"> |
     <HINT: "hint"> |
     <HYPOT: "hypot"> |
+    <ISTRUE: "istrue"> |
     <KEEP: "keep"> |
     <LOG: "log"> |
     <LOG1P: "log1p"> |
@@ -197,6 +209,7 @@ TOKEN :
     <POW: "pow"> |
     <PRECISION: "precision"> |
     <PREDEFINED: "predefined"> |
+    <QUANTILES: "quantiles"> |
     <RANGE: "range"> |
     <REGEX: "regex"> |
     <RELEVANCE: "relevance"> |
@@ -236,6 +249,8 @@ TOKEN :
     <X: "x"> |
     <XOR: "xor"> |
     <XORBIT: "xorbit"> |
+    <KM: "km"> |
+    <MILES: "miles"> |
     <Y: "y"> |
     <ZCURVE: "zcurve"> |
     <IDENTIFIER: ["A"-"Z","a"-"z"](["A"-"Z","a"-"z","0"-"9","_","@"])*>
@@ -449,6 +464,7 @@ GroupingExpression value(GroupingOperation grp) :
                    exp = sortFunction(grp)             |
                    exp = arrayAtLookup(grp)            |
                    exp = interpolatedLookupElm(grp)       |
+                   exp = quantilesExpression(grp)      |
                    exp = stddevAggregator(grp)         |
                    exp = stringValue                 |
                    exp = strCatFunction(grp)           |
@@ -672,6 +688,31 @@ GroupingExpression md5Function(GroupingOperation grp) :
     { return new Md5Function(exp, num.intValue()); }
 ;
 
+GroupingExpression quantilesExpression(GroupingOperation grp) :
+{
+    GroupingExpression input;
+    List<Number> qs = new ArrayList<Number>();
+    Number q;
+}
+    (<QUANTILES> lbraceElm lbracketElm
+        q = number { qs.add(q); }
+        (
+            commaElm
+            q = number { qs.add(q); }
+        )*
+        rbracketElm
+        commaElm
+        input = expElm(grp)
+    rbraceElm)
+    {
+        try {
+            return new QuantileAggregator(qs, input);
+        } catch (IllegalArgumentException ex) {
+            thisProduction.addIllegalArgumentException(ex);
+        }
+        return new DoubleValue(0); // Return a generic GroupingExpression
+    }
+;
 
 GroupingExpression minExpression(GroupingOperation grp) :
 {
@@ -1008,7 +1049,8 @@ FilterExpression filterPrimary(GroupingOperation grp) :
 (
     ( lbraceElm f = filterExp(grp) rbraceElm ) |
     ( f = regexPredicate(grp) )                |
-    ( f = rangePredicate(grp) )
+    ( f = rangePredicate(grp) )                |
+    ( f = istruePredicate(grp) )
 )
 {
     return f;
@@ -1051,6 +1093,16 @@ RangePredicate rangePredicate(GroupingOperation grp) :
 }
 ;
 
+IsTruePredicate istruePredicate(GroupingOperation grp) :
+{
+    GroupingExpression exp;
+}
+    ( <ISTRUE> lbraceElm exp = expElm(grp) rbraceElm )
+{
+    return new IsTruePredicate(exp);
+}
+;
+
 FilterExpression orPredicate(GroupingOperation grp) :
 {
     FilterExpression left, right;
@@ -1085,9 +1137,11 @@ FilterExpression notPredicate(GroupingOperation grp) :
 {
     FilterExpression inner;
 }
+(
     ( <NOT> spaceElm inner = notPredicate(grp) {
         return new NotPredicate(inner);
     } ) | ( inner = filterPrimary(grp) )
+)
     { return inner; }
 ;
 
@@ -1191,6 +1245,7 @@ String identifierStr :
         <HINT> |
         <HYPOT> |
         <IDENTIFIER> |
+        <ISTRUE> |
         <KEEP> |
         <LOG> |
         <LOG1P> |
@@ -1211,6 +1266,7 @@ String identifierStr :
         <POW> |
         <PRECISION> |
         <PREDEFINED> |
+        <QUANTILES> |
         <RANGE> |
         <REGEX> |
         <RELEVANCE> |

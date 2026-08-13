@@ -18,36 +18,47 @@ import static java.util.Objects.requireNonNull;
  */
 public class CapacityPolicies {
 
-    public record Tuning(Architecture adminClusterArchitecture, double logserverMemoryGiB, double clusterControllerMemoryGiB) {
+    private static final NodeResources MIN_KUBERNETES_RESOURCES = new NodeResources(0.5, 1, 10, 0.3);
 
-        public Tuning(Architecture adminClusterArchitecture, double logserverMemoryGiB) {
-            this(adminClusterArchitecture, logserverMemoryGiB, 0.0);
+    public record Tuning(Architecture adminClusterArchitecture, double logserverMemoryGiB,
+                         double clusterControllerMemoryGiB, long contentNodes) {
+
+        public Tuning(Architecture adminClusterArchitecture, double logserverMemoryGiB, long contentNodes) {
+            this(adminClusterArchitecture, logserverMemoryGiB, 0.0, contentNodes);
+        }
+
+        public Tuning(Architecture adminClusterArchitecture, double logserverMemoryGiB, double clusterControllerMemoryGiB) {
+            this(adminClusterArchitecture, logserverMemoryGiB, clusterControllerMemoryGiB, 0);
         }
 
         double logserverMem(double v) {
             double override = logserverMemoryGiB();
             return (override > 0) ? override : v;
         }
+
         double clusterControllerMem(double v) {
             double override = clusterControllerMemoryGiB();
             return (override > 0) ? override : v;
         }
+
     }
 
     private final Zone zone;
     private final Exclusivity exclusivity;
     private final ApplicationId applicationId;
     private final Tuning tuning;
-
-    public CapacityPolicies(Zone zone, Exclusivity exclusivity, ApplicationId applicationId, Architecture adminClusterArchitecture) {
-        this(zone, exclusivity, applicationId, new Tuning(adminClusterArchitecture, 0.0, 0.0));
-    }
+    private final double cpuCap;
 
     public CapacityPolicies(Zone zone, Exclusivity exclusivity, ApplicationId applicationId, Tuning tuning) {
+        this(zone, exclusivity, applicationId, tuning, 1.0);
+    }
+
+    public CapacityPolicies(Zone zone, Exclusivity exclusivity, ApplicationId applicationId, Tuning tuning, double cpuCap) {
         this.zone = zone;
         this.exclusivity = exclusivity;
         this.applicationId = applicationId;
         this.tuning = tuning;
+        this.cpuCap = cpuCap;
     }
 
     public Capacity applyOn(Capacity capacity, boolean exclusive) {
@@ -90,16 +101,23 @@ public class CapacityPolicies {
         if (target.isUnspecified()) return target; // Cannot be modified
 
         if (zone.environment() == Environment.dev && zone.cloud().allowHostSharing()) {
-            // Dev does not cap the cpu or network of containers since usage is spotty: Allocate just a small amount exclusively
-            target = target.withVcpu(0.1).withBandwidthGbps(0.1);
+            if (cpuCap <= 0.001) {
+                // If cpu cap is > 0, we will use the specified resource.
+                // If it is 0, allocate just a small amount exclusively  (see internal repo for how
+                // we then adjust cpu share given to each container on a host)
+                target = target.withVcpu(0.1).withBandwidthGbps(0.1);
+            }
 
             // Allocate without GPU in dev
             target = target.with(NodeResources.GpuResources.zero());
         }
 
         // Allow slow storage in zones which are not performance sensitive
-        if (zone.system().isCd() || zone.environment() == Environment.dev || zone.environment() == Environment.test)
+        if (zone.system().isCdLike() || zone.environment() == Environment.test)
             target = target.with(NodeResources.DiskSpeed.any).with(NodeResources.StorageType.any).withBandwidthGbps(0.1);
+        else if (zone.environment() == Environment.dev) {
+            target = target.withBandwidthGbps(0.1);
+        }
 
         return target;
     }
@@ -109,18 +127,28 @@ public class CapacityPolicies {
     }
 
     public NodeResources specifyFully(NodeResources resources, ClusterSpec clusterSpec) {
-        return resources.withUnspecifiedFieldsFrom(defaultResources(clusterSpec).with(DiskSpeed.any));
+        boolean diskWasUnspecified = resources.diskIsUnspecified();
+        NodeResources specified = resources.withUnspecifiedFieldsFrom(defaultResources(clusterSpec).with(DiskSpeed.any));
+
+        // Ensure disk size meets minimum requirements based on cluster type, but only if it was originally unspecified
+        if (diskWasUnspecified) {
+            double minDiskGb = minDiskGbForClusterType(specified, clusterSpec);
+            if (specified.diskGb() < minDiskGb) {
+                specified = specified.withDiskGb(minDiskGb);
+            }
+        }
+        return specified;
     }
 
     private NodeResources defaultResources(ClusterSpec clusterSpec) {
         var adminClusterArchitecture = tuning.adminClusterArchitecture();
         if (clusterSpec.type() == ClusterSpec.Type.admin) {
-            if (exclusivity.allocation(clusterSpec)) {
+            if (exclusivity.allocation(clusterSpec) && !zone.system().isKubernetesLike()) {
                 return smallestExclusiveResources().with(adminClusterArchitecture);
             }
 
             if (clusterSpec.id().value().equals("cluster-controllers")) {
-                return clusterControllerResources(clusterSpec, adminClusterArchitecture).with(adminClusterArchitecture);
+                return clusterControllerResources(clusterSpec, adminClusterArchitecture, tuning.contentNodes()).with(adminClusterArchitecture);
             }
 
             if (clusterSpec.id().value().equals("logserver")) {
@@ -131,26 +159,48 @@ public class CapacityPolicies {
         }
 
         if (clusterSpec.type() == ClusterSpec.Type.content) {
-            // When changing defaults here update https://docs.vespa.ai/en/reference/services.html#resources
+            // When changing defaults here update https://docs.vespa.ai/en/reference/applications/services/services.html#resources
             return zone.cloud().dynamicProvisioning()
                    ? versioned(clusterSpec, Map.of(new Version(0), new NodeResources(2, 16, 300, 0.3)))
                    : versioned(clusterSpec, Map.of(new Version(0), new NodeResources(1.5, 8, 50, 0.3)));
         }
         else {
-            // When changing defaults here update https://docs.vespa.ai/en/reference/services.html#resources
+            // When changing defaults here update https://docs.vespa.ai/en/reference/applications/services/services.html#resources
             return zone.cloud().dynamicProvisioning()
                    ? versioned(clusterSpec, Map.of(new Version(0), new NodeResources(2.0, 8, 50, 0.3)))
                    : versioned(clusterSpec, Map.of(new Version(0), new NodeResources(1.5, 8, 50, 0.3)));
         }
     }
 
-    private NodeResources clusterControllerResources(ClusterSpec clusterSpec, Architecture architecture) {
+    private NodeResources clusterControllerResources(ClusterSpec clusterSpec, Architecture architecture, long contentNodes) {
         // 1.32 fits floor(8/1.32) = 6 cluster controllers on each 8Gb host, and each will have
         // 1.32-(0.7+0.6)*(1.32/8) = 1.1 Gb real memory given current taxes.
         var memory = architecture == x86_64
                 ? tuning.clusterControllerMem(1.32)
                 : tuning.clusterControllerMem(1.50);
-        return versioned(clusterSpec, Map.of(new Version(0), new NodeResources(0.25, memory, 10, 0.3)));
+
+        var adjustedMemory = adjustClusterControllerMemory(memory, contentNodes);
+        // But go back to use overridden memory if set (through feature flag)
+        if (tuning.clusterControllerMemoryGiB() > 0.0) {
+            adjustedMemory = memory;
+        }
+
+        return versioned(clusterSpec, Map.of(new Version(0), new NodeResources(0.25, adjustedMemory, 10, 0.3)));
+    }
+
+    // Adjust memory based on number of content nodes in all content clusters
+    // Note: nodeCount is 0 if unknown.
+    private static double adjustClusterControllerMemory(double memory, long nodeCount) {
+        int count = (int) nodeCount;
+        // Adjust node resource memory based on number of content nodes (which is
+        // a simple way to model the O(n^2) behavior of the increase in communication
+        // between cluster controller and nodes (and thus memory)).
+        // Increase in steps to avoid changes of memory allocation with small changes in node count.
+        double adjustmentFactor = 0.2; // 0.2 GiB increase per step
+        var step = Math.min(4, count / 50); // max 4 steps (200+ nodes)
+        double adjustment = step * adjustmentFactor;
+
+        return memory + adjustment;
     }
 
     private NodeResources logserverResources(Architecture architecture) {
@@ -167,6 +217,7 @@ public class CapacityPolicies {
 
     // The lowest amount of resources that can be exclusive allocated (i.e. a matching host flavor for this exists)
     private NodeResources smallestExclusiveResources() {
+        if (zone.system().isKubernetesLike()) return MIN_KUBERNETES_RESOURCES;
         return zone.cloud().name() == CloudName.AZURE || zone.cloud().name() == CloudName.GCP
                 ? new NodeResources(2, 8, 50, 0.3)
                 : new NodeResources(0.5, 8, 50, 0.3);
@@ -193,6 +244,22 @@ public class CapacityPolicies {
         return requireNonNull(new TreeMap<>(resources).floorEntry(spec.vespaVersion()),
                               "no default resources applicable for " + spec + " among: " + resources)
                        .getValue();
+    }
+
+    /**
+     * Calculates the minimum disk size (in GiB) for the given cluster based on both
+     * the memory specified in {@code resources} and the {@link ClusterSpec.Type}.
+     * <p>
+     * For content clusters, the minimum disk is 3x the memory; for all other cluster
+     * types, it is 2x the memory. If memory is unspecified, this returns 0.
+     */
+    private double minDiskGbForClusterType(NodeResources resources, ClusterSpec clusterSpec) {
+        if (resources.memoryIsUnspecified()) return 0;
+
+        return resources.memoryGiB() * switch (clusterSpec.type()) {
+            case content -> 3.0;  // 3x memory for content nodes
+            default -> 2.0; // 2x memory for other nodes
+        };
     }
 
 }

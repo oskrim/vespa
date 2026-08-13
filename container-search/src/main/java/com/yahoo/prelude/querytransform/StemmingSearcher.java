@@ -37,6 +37,7 @@ import com.yahoo.prelude.query.SegmentingRule;
 import com.yahoo.prelude.query.Substring;
 import com.yahoo.prelude.query.TaggableItem;
 import com.yahoo.prelude.query.TermItem;
+import com.yahoo.prelude.query.WeakAndItem;
 import com.yahoo.prelude.query.WordAlternativesItem;
 import com.yahoo.prelude.query.WordAlternativesItem.Alternative;
 import com.yahoo.prelude.query.WordItem;
@@ -44,6 +45,7 @@ import com.yahoo.processing.request.CompoundName;
 import com.yahoo.search.Query;
 import com.yahoo.search.Result;
 import com.yahoo.search.Searcher;
+import com.yahoo.search.query.QueryType;
 import com.yahoo.search.searchchain.Execution;
 import com.yahoo.search.searchchain.PhaseNames;
 
@@ -101,7 +103,7 @@ public class StemmingSearcher extends Searcher {
                     StemContext context = new StemContext();
                     context.language = Language.ENGLISH;
                     context.indexFacts = indexFacts;
-                    Item newHighlight = scan(highlight.getHighlightItems().get(field), context);
+                    Item newHighlight = scan(highlight.getHighlightItems().get(field), context, query.getModel().getQueryType());
                     highlight.getHighlightItems().put(field, (AndItem)newHighlight);
                 }
             }
@@ -124,8 +126,8 @@ public class StemmingSearcher extends Searcher {
         context.indexFacts = indexFacts;
         context.reverseConnectivity = createReverseConnectivities(q.getModel().getQueryTree().getRoot());
         if (q.getTrace().getLevel() >= 3)
-            q.trace("Stemming with language " + language + " using " + linguistics, 3);
-        return scan(q.getModel().getQueryTree().getRoot(), context);
+            q.trace("Stemming with default language " + language + " using " + linguistics, 3);
+        return scan(q.getModel().getQueryTree().getRoot(), context, q.getModel().getQueryType());
     }
 
     private Map<Item, TaggableItem> createReverseConnectivities(Item root) {
@@ -148,37 +150,56 @@ public class StemmingSearcher extends Searcher {
         return reverseConnectivity;
     }
 
-    private Item scan(Item item, StemContext context) {
+    private Item scan(Item item, StemContext context, QueryType queryType) {
         if (item == null) return null;
 
-        boolean old = context.insidePhrase;
+        // Save context state that may be modified during traversal
+        boolean oldInsidePhrase = context.insidePhrase;
+        Language oldLanguage = context.language;
+        boolean oldIsCJK = context.isCJK;
+
+        // Use item's language if explicitly set, supporting per-clause language in queries
+        if (item.getLanguage() != Language.UNKNOWN) {
+            context.language = item.getLanguage();
+            context.isCJK = context.language.isCjk();
+        }
+
         if (item instanceof PhraseItem || item instanceof PhraseSegmentItem) {
             context.insidePhrase = true;
         }
         if (item instanceof BlockItem) {
-            item = checkBlock((BlockItem) item, context);
-        } else if (item instanceof CompositeItem comp) {
-            ListIterator<Item> i = comp.getItemIterator();
+            item = checkBlock((BlockItem) item, context, queryType);
+        } else if (item instanceof CompositeItem composite) {
+            ListIterator<Item> i = composite.getItemIterator();
             while (i.hasNext()) {
                 Item original = i.next();
-                Item transformed = scan(original, context);
-                if (original != transformed)
+                Item transformed = scan(original, context, queryType);
+                if (transformed == null) {
+                    if (mayDropTerm(composite, original, context)) {
+                        i.remove();
+                    }
+                } else if (original != transformed) {
                     i.set(transformed);
+                }
             }
         }
-        context.insidePhrase = old;
+
+        // Restore context state
+        context.insidePhrase = oldInsidePhrase;
+        context.language = oldLanguage;
+        context.isCJK = oldIsCJK;
         return item;
     }
 
-    private Item checkBlock(BlockItem b, StemContext context) {
-        if (b instanceof PrefixItem || !b.isWords()) return (Item) b;
+    private Item checkBlock(BlockItem item, StemContext context, QueryType queryType) {
+        if (item instanceof PrefixItem || !item.isWords()) return (Item) item;
 
-        if (b.isFromQuery() && !b.isStemmed()) {
-            Index index = context.indexFacts.getIndex(b.getIndexName());
+        if (item.isFromQuery() && !item.isStemmed()) {
+            Index index = context.indexFacts.getIndex(item.getFieldName());
             StemMode stemMode = index.getStemMode();
-            if (stemMode != StemMode.NONE) return stem(b, context, index);
+            if (stemMode != StemMode.NONE) return stem(item, context, index);
         }
-        return (Item) b;
+        return (Item) item;
     }
 
     private Substring getOffsets(BlockItem b) {
@@ -198,16 +219,21 @@ public class StemmingSearcher extends Searcher {
 
     // The rewriting logic is here
     private Item stem(BlockItem current, StemContext context, Index index) {
-        var parameters = new LinguisticsParameters(context.language, index.getStemMode(), index.getNormalize(), index.isLowercase());
+        var parameters = new LinguisticsParameters(linguisticsProfile(index, current),
+                                                   context.language, index.getStemMode(), index.getNormalize(),
+                                                   index.isLowercase());
         Item blockAsItem = (Item)current;
         CompositeItem composite;
         List<StemList> segments = linguistics.getStemmer().stem(current.stringValue(), parameters);
-        if (segments.isEmpty()) return blockAsItem;
+        if (segments.isEmpty()) return maybeDropTerm(current, context);
 
         String indexName = current.getIndexName();
         Substring origin = getOffsets(current);
         if (segments.size() == 1) {
-            TaggableItem w = singleWordSegment(current, segments.get(0), index, origin, context.insidePhrase);
+            if (isEmptyStem(segments.get(0))) {
+                return maybeDropTerm(current, context);
+            }
+            TaggableItem w = singleWordSegment(current, segments.get(0), index, origin);
             setMetaData(current, context.reverseConnectivity, w);
             return (Item)w;
         }
@@ -218,7 +244,7 @@ public class StemmingSearcher extends Searcher {
             composite = chooseComposite(current, ((Item) current).getParent(), indexName);
 
         for (StemList segment : segments) {
-            TaggableItem w = singleWordSegment(current, segment, index, origin, context.insidePhrase);
+            TaggableItem w = singleWordSegment(current, segment, index, origin);
 
             if (composite instanceof AndSegmentItem) {
                 setSignificanceAndDocumentFrequency(w, current);
@@ -296,15 +322,12 @@ public class StemmingSearcher extends Searcher {
         }
     }
 
-    private TaggableItem singleWordSegment(BlockItem current,
-                                           StemList segment,
-                                           Index index,
-                                           Substring origin,
-                                           boolean insidePhrase) {
+    private TaggableItem singleWordSegment(BlockItem current, StemList segment, Index index, Substring origin) {
         String indexName = current.getIndexName();
-        if (!insidePhrase && ((index.getLiteralBoost() || index.getStemMode() == StemMode.ALL))) {
+        if (index.getLiteralBoost() || index.getStemMode() == StemMode.ALL) {
             List<Alternative> terms = new ArrayList<>(segment.size() + 1);
-            terms.add(new Alternative(current.stringValue(), 1.0d));
+            var original = segment.getOrigin();
+            terms.add(new Alternative(original.orElse(current.stringValue()), 1.0d));
             for (String term : segment) {
                 terms.add(new Alternative(term, 0.7d));
             }
@@ -313,7 +336,31 @@ public class StemmingSearcher extends Searcher {
                 return alternatives;
             }
         }
-        return singleStemSegment((Item) current, segment.get(0), indexName, origin);
+
+        if (segment.get(0).isEmpty())
+            return (TaggableItem)current;
+        return singleStemSegment((Item)current, segment.get(0), indexName, origin);
+    }
+
+    private Item maybeDropTerm(BlockItem current, StemContext context) {
+        Item item = (Item) current;
+        if (mayDropTerm(item.getParent(), item, context)) return null;
+        return item;
+    }
+
+    private boolean isEmptyStem(StemList segment) {
+        return segment.isEmpty() || segment.get(0).isEmpty();
+    }
+
+    private boolean mayDropTerm(CompositeItem parent, Item child, StemContext context) {
+        if (context.insidePhrase) return false;
+        if (!(child instanceof BlockItem)) return false;
+        if (child.getParent() == null) return false;
+        if (child.getParent() instanceof PhraseItem || child.getParent() instanceof PhraseSegmentItem) return false;
+        if (child instanceof TaggableItem t && t.getConnectedItem() != null) return false;
+        if (context.reverseConnectivity != null && context.reverseConnectivity.containsKey(child)) return false;
+        if (parent.getItemCount() <= 1) return false;
+        return parent instanceof AndItem || parent instanceof WeakAndItem;
     }
 
     private void setMetaData(BlockItem current, Map<Item, TaggableItem> reverseConnectivity, TaggableItem replacement) {
@@ -327,8 +374,7 @@ public class StemmingSearcher extends Searcher {
         setConnectivity(current, reverseConnectivity, (Item) replacement);
     }
 
-    private WordItem singleStemSegment(Item blockAsItem, String stem, String indexName,
-                                       Substring origin) {
+    private TaggableItem singleStemSegment(Item blockAsItem, String stem, String indexName, Substring origin) {
         WordItem replacement = new WordItem(stem, indexName, true, origin);
         replacement.setStemmed(true);
         copyAttributes(blockAsItem, replacement);
@@ -391,6 +437,9 @@ public class StemmingSearcher extends Searcher {
         replacement.setFilter(blockAsItem.isFilter());
         replacement.setRanked(blockAsItem.isRanked());
         replacement.setPositionData(blockAsItem.usePositionData());
+        if (blockAsItem.getLabel() != null) {
+            replacement.setLabel(blockAsItem.getLabel());
+        }
     }
 
     private void copyWeight(Item block, Item replacement) {
@@ -442,6 +491,14 @@ public class StemmingSearcher extends Searcher {
         if (blockItem instanceof TermItem termItem) return termItem.getDocumentFrequency();
         if (blockItem instanceof PhraseSegmentItem phraseSegmentItem) return phraseSegmentItem.getDocumentFrequency();
         return Optional.empty();
+    }
+
+    private String linguisticsProfile(Index index, BlockItem current) {
+        if (current.getQueryType() != null && current.getQueryType().getProfile() != null)
+            return current.getQueryType().getProfile();
+        if (index != null)
+            return index.getLinguisticsProfile();
+        return null;
     }
 
     private static class Connectivity {

@@ -3,10 +3,12 @@ package com.yahoo.vespa.flags;
 
 import com.yahoo.component.Version;
 import com.yahoo.config.provision.ApplicationId;
+import com.yahoo.config.provision.ApplicationName;
 import com.yahoo.config.provision.CloudAccount;
 import com.yahoo.config.provision.CloudName;
 import com.yahoo.config.provision.ClusterSpec;
 import com.yahoo.config.provision.Environment;
+import com.yahoo.config.provision.HostName;
 import com.yahoo.config.provision.NodeResources.Architecture;
 import com.yahoo.config.provision.NodeType;
 import com.yahoo.config.provision.SystemName;
@@ -49,6 +51,14 @@ public interface Flag<T, F extends Flag<T, F>> {
               .with(Dimension.INSTANCE_ID, applicationId.serializedForm());
     }
 
+    default F with(Optional<ApplicationId> applicationId) { return applicationId.map(this::with).orElse(self()); }
+
+    /** Sets the tenant and application dimensions. */
+    default F with(TenantName tenantName, ApplicationName applicationName) {
+        return with(tenantName)
+              .with(Dimension.APPLICATION, ApplicationId.toSerializedForm(tenantName, applicationName));
+    }
+
     /** architecture MUST NOT be 'any'. */
     default F with(Architecture architecture) { return with(Dimension.ARCHITECTURE, architecture.name()); }
     /**
@@ -65,13 +75,17 @@ public interface Flag<T, F extends Flag<T, F>> {
     default F with(ClusterSpec.Id clusterId) { return with(Dimension.CLUSTER_ID, clusterId.value()); }
     default F with(ClusterSpec.Type clusterType) { return with(Dimension.CLUSTER_TYPE, clusterType.name()); }
     default F with(Environment environment) { return with(Dimension.ENVIRONMENT, environment.value()); }
+    default F with(HostName hostname) { return with(Dimension.HOSTNAME, hostname.value()); }
     default F with(NodeType nodeType) { return with(Dimension.NODE_TYPE, nodeType.name()); }
     default F with(SystemName systemName) { return with(Dimension.SYSTEM, systemName.value()); }
     default F with(TenantName tenantName) { return with(Dimension.TENANT_ID, tenantName.value()); }
     default F with(Version vespaVersion) { return with(Dimension.VESPA_VERSION, vespaVersion.toFullString()); }
-    default F with(ZoneId zoneId) { return with(Dimension.ZONE_ID, zoneId.value()); }
-    default F with(Zone zone) { return with(Dimension.ZONE_ID, zone.systemLocalValue()); }
-    default F with(ZoneApi zoneApi) { return with(zoneApi.getVirtualId()); }
+    /** Sets the zone and environment dimensions. */
+    default F with(ZoneId zoneId) { return with(Dimension.ZONE_ID, zoneId.value()).with(Dimension.ENVIRONMENT, zoneId.environment().value()); }
+    /** Sets the zone and environment dimensions. */
+    default F with(Zone zone) { return with(Dimension.ZONE_ID, zone.systemLocalValue()) .with(Dimension.ENVIRONMENT, zone.environment().value()); }
+    /** Sets the zone and environment dimensions. */
+    default F with(ZoneApi zoneApi) { return with(zoneApi.id()); }
 
     /** Sets the tenant, application, and instance dimensions. */
     default F withApplicationId(Optional<ApplicationId> applicationId) { return applicationId.map(this::with).orElse(self()); }
@@ -81,13 +95,17 @@ public interface Flag<T, F extends Flag<T, F>> {
     default F withCloudName(Optional<CloudName> cloud) { return cloud.map(this::with).orElse(self()); }
     default F withClusterId(Optional<ClusterSpec.Id> clusterId) { return clusterId.map(this::with).orElse(self()); }
     default F withClusterType(Optional<ClusterSpec.Type> clusterType) { return clusterType.map(this::with).orElse(self()); }
+    default F withHostname(Optional<HostName> hostname) { return hostname.map(this::with).orElse(self()); }
     default F withEnvironment(Optional<Environment> environment) { return environment.map(this::with).orElse(self()); }
     default F withNodeType(Optional<NodeType> nodeType) { return nodeType.map(this::with).orElse(self()); }
     default F withSystemName(Optional<SystemName> systemName) { return systemName.map(this::with).orElse(self()); }
     default F withTenantName(Optional<TenantName> tenantName) { return tenantName.map(this::with).orElse(self()); }
     default F withVersion(Optional<Version> vespaVersion) { return vespaVersion.map(this::with).orElse(self()); }
+    /** Sets the zone and environment dimensions. */
     default F withZoneId(Optional<ZoneId> zoneId) { return zoneId.map(this::with).orElse(self()); }
+    /** Sets the zone and environment dimensions. */
     default F withZone(Optional<Zone> zone) { return zone.map(this::with).orElse(self()); }
+    /** Sets the zone and environment dimensions. */
     default F withZoneApi(Optional<ZoneApi> zoneApi) { return zoneApi.map(this::with).orElse(self()); }
 
     /** Returns the value, boxed if the flag wraps a primitive type. */

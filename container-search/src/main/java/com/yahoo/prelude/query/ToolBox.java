@@ -2,6 +2,9 @@
 package com.yahoo.prelude.query;
 
 import com.yahoo.api.annotations.Beta;
+import com.yahoo.search.Query;
+
+import java.util.function.Function;
 
 /**
  * Query tree helper methods and factories.
@@ -19,8 +22,8 @@ public final class ToolBox {
          * sub-items of the given item, return false to ignore the sub-items.
          *
          * @param item each item in the query tree
-         * @return whether or not to visit the sub-items of the argument item
-         *         (and then invoke the {@link #onExit()} method)
+         * @return whether to visit the sub-items of the argument item
+         *         (and then invoke the {@link #onExit(Item)} method)
          */
         public abstract boolean visit(Item item);
 
@@ -29,14 +32,17 @@ public final class ToolBox {
          * visit() if there are no sub-items or visit() returned false.
          * This default implementation does nothing.
          */
-        public void onExit() {}
+        public void onExit(Item item) {}
 
     }
 
+    public static void visit(Query query, QueryVisitor visitor) {
+        visit(visitor, query.getModel().getQueryTree().getRoot());
+    }
+
     public static void visit(QueryVisitor visitor, Item item) {
-        if (item instanceof CompositeItem) {
+        if (item instanceof CompositeItem composite) {
             if (visitor.visit(item)) {
-                CompositeItem composite = (CompositeItem) item;
                 for (int i = 0; i < composite.getItemCount(); ++i) {
                     visit(visitor, composite.getItem(i));
                 }
@@ -44,7 +50,7 @@ public final class ToolBox {
         } else {
             visitor.visit(item);
         }
-        visitor.onExit();
+        visitor.onExit(item);
     }
 
 }

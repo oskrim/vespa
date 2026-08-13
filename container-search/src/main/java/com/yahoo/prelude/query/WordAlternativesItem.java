@@ -1,6 +1,8 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.prelude.query;
 
+import ai.vespa.searchlib.searchprotocol.protobuf.SearchProtocol;
+
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -110,13 +112,13 @@ public class WordAlternativesItem extends TermItem {
     }
 
     @Override
-    public void encodeThis(ByteBuffer target) {
-        super.encodeThis(target);
+    public void encodeThis(ByteBuffer target, SerializationContext context) {
+        super.encodeThis(target, context);
         IntegerCompressor.putCompressedPositiveNumber(alternatives.size(), target);
         for (Alternative a : alternatives) {
             Item p = new PureWeightedString(a.word, (int) (getWeight() * a.exactness + 0.5));
             p.setFilter(isFilter());
-            p.encode(target);
+            p.encode(target, context);
         }
     }
 
@@ -155,6 +157,22 @@ public class WordAlternativesItem extends TermItem {
     @Override
     public int hashCode() {
         return Objects.hash(super.hashCode(), alternatives);
+    }
+
+    @Override
+    SearchProtocol.QueryTreeItem toProtobuf(SerializationContext context) {
+        var builder = SearchProtocol.ItemWordAlternatives.newBuilder();
+        builder.setProperties(ToProtobuf.buildTermProperties(this, getIndexName()));
+        for (Alternative alt : alternatives) {
+            var weightedString = SearchProtocol.PureWeightedString.newBuilder()
+                    .setWeight((int) (getWeight() * alt.exactness + 0.5))
+                    .setValue(alt.word)
+                    .build();
+            builder.addWeightedStrings(weightedString);
+        }
+        return SearchProtocol.QueryTreeItem.newBuilder()
+                .setItemWordAlternatives(builder.build())
+                .build();
     }
 
     /** A word alternative. This is a value object. */

@@ -35,6 +35,7 @@ import com.yahoo.prelude.query.WeakAndItem;
 import com.yahoo.prelude.query.WordAlternativesItem;
 import com.yahoo.prelude.query.WordItem;
 import com.yahoo.prelude.querytransform.CJKSearcher;
+import com.yahoo.prelude.querytransform.test.StemmingSearcherTestCase;
 import com.yahoo.processing.request.CompoundName;
 import com.yahoo.search.Query;
 import com.yahoo.search.Result;
@@ -95,7 +96,7 @@ public class QueryTestCase {
         String body = "a bb. ccc??!";
         Linguistics linguistics = new SimpleLinguistics();
 
-        var parameters = new LinguisticsParameters(Language.ENGLISH, StemMode.SHORTEST, true, true);
+        var parameters = new LinguisticsParameters(null, Language.ENGLISH, StemMode.SHORTEST, true, true);
         AndItem and = new AndItem();
         for (Token token : linguistics.getTokenizer().tokenize(body, parameters)) {
             if (token.isIndexable())
@@ -292,7 +293,8 @@ public class QueryTestCase {
             fail("Above statement should throw");
         } catch (IllegalArgumentException e) {
             // As expected.
-            assertTrue(Exceptions.toMessageString(e).contains("Could not set 'timeout' to 'nalle': Error parsing 'nalle': Invalid number 'nalle'"));
+            assertEquals("Could not set 'timeout': Error parsing 'nalle': Invalid number 'nalle'",
+                         Exceptions.toMessageString(e));
         }
     }
 
@@ -371,6 +373,26 @@ public class QueryTestCase {
         profile.set("myField", "Language: %{lang}, locale: %{locale}", null);
         Query q = new Query(QueryTestCase.httpEncode("/search?queryProfile=myProfile"), profile.compile(null));
         assertEquals("Language: ENGLISH, locale: en_US", q.properties().get("myField"));
+    }
+
+    @Test
+    void testQueryProfileAliases() {
+        QueryProfile profile = new QueryProfile("myProfile");
+
+        // Set built-in properties by aliases
+        profile.set("query", "test", null);
+        profile.set("ranking", "myProfile", null);
+        profile.set("rankfeature.myFeature1", "1.5", null);
+        profile.set("input.query(myFeature2)", "2.5", null);
+        profile.set("rankproperty.a.b", "3.5", null);
+
+        var registry = new CompiledQueryProfileRegistry();
+        Query query = new Query(QueryTestCase.httpEncode("/search?queryProfile=myProfile"), profile.compile(registry));
+        assertEquals("test", query.getModel().getQueryString());
+        assertEquals("myProfile", query.getRanking().getProfile());
+        assertEquals(1.5, query.getRanking().getFeatures().getDouble("myFeature1").orElse(0));
+        assertEquals(2.5, query.getRanking().getFeatures().getDouble("query(myFeature2)").orElse(0));
+        assertEquals("3.5", query.getRanking().getProperties().get("a.b").get(0));
     }
 
     @Test
@@ -456,7 +478,7 @@ public class QueryTestCase {
     @Test
     void testUtf8Decoding() {
         Query q = new Query("/?query=beyonc%C3%A9");
-        assertEquals("WEAKAND(100) beyonc\u00e9", q.getModel().getQueryTree().toString());
+        assertEquals("WEAKAND beyonc\u00e9", q.getModel().getQueryTree().toString());
     }
 
     @Test
@@ -475,7 +497,7 @@ public class QueryTestCase {
     @Test
     void testDefaultIndex() {
         Query q = new Query("?query=hi%20hello%20keyword:kanoo%20default:munkz%20%22phrases+too%22&default-index=def");
-        assertEquals("WEAKAND(100) def:hi def:hello keyword:kanoo default:munkz def:\"phrases too\"",
+        assertEquals("WEAKAND def:hi def:hello keyword:kanoo default:munkz def:\"phrases too\"",
                      q.getModel().getQueryTree().toString());
     }
 
@@ -514,7 +536,7 @@ public class QueryTestCase {
     @Test
     void testSimpleQueryParsing() {
         Query q = new Query("/search?query=foobar&offset=10&hits=20");
-        assertEquals("WEAKAND(100) foobar", q.getModel().getQueryTree().toString());
+        assertEquals("WEAKAND foobar", q.getModel().getQueryTree().toString());
         assertEquals(10, q.getOffset());
         assertEquals(20, q.getHits());
     }
@@ -523,7 +545,7 @@ public class QueryTestCase {
     @Test
     void testPrefixAlias() {
         Query q = new Query("/search?query=foobar&input=foo",
-                new QueryProfile("test").compile(null));
+                            new QueryProfile("test").compile(null));
         assertEquals("foo", q.properties().get("input"));
     }
 
@@ -945,7 +967,7 @@ public class QueryTestCase {
             fail("Expected exception");
         }
         catch (NullPointerException e) {
-            assertEquals("A composite item child can not be null", e.getMessage());
+            assertEquals("A composite item child cannot be null", e.getMessage());
         }
 
         try {
@@ -1054,29 +1076,29 @@ public class QueryTestCase {
     void testImplicitSegmentAnd() {
         Query query = new Query(httpEncode("?query=it's fine"));
         useParserSettings(query);
-        assertEquals("WEAKAND(100) (SAND it s) fine", query.getModel().getQueryTree().toString());
+        assertEquals("WEAKAND (SAND it s) fine", query.getModel().getQueryTree().toString());
         query = new Query(httpEncode("?query=it's fine"));
         disableParserSettings(query);
-        assertEquals("WEAKAND(100) it s fine", query.getModel().getQueryTree().toString());
+        assertEquals("WEAKAND it s fine", query.getModel().getQueryTree().toString());
     }
 
     @Test
     void testIdeographicPunctuation() {
         Query query = new Query("?query=音、声");
         useParserSettings(query);
-        assertEquals("WEAKAND(100) (AND 音 声)", query.getModel().getQueryTree().toString());
+        assertEquals("WEAKAND (AND 音 声)", query.getModel().getQueryTree().toString());
 
         query = new Query("?query=ど。の");
         useParserSettings(query);
-        assertEquals("WEAKAND(100) (AND ど の)", query.getModel().getQueryTree().toString());
+        assertEquals("WEAKAND (AND ど の)", query.getModel().getQueryTree().toString());
 
         query = new Query("?query=音、声");
         disableParserSettings(query);
-        assertEquals("WEAKAND(100) 音 声", query.getModel().getQueryTree().toString());
+        assertEquals("WEAKAND 音 声", query.getModel().getQueryTree().toString());
 
         query = new Query("?query=ど。の");
         disableParserSettings(query);
-        assertEquals("WEAKAND(100) ど の", query.getModel().getQueryTree().toString());
+        assertEquals("WEAKAND ど の", query.getModel().getQueryTree().toString());
     }
 
     @Test
@@ -1089,7 +1111,7 @@ public class QueryTestCase {
         test.addIndex(myField);
         IndexModel indexModel = new IndexModel(test);
         query.getModel().setExecution(new Execution(Execution.Context.createContextStub(new IndexFacts(indexModel))));
-        assertEquals("WEAKAND(100) myfield:'it s' myfield:\"a b\" myfield:c", query.getModel().getQueryTree().toString());
+        assertEquals("WEAKAND myfield:'it s' myfield:\"a b\" myfield:c", query.getModel().getQueryTree().toString());
     }
 
     @Test
@@ -1104,7 +1126,7 @@ public class QueryTestCase {
         IndexModel indexModel = new IndexModel(test);
         query.getModel().setExecution(new Execution(Execution.Context.createContextStub(new IndexFacts(indexModel))));
         useParserSettings(query);
-        assertEquals("WEAKAND(100) (SAND myfield:it myfield:s) (AND myfield:a myfield:b) myfield:c", query.getModel().getQueryTree().toString());
+        assertEquals("WEAKAND (SAND myfield:it myfield:s) (AND myfield:a myfield:b) myfield:c", query.getModel().getQueryTree().toString());
         // 'it' and 's' should have connectivity 1
         WeakAndItem root = (WeakAndItem) query.getModel().getQueryTree().getRoot();
         AndSegmentItem sand = (AndSegmentItem) root.getItem(0);
@@ -1116,11 +1138,11 @@ public class QueryTestCase {
         assertEquals(1.0, it.getConnectivity(), 0.00000001);
         query = new Query(httpEncode("?query=myfield:it's myfield:a.b myfield:c"));
         query.getModel().setExecution(new Execution(Execution.Context.createContextStub(new IndexFacts(indexModel))));
-        assertEquals("WEAKAND(100) myfield:it myfield:s (AND myfield:a myfield:b) myfield:c", query.getModel().getQueryTree().toString());
+        assertEquals("WEAKAND myfield:it myfield:s (AND myfield:a myfield:b) myfield:c", query.getModel().getQueryTree().toString());
         query = new Query(httpEncode("?query=myfield:it's myfield:a.b myfield:c"));
         query.getModel().setExecution(new Execution(Execution.Context.createContextStub(new IndexFacts(indexModel))));
         disableParserSettings(query);
-        assertEquals("WEAKAND(100) myfield:it myfield:s myfield:a myfield:b myfield:c", query.getModel().getQueryTree().toString());
+        assertEquals("WEAKAND myfield:it myfield:s myfield:a myfield:b myfield:c", query.getModel().getQueryTree().toString());
     }
 
     @Test
@@ -1134,7 +1156,7 @@ public class QueryTestCase {
         {
             Query query = new Query(httpEncode("?query=myfield:b.c.d"));
             query.getModel().setExecution(new Execution(Execution.Context.createContextStub(new IndexFacts(indexModel))));
-            assertEquals("WEAKAND(100) (AND myfield:b myfield:c myfield:d)", query.getModel().getQueryTree().toString());
+            assertEquals("WEAKAND (AND myfield:b myfield:c myfield:d)", query.getModel().getQueryTree().toString());
             WeakAndItem root = (WeakAndItem) query.getModel().getQueryTree().getRoot();
             AndItem and = (AndItem) root.getItem(0);
             WordItem b = (WordItem) and.getItem(0);
@@ -1149,7 +1171,7 @@ public class QueryTestCase {
         {
             Query query = new Query(httpEncode("?query=myfield:a myfield:b.c.d myfield:e"));
             query.getModel().setExecution(new Execution(Execution.Context.createContextStub(new IndexFacts(indexModel))));
-            assertEquals("WEAKAND(100) myfield:a (AND myfield:b myfield:c myfield:d) myfield:e", query.getModel().getQueryTree().toString());
+            assertEquals("WEAKAND myfield:a (AND myfield:b myfield:c myfield:d) myfield:e", query.getModel().getQueryTree().toString());
             WeakAndItem root = (WeakAndItem) query.getModel().getQueryTree().getRoot();
             WordItem a = (WordItem) root.getItem(0);
             AndItem and = (AndItem) root.getItem(1);
@@ -1179,7 +1201,7 @@ public class QueryTestCase {
         IndexModel indexModel = new IndexModel(test);
         query.getModel().setExecution(new Execution(Execution.Context.createContextStub(new IndexFacts(indexModel))));
 
-        assertEquals("WEAKAND(100) myfield:\"'it s' fine\"", query.getModel().getQueryTree().toString());
+        assertEquals("WEAKAND myfield:\"'it s' fine\"", query.getModel().getQueryTree().toString());
     }
 
     @Test
@@ -1269,7 +1291,7 @@ public class QueryTestCase {
                                                                                                                             .createCjkGrams(true)
                                                                                                                             .snowballStemmingForEnglish(true).build())));
         query.getModel().setExecution(execution);
-        assertEquals("WEAKAND(100) 中村靖 日驟 逝", query.getModel().getQueryTree().toString());
+        assertEquals("WEAKAND 中村靖 日驟 逝", query.getModel().getQueryTree().toString());
     }
 
     @Test
@@ -1309,6 +1331,7 @@ public class QueryTestCase {
         var profile = new QueryProfile("test");
         profile.set("model.type", "linguistics", null); // disables further processing
         profile.set("model.type.isYqlDefault", "true", null);
+
         {
             String parsedYql = parse("select * from sources * where default contains 'color'",
                                      mockLinguistics,
@@ -1324,6 +1347,33 @@ public class QueryTestCase {
                                      mockLinguistics,
                                      profile);
             assertEquals("select * from sources * where default contains near(({origin: {original: \"color\", offset: 0, length: 5}, id: 1, normalizeCase: false, accentDrop: false}alternatives({\"color\": 1.0, \"colour\": 1.0})), ({stem: false, normalizeCase: false, accentDrop: false, id: 2}\"red\"))",
+                         parsedYql);
+            assertEquals(parsedYql, parse(parsedYql, mockLinguistics, profile),
+                         "Re-parsing yield the same output");
+        }
+
+        {
+            String parsedYql = parse("select * from sources * where default contains 'color-red'",
+                                     mockLinguistics,
+                                     profile);
+            assertEquals("select * from sources * where default contains " +
+                         "({origin: {original: \"color-red\", offset: 0, length: 9}, id: 1, stem: false}" +
+                         "phrase(({origin: {original: \"color-red\", offset: 0, length: 9}, " +
+                         "normalizeCase: false, accentDrop: false}alternatives({\"color\": 1.0, \"colour\": 1.0})), \"red\"))",
+                         parsedYql);
+            assertEquals(parsedYql, parse(parsedYql, mockLinguistics, profile),
+                         "Re-parsing yield the same output");
+        }
+
+        {
+            String parsedYql = parse("select * from sources * where default contains near('my', 'color-red')",
+                                     mockLinguistics,
+                                     profile);
+            assertEquals("select * from sources * where default contains " +
+                         "near(({stem: false, normalizeCase: false, accentDrop: false, id: 1}\"my\"), " +
+                         "({origin: {original: \"color-red\", offset: 0, length: 9}, id: 2, stem: false}" +
+                         "phrase(({origin: {original: \"color-red\", offset: 0, length: 9}, " +
+                         "normalizeCase: false, accentDrop: false}alternatives({\"color\": 1.0, \"colour\": 1.0})), \"red\")))",
                          parsedYql);
             assertEquals(parsedYql, parse(parsedYql, mockLinguistics, profile),
                          "Re-parsing yield the same output");
@@ -1358,10 +1408,20 @@ public class QueryTestCase {
         }
     }
 
+    private String parse(String yql, Linguistics linguistics) {
+        return parse(yql, linguistics, new QueryProfile("test"));
+    }
+
     private String parse(String yql, Linguistics linguistics, QueryProfile profile) {
+        return parse(yql, linguistics, profile, null);
+    }
+    private String parse(String yql, Linguistics linguistics, QueryProfile profile, IndexModel indexModel) {
         var query = new Query(httpEncode("?yql=" + yql), profile.compile(null));
-        new Execution(new Chain<>(new MinimalQueryInserter()), Execution.Context.createContextStub(null, linguistics)).search(query);
+        var context = Execution.Context.createContextStub(indexModel != null ? new IndexFacts(indexModel) : null, linguistics);
+        var result = new Execution(new Chain<>(new MinimalQueryInserter()), context).search(query);
+        assertNull(result.hits().getError(), result.hits().getError() == null ? "" : result.hits().getError().toString());
         query.getModel().prepare(query.getRanking()); // Test serialization/deserialization of these additional annotations
+
         return query.yqlRepresentation();
     }
 
@@ -1424,14 +1484,14 @@ public class QueryTestCase {
         assertParsed("+(AND a b) -c",          "a b -c", type("all"));
         assertParsed("+(OR a b) -c",           "a b -c", type("any"));
         assertParsed("\"a b c\"",              "a b -c", type("phrase"));
-        assertParsed("WEAKAND(100) a b c",     "a b -c", type("tokenize"));
+        assertParsed("WEAKAND a b c",     "a b -c", type("tokenize"));
         assertParsed("AND a b c",              "a b -c", type("tokenize").setComposite(QueryType.Composite.and));
         assertParsed("+(AND a b) -c",          "a b -c", type("web"));
-        assertParsed("+(WEAKAND(100) a b) -c", "a b -c", type("web").setComposite(QueryType.Composite.weakAnd));
-        assertParsed("WEAKAND(100) a b c",     "a b -c", type("linguistics"));
+        assertParsed("+(WEAKAND a b) -c", "a b -c", type("web").setComposite(QueryType.Composite.weakAnd));
+        assertParsed("WEAKAND a b c",     "a b -c", type("linguistics"));
         assertParsed("OR a b c",               "a b -c", type("linguistics").setComposite(QueryType.Composite.or));
         assertParsed("OR a b c",               "a b -c", type("weakAnd").setComposite(QueryType.Composite.or).setTokenization(QueryType.Tokenization.linguistics).setSyntax(QueryType.Syntax.none));
-        assertParsed("+(WEAKAND(100) a b) -c", "a b -c", type("tokenize").setSyntax(QueryType.Syntax.web));
+        assertParsed("+(WEAKAND a b) -c", "a b -c", type("tokenize").setSyntax(QueryType.Syntax.web));
         assertParsed("AND a b c",              "a b -c", type("web").setSyntax(QueryType.Syntax.none));
 
         assertFails("Failed parsing query: query type linguistics " +
@@ -1439,7 +1499,7 @@ public class QueryTestCase {
                     "Linguistics tokenization can only be combined with syntax none",
                     type("linguistics").setSyntax(QueryType.Syntax.web));
 
-        assertEquals("WEAKAND(100) a b c",
+        assertEquals("WEAKAND a b c",
                      new Query(httpEncode("?query=a b -c&model.type=linguistics")).getModel().getQueryTree().toString());
         assertEquals("OR a b c",
                      new Query(httpEncode("?query=a b -c&model.type.composite=or&model.type.tokenization=linguistics&model.type.syntax=none")).getModel().getQueryTree().toString());
@@ -1454,6 +1514,37 @@ public class QueryTestCase {
         registry.register(profile);
         CompiledQueryProfileRegistry cRegistry = registry.compile();
         Query q = new Query(httpEncode("?query=a b -c&model.type=linguistics"), cRegistry.findQueryProfile("default"));
+    }
+
+    @Test
+    void testLinguisticsProfiles() {
+        var mockLinguistics = new MockTokenizerLinguistics();
+
+        parse("select * from sources * where {grammar.profile:'p1'}userInput('hello world')", mockLinguistics);
+        assertEquals("p1", mockLinguistics.lastLinguisticsProfile);
+
+        var profile = new QueryProfile("test");
+        profile.set("model.type.isYqlDefault", true, null);
+        profile.set("model.type.profile", "p2", null);
+        parse("select * from sources * where userInput('hello world')", mockLinguistics, profile);
+        assertEquals("p2", mockLinguistics.lastLinguisticsProfile);
+
+    }
+
+    @Test
+    void testLinguisticsProfileWithLinguisticsParsing() {
+        var mockLinguistics = new MockTokenizerLinguistics();
+
+        var schema = new SearchDefinition("test");
+        var index = new Index("testField");
+        index.setStemMode("BEST");
+        index.setLinguisticsProfile("p1");
+        schema.addIndex(index);
+        var indexModel = new IndexModel(schema);
+
+        parse("select * from sources * where {defaultIndex:'testField', grammar:'linguistics'}userInput('hello world')",
+              mockLinguistics, new QueryProfile("test"), indexModel);
+        assertEquals("p1", mockLinguistics.lastLinguisticsProfile);
     }
 
     private QueryType type(String type) {
@@ -1509,26 +1600,36 @@ public class QueryTestCase {
 
     private static class MockTokenizerLinguistics extends SimpleLinguistics {
 
+        String lastLinguisticsProfile = null;
+
         @Override
         public Tokenizer getTokenizer() { return new MockTokenizer(); }
 
         @Override
         public boolean equals(Linguistics other) { return (other instanceof MockTokenizerLinguistics); }
 
-    }
+        private class MockTokenizer extends SimpleTokenizer {
 
-    private static class MockTokenizer extends SimpleTokenizer {
-
-        @Override
-        public Iterable<Token> tokenize(String input, LinguisticsParameters parameters) {
-            List<Token> tokens = new ArrayList<>();
-            for (String token : input.split(" ")) {
-                if (token.equals("color"))
-                    tokens.add(SimpleToken.fromStems("color", List.of("color", "colour")));
-                else
-                    tokens.add(SimpleToken.fromStems(token, List.of(token)));
+            @Override
+            public Iterable<Token> tokenize(String input, LinguisticsParameters parameters) {
+                lastLinguisticsProfile = parameters.profile();
+                List<Token> tokens = new ArrayList<>();
+                for (String token : input.split(" ")) {
+                    if (token.isBlank()) continue;
+                    if (token.equals("color")) {
+                        tokens.add(SimpleToken.fromStems("color", List.of("color", "colour")));
+                    }
+                    else if (token.equals("color-red")) {
+                        tokens.add(SimpleToken.fromStems("color", List.of("color", "colour")));
+                        tokens.add(SimpleToken.fromStems("red", List.of("red")));
+                    }
+                    else {
+                        tokens.add(SimpleToken.fromStems(token, List.of(token)));
+                    }
+                }
+                return tokens;
             }
-            return tokens;
+
         }
 
     }

@@ -1,6 +1,7 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.docproc;
 
+import com.yahoo.api.annotations.Beta;
 import com.yahoo.collections.Pair;
 import com.yahoo.component.chain.ChainedComponent;
 import com.yahoo.docproc.impl.DocprocService;
@@ -122,11 +123,31 @@ public abstract class DocumentProcessor extends ChainedComponent {
         public static final Progress FAILED = new Progress("failed");
 
         /**
+         * Returned by a processor when the input document operation was invalid.
+         */
+        public static final Progress INVALID_INPUT = new Progress("invalid_input");
+
+        /**
          * Returned by a processor when processing has permanently failed,
          * so that the document processing service should disable itself until
          * reconfigured or restarted.
          */
         public static final Progress PERMANENT_FAILURE = new Progress("permanent_failure");
+
+        /**
+         * Returned by a processor when the operation was rejected due to overload/rate limiting.
+         * Indicates back-pressure from downstream systems (e.g., embedders).
+         * This is a non-retryable error - the client will receive an immediate 429 response.
+         */
+        @Beta
+        public static final Progress OVERLOAD = new Progress("overload");
+
+        /**
+         * Returned by a processor when processing timed out.
+         * The document processing framework will not retry the operation.
+         */
+        @Beta
+        public static final Progress TIMEOUT = new Progress("timeout");
 
         private final String name;
 

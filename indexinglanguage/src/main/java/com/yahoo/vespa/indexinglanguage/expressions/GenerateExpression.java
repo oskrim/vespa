@@ -8,13 +8,13 @@ import com.yahoo.document.Field;
 import com.yahoo.document.datatypes.FieldValue;
 import com.yahoo.document.datatypes.StringFieldValue;
 import com.yahoo.language.Linguistics;
-import com.yahoo.language.process.Embedder;
 import com.yahoo.language.process.FieldGenerator;
+import com.yahoo.text.Text;
 
-import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
+
+import static com.yahoo.language.process.InvocationContext.Deadline;
 
 /**
  * Indexing language expression for generating field values with LLMs and custom components.
@@ -31,7 +31,7 @@ public class GenerateExpression extends Expression {
 
     /** The target type we are generating into. */
     private DataType targetType;
-    
+
     public GenerateExpression(Linguistics linguistics,
                               Components<FieldGenerator> generators,
                               String generatorId,
@@ -46,8 +46,7 @@ public class GenerateExpression extends Expression {
         if (!inputType.isAssignableTo(DataType.STRING)) {
             throw new VerificationException(
                     this,
-                    "Generate expression for field %s requires string input type, but got %s."
-                            .formatted(destination, inputType.getName())
+                    Text.format("Generate expression for field %s requires string input type, but got %s.", destination, inputType.getName())
             );
         }
 
@@ -81,23 +80,23 @@ public class GenerateExpression extends Expression {
         FieldValue inputValue = context.getCurrentValue();
         DataType inputType = inputValue.getDataType();
         FieldValue generatedValue;
-        
+
         if (inputType == DataType.STRING) {
             var promptString = ((StringFieldValue) inputValue).getString();
             generatedValue = generate(StringPrompt.from(promptString), context);
         } else {
             throw new IllegalArgumentException(
-                    ("Generate expression for field %s requires string input type, but got %s.")
-                            .formatted(destination, inputType.getName()));
+                    Text.format("Generate expression for field %s requires string input type, but got %s.", destination, inputType.getName()));
         }
-        
+
         context.setCurrentValue(generatedValue);
     }
-    
+
     private FieldValue generate(Prompt prompt, ExecutionContext context) {
         var generatorContext =  new FieldGenerator.Context(destination, targetType, context.getCache())
                 .setLanguage(context.resolveLanguage(linguistics))
                 .setComponentId(generator.id());
+        context.getDeadline().ifPresent(instant -> generatorContext.setDeadline(Deadline.of(instant)));
 
         return generator.component().generate(prompt, generatorContext);
     }

@@ -36,7 +36,6 @@ import java.util.logging.Level;
  */
 public class CreatePositionZCurve extends Processor {
 
-    private boolean useV8GeoPositions = false;
     private final SDDocumentType repo;
 
     public CreatePositionZCurve(Schema schema, DeployLogger deployLogger, RankProfileRegistry rankProfileRegistry, QueryProfiles queryProfiles) {
@@ -46,7 +45,6 @@ public class CreatePositionZCurve extends Processor {
 
     @Override
     public void process(boolean validate, boolean documentsOnly, ModelContext.Properties properties) {
-        this.useV8GeoPositions = properties.featureFlags().useV8GeoPositions();
         process(validate, documentsOnly);
     }
 
@@ -66,25 +64,27 @@ public class CreatePositionZCurve extends Processor {
             boolean doesSummary = field.doesSummarying();
 
             String fieldName = field.getName();
+
+            // Read user-specified settings before removing the original attribute
+            Attribute originalAttr = field.getAttributes().get(fieldName);
+            boolean fastAccess = originalAttr != null && originalAttr.isFastAccess();
+            boolean paged = originalAttr != null && originalAttr.isPaged();
+
             field.getAttributes().remove(fieldName);
 
             String zName = PositionDataType.getZCurveFieldName(fieldName);
             SDField zCurveField = createZCurveField(field, zName, validate);
+
+            // Forward user-specified settings to the zcurve attribute
+            Attribute zAttr = zCurveField.getAttributes().get(zName);
+            if (fastAccess) zAttr.setFastAccess(true);
+            if (paged) zAttr.setPaged(true);
+
             schema.addExtraField(zCurveField);
             schema.fieldSets().addBuiltInFieldSetItem(BuiltInFieldSets.INTERNAL_FIELDSET_NAME, zCurveField.getName());
 
             // configure summary
             Collection<String> summaryTo = removeSummaryTo(field);
-            if (! useV8GeoPositions) {
-                ensureCompatibleSummary(field, zName,
-                                        AdjustPositionSummaryFields.getPositionSummaryFieldName(fieldName),
-                                        DataType.getArray(DataType.STRING), // will become "xmlstring"
-                                        SummaryTransform.POSITIONS, summaryTo, validate);
-                ensureCompatibleSummary(field, zName,
-                                        AdjustPositionSummaryFields.getDistanceSummaryFieldName(fieldName),
-                                        DataType.INT,
-                                        SummaryTransform.DISTANCE, summaryTo, validate);
-            }
             // clear indexing script
             field.setIndexingScript(schema.getName(), null);
             SDField posX = field.getStructField(PositionDataType.FIELD_X);

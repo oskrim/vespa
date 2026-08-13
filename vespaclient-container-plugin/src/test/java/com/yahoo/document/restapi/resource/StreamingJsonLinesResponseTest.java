@@ -21,6 +21,7 @@ import java.nio.charset.StandardCharsets;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.same;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -34,7 +35,7 @@ public class StreamingJsonLinesResponseTest {
     // Simple indirection to make matching write() calls easier by auto-converting
     // ByteBuffer content to UTF-8 strings.
     interface StringifiedResponseWriter {
-        void commit(int status, String contentType, boolean fullyApplied) throws IOException;
+        void commit(int status, String contentType, boolean fullyApplied, boolean ignoredOperation) throws IOException;
         void write(String buffer, CompletionHandler completionHandlerOrNull);
         void close() throws IOException; // Narrowed exception specifier
     }
@@ -47,8 +48,8 @@ public class StreamingJsonLinesResponseTest {
         }
 
         @Override
-        public void commit(int status, String contentType, boolean fullyApplied) throws IOException {
-            target.commit(status, contentType, fullyApplied);
+        public void commit(int status, String contentType, boolean fullyApplied, boolean ignoredOperation) throws IOException {
+            target.commit(status, contentType, fullyApplied, ignoredOperation);
         }
 
         @Override
@@ -95,8 +96,15 @@ public class StreamingJsonLinesResponseTest {
     @Test
     void commit_is_forwarded_to_writer_with_jsonl_content_type() throws IOException {
         var f = new Fixture();
-        f.jsonlResponse.commit(200, true);
-        verify(f.writer).commit(200, "application/jsonl; charset=UTF-8", true);
+        f.jsonlResponse.commit(200, true, false);
+        verify(f.writer).commit(200, "application/jsonl; charset=UTF-8", true, false);
+    }
+
+    @Test
+    void ignored_flags_are_forwarded_to_writer() throws IOException {
+        var f = new Fixture();
+        f.jsonlResponse.commit(200, false, true);
+        verify(f.writer).commit(200, "application/jsonl; charset=UTF-8", false, true);
     }
 
     @Test
@@ -252,7 +260,7 @@ public class StreamingJsonLinesResponseTest {
     }
 
     @Test
-    void trace_is_rendered_as_own_line() throws IOException {
+    void session_trace_is_rendered_as_own_line() throws IOException {
         var f = new Fixture();
         var trace = new Trace(9);
         trace.trace(7, "Poirot's deductions", false);
@@ -260,30 +268,56 @@ public class StreamingJsonLinesResponseTest {
                 .addChild("The butler did it")
                 .addChild("Weapon was a garden gnome"));
         f.jsonlResponse.writeTrace(trace);
-        // TODO the nested "trace" objects aren't beautiful; reconsider format for JSONL.
-        //  Since trace nodes may technically output "message" objects at any level, need a wrapper.
         String expected = """
-                {"trace":{"trace":[{"message":"Poirot's deductions"},{"fork":[{"message":"The butler did it"},{"message":"Weapon was a garden gnome"}]}]}}
+                {"sessionTrace":{"trace":[{"message":"Poirot's deductions"},{"fork":[{"message":"The butler did it"},{"message":"Weapon was a garden gnome"}]}]}}
                 """;
         verify(f.writer).write(expected, null);
+    }
+
+    @Test
+    void null_session_trace_is_not_rendered() throws Exception {
+        var f = new Fixture();
+        f.jsonlResponse.writeTrace(null);
+        verify(f.writer, never()).write(anyString(), any());
+    }
+
+    @Test
+    void empty_session_trace_is_not_rendered() throws Exception {
+        var f = new Fixture();
+        var trace = new Trace(9);
+        // Not rendering traces without a root node is the behavior of the legacy
+        // JSON renderer, so we carry the torch of that particular tradition.
+        f.jsonlResponse.writeTrace(trace);
+        verify(f.writer, never()).write(anyString(), any());
     }
 
     @Test
     void message_is_rendered_as_own_line() throws IOException {
         var f = new Fixture();
-        f.jsonlResponse.writeMessage("'ello, 'ello, this is London");
+        f.jsonlResponse.writeMessage("'ello, 'ello, this is London", StreamableJsonResponse.MessageSeverity.INFO);
+        f.jsonlResponse.writeMessage("seagulls incoming", StreamableJsonResponse.MessageSeverity.WARNING);
+        f.jsonlResponse.writeMessage("seagulls have arrived, flee for your lives", StreamableJsonResponse.MessageSeverity.ERROR);
+
         String expected = """
-                {"message":"'ello, 'ello, this is London"}
+                {"message":{"text":"'ello, 'ello, this is London","severity":"info"}}
+                """;
+        verify(f.writer).write(expected, null);
+        expected = """
+                {"message":{"text":"seagulls incoming","severity":"warning"}}
+                """;
+        verify(f.writer).write(expected, null);
+        expected = """
+                {"message":{"text":"seagulls have arrived, flee for your lives","severity":"error"}}
                 """;
         verify(f.writer).write(expected, null);
     }
 
     @Test
-    void document_count_is_rendered_as_own_line() throws IOException {
+    void document_count_is_rendered_as_part_of_session_stats_object() throws IOException {
         var f = new Fixture();
         f.jsonlResponse.writeDocumentCount(123456);
         String expected = """
-                {"documentCount":123456}
+                {"sessionStats":{"documentCount":123456}}
                 """;
         verify(f.writer).write(expected, null);
     }

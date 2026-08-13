@@ -28,6 +28,7 @@ import java.util.logging.Logger;
  *
  * @author Einar M R Rosenvinge
  */
+@SuppressWarnings("deprecation") // commons-cli 1.10+ deprecated Option.Builder.build() and HelpFormatter
 public class VdsVisitTarget {
 
     private static final Logger log = Logger.getLogger(VdsVisitTarget.class.getName());
@@ -102,7 +103,7 @@ public class VdsVisitTarget {
                 .longOpt("bindtoslobrok")
                 .hasArg(true)
                 .argName("address")
-                .desc("Bind to the given slobrok address.")
+                .desc("Bind to the given location broker address.")
                 .build());
 
         options.addOption(Option.builder("t")
@@ -194,7 +195,7 @@ public class VdsVisitTarget {
             if (port != -1) {
                 System.err.println("Binding to socket " + getTcpAddress());
             } else {
-                System.err.println("Binding to slobrok address: " + slobrokAddress + "/visit-destination");
+                System.err.println("Binding to location broker address: " + slobrokAddress + "/visit-destination");
             }
         }
     }

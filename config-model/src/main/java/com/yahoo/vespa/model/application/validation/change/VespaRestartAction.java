@@ -4,6 +4,8 @@ package com.yahoo.vespa.model.application.validation.change;
 import com.yahoo.config.model.api.ConfigChangeRestartAction;
 import com.yahoo.config.model.api.ServiceInfo;
 import com.yahoo.config.provision.ClusterSpec;
+import com.yahoo.vespa.model.AbstractService;
+import com.yahoo.vespa.model.container.ContainerCluster;
 
 import java.util.List;
 
@@ -15,6 +17,7 @@ import java.util.List;
 public class VespaRestartAction extends VespaConfigChangeAction implements ConfigChangeRestartAction {
 
     private final boolean ignoreForInternalRedeploy;
+    private final ConfigChange configChange;
 
     /** <strong>This does <em>not</em> trigger restarts; you <em>need</em> the {@code ServiceInfo}!</strong>*/
     public VespaRestartAction(ClusterSpec.Id id, String message) {
@@ -28,11 +31,33 @@ public class VespaRestartAction extends VespaConfigChangeAction implements Confi
     public VespaRestartAction(ClusterSpec.Id id, String message, ServiceInfo services, boolean ignoreForInternalRedeploy) {
         super(id, message, List.of(services));
         this.ignoreForInternalRedeploy = ignoreForInternalRedeploy;
+        this.configChange = ConfigChange.IMMEDIATE;
     }
 
     public VespaRestartAction(ClusterSpec.Id id, String message, List<ServiceInfo> services) {
         super(id, message, services);
         this.ignoreForInternalRedeploy = false;
+        this.configChange = ConfigChange.IMMEDIATE;
+    }
+
+    public VespaRestartAction(ClusterSpec.Id id, String message, List<ServiceInfo> services, ConfigChange configChange) {
+        super(id, message, services);
+        this.ignoreForInternalRedeploy = false;
+        this.configChange = configChange;
+    }
+
+    public VespaRestartAction(ClusterSpec.Id id, String message, List<ServiceInfo> services,
+                             boolean ignoreForInternalRedeploy, ConfigChange configChange) {
+        super(id, message, services);
+        this.ignoreForInternalRedeploy = ignoreForInternalRedeploy;
+        this.configChange = configChange;
+    }
+
+    /** Creates an action restarting all containers in the given cluster. */
+    public static VespaRestartAction ofCluster(ContainerCluster<?> cluster, String message, ConfigChange configChange) {
+        return new VespaRestartAction(cluster.id(), message,
+                                      cluster.getContainers().stream().map(AbstractService::getServiceInfo).toList(),
+                                      configChange);
     }
 
     @Override
@@ -46,19 +71,26 @@ public class VespaRestartAction extends VespaConfigChangeAction implements Confi
     }
 
     @Override
+    public ConfigChange configChange() {
+        return configChange;
+    }
+
+    @Override
     public boolean equals(Object o) {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
         if (!super.equals(o)) return false;
 
         VespaRestartAction that = (VespaRestartAction) o;
-        return ignoreForInternalRedeploy == that.ignoreForInternalRedeploy;
+        return ignoreForInternalRedeploy == that.ignoreForInternalRedeploy
+            && configChange == that.configChange;
     }
 
     @Override
     public int hashCode() {
         int result = super.hashCode();
         result = 31 * result + (ignoreForInternalRedeploy ? 1 : 0);
+        result = 31 * result + configChange.hashCode();
         return result;
     }
 }

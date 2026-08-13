@@ -15,7 +15,6 @@ import com.yahoo.slime.SlimeUtils;
 import com.yahoo.test.ManualClock;
 import com.yahoo.vespa.config.server.ApplicationRepository;
 import com.yahoo.vespa.config.server.MockProvisioner;
-import com.yahoo.vespa.config.server.application.OrchestratorMock;
 import com.yahoo.vespa.config.server.provision.HostProvisionerProvider;
 import com.yahoo.vespa.config.server.tenant.TenantRepository;
 import com.yahoo.vespa.config.server.tenant.TestTenantRepository;
@@ -43,7 +42,7 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
- * @author jonmv
+ * @author Jon Marius Venstad
  */
 class ApplicationApiHandlerTest {
 
@@ -104,7 +103,6 @@ class ApplicationApiHandlerTest {
         tenantRepository.addTenant(tenant);
         applicationRepository = new ApplicationRepository.Builder()
                 .withTenantRepository(tenantRepository)
-                .withOrchestrator(new OrchestratorMock())
                 .withClock(clock)
                 .withConfigserverConfig(configserverConfig)
                 .build();
@@ -183,7 +181,7 @@ class ApplicationApiHandlerTest {
                        """
                        {
                          "error-code": "BAD_REQUEST",
-                         "message": "Error preprocessing application package for test.default, session 2: services.xml does not exist in application package. There are 1 files in the directory"
+                         "message": "Error preprocessing application package for test.default.default, session id 2 (based on session id unknown): services.xml does not exist in application package. There are 1 files in the directory"
                        }
                        """);
     }
@@ -299,7 +297,7 @@ class ApplicationApiHandlerTest {
         // Retry only activation of session 3, but fail again with lock.
         provisioner.activationFailure(new ApplicationLockException("lock timeout"));
         verifyResponse(put(3, Map.of()),
-                       500,
+                       409,
                        """
                        {
                          "error-code": "APPLICATION_LOCK_FAILURE",
@@ -323,17 +321,16 @@ class ApplicationApiHandlerTest {
                        """
                        {
                          "error-code": "ACTIVATION_CONFLICT",
-                         "message": "app:test.default.default Cannot activate session 4 because the currently active session (3) has changed since session 4 was created (was 2 at creation time)"
+                         "message": "app:test.default.default This session 4 was prepared when session 2 was active, but session 3 has since become active: refusing to activate this session, please redeploy"
                        }
                        """);
 
-        // Retry activation of session 3 again, and fail.
+        // Retry activation of session 3 again, return OK, already activated.
         verifyResponse(put(3, Map.of()),
-                       400,
+                       200,
                        """
                        {
-                         "error-code": "BAD_REQUEST",
-                         "message": "app:test.default.default Session 3 is already active"
+                         "message": "Session 3 for test.default.default activated"
                        }
                        """);
     }

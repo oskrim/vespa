@@ -17,7 +17,10 @@ import com.yahoo.prelude.querytransform.RecallSearcher;
 import com.yahoo.search.searchchain.Execution;
 import org.junit.jupiter.api.Test;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.fail;
 
 /**
  * @author Simon Thoresen Hult
@@ -30,7 +33,7 @@ public class RecallSearcherTestCase {
         Query query = new Query();
         Result result = new Execution(searcher, Execution.Context.createContextStub()).search(query);
         assertNull(result.hits().getError());
-        assertTrue(query.getModel().getQueryTree().getRoot() instanceof NullItem);
+        assertInstanceOf(NullItem.class, query.getModel().getQueryTree().getRoot());
     }
 
     @Test

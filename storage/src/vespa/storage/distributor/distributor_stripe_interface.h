@@ -2,16 +2,22 @@
 #pragma once
 
 #include "bucketgctimecalculator.h"
-#include "distributormessagesender.h"
 #include "bucketownership.h"
+#include "distributormessagesender.h"
+#include "memory_usage_token.h"
 #include "operation_routing_snapshot.h"
-#include <vespa/storage/bucketdb/bucketdatabase.h>
-#include <vespa/document/bucket/bucket.h>
 
-namespace storage::api { class MergeBucketReply; }
-namespace storage::lib { class ClusterStateBundle; }
+#include <vespa/document/bucket/bucket.h>
+#include <vespa/storage/bucketdb/bucketdatabase.h>
+
+namespace storage::api {
+class MergeBucketReply;
+}
+namespace storage::lib {
+class ClusterStateBundle;
+}
 namespace storage {
-   class DistributorConfiguration;
+class DistributorConfiguration;
 }
 namespace storage::distributor {
 
@@ -23,10 +29,9 @@ class Operation;
 /**
  * TODO STRIPE add class comment.
  */
-class DistributorStripeInterface : public DistributorStripeMessageSender
-{
+class DistributorStripeInterface : public DistributorStripeMessageSender {
 public:
-    virtual DistributorMetricSet& getMetrics() = 0;
+    [[nodiscard]] virtual DistributorMetricSet& getMetrics() = 0;
     virtual void enableClusterStateBundle(const lib::ClusterStateBundle& state) = 0;
     [[nodiscard]] virtual const lib::ClusterState* pendingClusterStateOrNull(const document::BucketSpace&) const = 0;
     virtual void notifyDistributionChangeEnabled() = 0;
@@ -35,9 +40,9 @@ public:
      * Requests that we send a requestBucketInfo for the given bucket to the given
      * node. Should be called whenever we receive a BUCKET_NOT_FOUND result.
      */
-    virtual void recheckBucketInfo(uint16_t nodeIdx, const document::Bucket &bucket) = 0;
+    virtual void recheckBucketInfo(uint16_t nodeIdx, const document::Bucket& bucket) = 0;
 
-    virtual bool handleReply(const std::shared_ptr<api::StorageReply>& reply) = 0;
+    [[nodiscard]] virtual bool handleReply(const std::shared_ptr<api::StorageReply>& reply) = 0;
 
     /**
      * Checks whether a bucket needs to be split, and sends a split
@@ -46,26 +51,29 @@ public:
      * @param e The bucket to check.
      * @param pri The priority the split should be sent at.
      */
-    virtual void checkBucketForSplit(document::BucketSpace bucketSpace, const BucketDatabase::Entry& e, uint8_t pri) = 0;
+    virtual void checkBucketForSplit(document::BucketSpace bucketSpace, const BucketDatabase::Entry& e,
+                                     uint8_t pri) = 0;
 
     /**
      * @return Returns the current cluster state bundle.
      */
-    virtual const lib::ClusterStateBundle& getClusterStateBundle() const = 0;
+    [[nodiscard]] virtual const lib::ClusterStateBundle& getClusterStateBundle() const = 0;
 
-    virtual OperationRoutingSnapshot read_snapshot_for_bucket(const document::Bucket&) const = 0;
+    [[nodiscard]] virtual OperationRoutingSnapshot read_snapshot_for_bucket(const document::Bucket&) const = 0;
 
     /**
      * Returns true if the node is currently initializing.
      */
     [[nodiscard]] virtual bool initializing() const = 0;
 
-    [[nodiscard]] virtual std::shared_ptr<Operation> maintenance_op_from_message_id(uint64_t msg_id) const noexcept = 0;
+    [[nodiscard]] virtual std::shared_ptr<Operation>
+    maintenance_op_from_message_id(uint64_t msg_id) const noexcept = 0;
     virtual void handleCompletedMerge(const std::shared_ptr<api::MergeBucketReply>&) = 0;
-    virtual const DistributorConfiguration& getConfig() const = 0;
-    virtual ChainedMessageSender& getMessageSender() = 0;
-    virtual const BucketGcTimeCalculator::BucketIdHasher& getBucketIdHasher() const = 0;
-    virtual const NodeSupportedFeaturesRepo& node_supported_features_repo() const noexcept = 0;
+    [[nodiscard]] virtual const DistributorConfiguration& getConfig() const = 0;
+    [[nodiscard]] virtual ChainedMessageSender& getMessageSender() = 0;
+    [[nodiscard]] virtual const BucketGcTimeCalculator::BucketIdHasher& getBucketIdHasher() const = 0;
+    [[nodiscard]] virtual const NodeSupportedFeaturesRepo& node_supported_features_repo() const noexcept = 0;
+    [[nodiscard]] virtual MemoryUsageToken make_memory_usage_token(uint32_t bytes_used) noexcept = 0;
 };
 
-}
+} // namespace storage::distributor

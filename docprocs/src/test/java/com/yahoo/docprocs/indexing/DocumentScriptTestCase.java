@@ -25,6 +25,7 @@ import com.yahoo.document.update.ValueUpdate;
 import com.yahoo.vespa.indexinglanguage.FieldValuesFactory;
 import com.yahoo.vespa.indexinglanguage.expressions.IndexExpression;
 import com.yahoo.vespa.indexinglanguage.expressions.InputExpression;
+import com.yahoo.vespa.indexinglanguage.expressions.InvalidInputException;
 import com.yahoo.vespa.indexinglanguage.expressions.ScriptExpression;
 import com.yahoo.vespa.indexinglanguage.expressions.StatementExpression;
 import org.junit.Test;
@@ -39,7 +40,7 @@ import static org.junit.Assert.fail;
 /**
  * @author Simon Thoresen Hult
  */
-@SuppressWarnings("unchecked")
+@SuppressWarnings({"unchecked", "deprecation", "removal"})
 public class DocumentScriptTestCase {
 
     private static final FieldValuesFactory fieldValuesFactory = new FieldValuesFactory();
@@ -177,7 +178,7 @@ public class DocumentScriptTestCase {
         DocumentUpdate executeWithUpdate(String fieldName, FieldPathUpdate updateIn) {
             DocumentUpdate update = new DocumentUpdate(type, "id:ns:documentType::");
             update.addFieldPathUpdate(updateIn);
-            return newScript(type, fieldName).execute(fieldValuesFactory, update);
+            return newScript(type, fieldName).execute(fieldValuesFactory, update, null);
         }
 
         FieldPathUpdate executeWithUpdateAndExpectFieldPath(String fieldName, FieldPathUpdate updateIn) {
@@ -237,7 +238,7 @@ public class DocumentScriptTestCase {
         docType.addField("myField", fieldValue.getDataType());
         Document doc = new Document(docType, "id:ns:myDocumentType::");
         doc.setFieldValue("myField", fieldValue.clone());
-        doc = newScript(docType).execute(fieldValuesFactory, doc, false);
+        doc = newScript(docType).execute(fieldValuesFactory, doc, false, null);
         return doc.getFieldValue("myField");
     }
 
@@ -246,7 +247,7 @@ public class DocumentScriptTestCase {
         docType.addField("myField", fieldValue.getDataType());
         DocumentUpdate update = new DocumentUpdate(docType, "id:ns:myDocumentType::");
         update.addFieldUpdate(FieldUpdate.createAssign(docType.getField("myField"), fieldValue));
-        update = newScript(docType).execute(fieldValuesFactory, update);
+        update = newScript(docType).execute(fieldValuesFactory, update, null);
         return update.getFieldUpdate("myField").getValueUpdate(0);
     }
 
@@ -255,7 +256,7 @@ public class DocumentScriptTestCase {
         docType.addField("myField", fieldValue.getDataType());
         DocumentUpdate update = new DocumentUpdate(docType, "id:ns:myDocumentType::");
         update.addFieldPathUpdate(new AssignFieldPathUpdate(docType, "myField", fieldValue));
-        update = newScript(docType).execute(fieldValuesFactory, update);
+        update = newScript(docType).execute(fieldValuesFactory, update, null);
         return update.getFieldUpdate("myField").getValueUpdate(0);
     }
 
@@ -332,7 +333,7 @@ public class DocumentScriptTestCase {
         try {
             execute(document);
             fail();
-        } catch (IllegalArgumentException e) {
+        } catch (InvalidInputException e) {
             assertEquals(expectedException, e.getMessage());
         }
     }
@@ -341,17 +342,17 @@ public class DocumentScriptTestCase {
         try {
             execute(update);
             fail();
-        } catch (IllegalArgumentException e) {
+        } catch (InvalidInputException e) {
             assertEquals(expectedException, e.getMessage());
         }
     }
 
     private static Document execute(Document document) {
-        return newScript(document.getDataType()).execute(new FieldValuesFactory(), document, false);
+        return newScript(document.getDataType()).execute(new FieldValuesFactory(), document, false, null);
     }
 
     private static DocumentUpdate execute(DocumentUpdate update) {
-        return newScript(update.getType()).execute(new FieldValuesFactory(), update);
+        return newScript(update.getType()).execute(new FieldValuesFactory(), update, null);
     }
 
 }

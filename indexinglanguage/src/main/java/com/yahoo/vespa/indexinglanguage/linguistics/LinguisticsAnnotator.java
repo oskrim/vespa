@@ -5,6 +5,7 @@ import ai.vespa.sampling.ProbabilisticSampleRate;
 import com.yahoo.document.DocumentId;
 import com.yahoo.document.annotation.Annotation;
 import com.yahoo.document.annotation.AnnotationTypes;
+import com.yahoo.document.annotation.internal.SimpleIndexingAnnotations;
 import com.yahoo.document.annotation.Span;
 import com.yahoo.document.annotation.SpanList;
 import com.yahoo.document.annotation.SpanTree;
@@ -15,12 +16,14 @@ import com.yahoo.language.process.StemMode;
 import com.yahoo.language.process.Token;
 import com.yahoo.language.process.Tokenizer;
 import com.yahoo.text.Text;
+import com.yahoo.vespa.indexinglanguage.expressions.InvalidInputException;
 
 import java.util.HashMap;
 import java.util.Map;
 import java.util.logging.Filter;
 import java.util.logging.LogRecord;
 import java.util.logging.Logger;
+import java.util.Locale;
 
 import static com.yahoo.language.LinguisticsCase.toLowerCase;
 
@@ -33,6 +36,7 @@ import static com.yahoo.language.LinguisticsCase.toLowerCase;
  *
  * @author Simon Thoresen Hult
  */
+@SuppressWarnings({"deprecation", "removal"})
 public class LinguisticsAnnotator {
 
     private static final Logger log = Logger.getLogger(LinguisticsAnnotator.class.getName());
@@ -56,7 +60,7 @@ public class LinguisticsAnnotator {
     private final Linguistics factory;
     private final AnnotatorConfig config;
 
-    private static class TermOccurrences {
+    static class TermOccurrences {
 
         final Map<String, Integer> termOccurrences = new HashMap<>();
         final int maxOccurrences;
@@ -94,8 +98,6 @@ public class LinguisticsAnnotator {
      * @return whether anything was annotated
      */
     public boolean annotate(StringFieldValue text, DocumentId docId, boolean isReindexingOperation) {
-        if (text.getSpanTree(SpanTrees.LINGUISTICS) != null) return true;  // Already annotated with LINGUISTICS.
-
         Tokenizer tokenizer = factory.getTokenizer();
         String input = (text.getString().length() <= config.getMaxTokenizeLength())
                        ? text.getString()
@@ -105,6 +107,101 @@ public class LinguisticsAnnotator {
 
         Iterable<Token> tokens = tokenizer.tokenize(input, config.asLinguisticsParameters());
         TermOccurrences termOccurrences = new TermOccurrences(config.getMaxTermOccurrences());
+
+        // Try simple path first
+        if (text.wantSimpleAnnotations()) {
+            return annotateSimple(text, tokens, termOccurrences);
+        }
+
+        // Fallback to full SpanTree mode
+        return annotateFull(text, tokens, termOccurrences);
+    }
+
+    /**
+     * Lightweight annotation path - creates flat arrays instead of object graphs.
+     * Package-private for testing.
+     */
+    boolean annotateSimple(StringFieldValue text,
+                           Iterable<Token> tokens,
+                           TermOccurrences termOccurrences) {
+        SimpleIndexingAnnotations simple = new SimpleIndexingAnnotations();
+        String input = text.getString();
+        for (Token token : tokens) {
+            addAnnotationSimple(simple, input, token, termOccurrences);
+        }
+        if (simple.getCount() > 0) {
+            text.setSimpleAnnotations(simple);
+            return true;
+        } else {
+            return false;
+        }
+    }
+
+    private void addAnnotationSimple(SimpleIndexingAnnotations simple, String input, Token token,
+                                    TermOccurrences termOccurrences) {
+        if (!token.isSpecialToken()) {
+            if (token.getNumComponents() > 0) {
+                for (int i = 0; i < token.getNumComponents(); ++i) {
+                    addAnnotationSimple(simple, input, token.getComponent(i), termOccurrences);
+                }
+                return;
+            }
+            if (!token.isIndexable()) return;
+        }
+
+        int from = (int) token.getOffset();
+        int length = token.getOrig().length();
+
+        if (from >= input.length()) return;
+        if (from + length > input.length()) return;
+
+        if (config.getStemMode() == StemMode.ALL) {
+            addAllStemsSimple(simple, input, token, from, length, termOccurrences);
+        } else {
+            String term = token.getTokenString();
+            if (term == null || term.trim().isEmpty()) return;
+            if (term.length() > config.getMaxTokenLength()) return;
+            if (!termOccurrences.termCountBelowLimit(term)) return;
+
+            String termOverride = term.equals(token.getOrig()) ? null : term;
+            simple.add(from, length, termOverride);
+        }
+    }
+
+    private void addAllStemsSimple(SimpleIndexingAnnotations simple, String input, Token token,
+                                   int from, int length, TermOccurrences termOccurrences) {
+        String indexableOriginal = config.getLowercase() ? toLowerCase(token.getOrig()) : token.getOrig();
+        String term = token.getTokenString();
+
+        if (term != null) {
+            if (term.length() <= config.getMaxTokenLength() && termOccurrences.termCountBelowLimit(term)) {
+                String termOverride = term.equals(token.getOrig()) ? null : term;
+                simple.add(from, length, termOverride);
+            }
+            if (!term.equals(indexableOriginal) && indexableOriginal.length() <= config.getMaxTokenLength() &&
+                termOccurrences.termCountBelowLimit(indexableOriginal)) {
+                String termOverride = indexableOriginal.equals(token.getOrig()) ? null : indexableOriginal;
+                simple.add(from, length, termOverride);
+            }
+        }
+
+        for (int i = 0; i < token.getNumStems(); i++) {
+            String stem = token.getStem(i);
+            if (stem.equals(indexableOriginal) || (term != null && stem.equals(term))) continue;
+            if (stem.length() > config.getMaxTokenLength()) continue;
+            if (!termOccurrences.termCountBelowLimit(stem)) continue;
+            simple.add(from, length, stem);
+        }
+    }
+
+    /** For unit testing only */
+    boolean annotate(StringFieldValue text) { return annotate(text, null, false); }
+
+    /**
+     * Full SpanTree annotation path - creates object graphs with Span/Annotation objects.
+     * Package-private for testing.
+     */
+    boolean annotateFull(StringFieldValue text, Iterable<Token> tokens, TermOccurrences termOccurrences) {
         SpanTree tree = new SpanTree(SpanTrees.LINGUISTICS);
         for (Token token : tokens)
             addAnnotationSpan(text.getString(), tree.spanList(), token, config.getStemMode(), config.getLowercase(),
@@ -114,9 +211,6 @@ public class LinguisticsAnnotator {
         text.setSpanTree(tree);
         return true;
     }
-
-    /** For unit testing only */
-    boolean annotate(StringFieldValue text) { return annotate(text, null, false); }
 
     /** Creates a TERM annotation which has the term as annotation (only) if it is different from the original. */
     public static Annotation termAnnotation(String term, String originalTerm) {
@@ -191,15 +285,16 @@ public class LinguisticsAnnotator {
         if (maxRatio >= 1 && (maxCharacters < 0 || maxCharacters == Integer.MAX_VALUE)) return false;
         var replacementCharCount = text.chars().filter(c -> c == 0xFFFD).count();
         if (replacementCharCount > maxCharacters && replacementCharCount > text.length() * maxRatio) {
-            var reason = ("some text of length %d is classified as binary data as it contains %d Unicode replacement characters. " +
-                    "(max-replacement-character-ratio=%d%%, max-replacement-characters=%d)")
-                    .formatted(text.length(), replacementCharCount, (int)Math.round(maxRatio * 100) , maxCharacters);
-            var docIdString = (docId != null) ? "%s".formatted(docId.toString()) : "<unknown>";
+            var reason = String.format(Locale.ROOT,
+                    "Some text of length %d is classified as binary data as it contains %d Unicode replacement characters. " +
+                    "(max-replacement-character-ratio=%d%%, max-replacement-characters=%d)",
+                    text.length(), replacementCharCount, (int)Math.round(maxRatio * 100) , maxCharacters);
+            var docIdString = (docId != null) ? Text.format("%s", docId.toString()) : "<unknown>";
             if (isReindexingOperation) {
-                log.warning("Skipping tokenization of '%s' while reindexing: %s. ".formatted(docIdString, reason));
+                log.warning(Text.format("Skipping tokenization of \'%s\' while reindexing: %s. ", docIdString, reason));
                 return true;
             } else {
-                throw new IllegalArgumentException("Invalid document '%s': %s".formatted(docIdString, reason));
+                throw new InvalidInputException(reason);
             }
         }
         return false;

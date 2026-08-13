@@ -1,10 +1,16 @@
 # Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 schema rankexpression {
 
+  struct chunk {
+    field txt type string {}
+    field cnum type int {}
+  }
+
   document rankexpression {
 
     field nrtgmp type double {
       indexing: attribute
+      attribute: fast-search
     }
 
     field glmpfw type double {
@@ -71,9 +77,19 @@ schema rankexpression {
       indexing: index
       index: enable-bm25
     }
+
+    field m_chunk type array<chunk> {
+      struct-field cnum {
+        indexing: attribute
+      }
+    }
   }
 
   rank-profile default {
+      match-phase {
+        attribute: nrtgmp
+        max-hits: 4001
+      }
       first-phase {
         expression: classicRank
         keep-rank-count: 20
@@ -175,11 +191,17 @@ schema rankexpression {
   }
 
   rank-profile macros {
+    match-phase {
+      attribute: nrtgmp
+      max-hits: 8002
+    }
     first-phase {
       expression: match + fieldMatch(title) + myfeature
+      total-keep-rank-count: 2345
     }
     second-phase {
       expression: fourtimessum(match,rankBoost)
+      total-rerank-count: 2001
     }
     function fourtimessum(var1, var2) {
       expression: 4*(var1+var2)
@@ -530,6 +552,25 @@ schema rankexpression {
       }
       second-phase {
         expression: if (attribute(surl) == query(undeclaredinput), 0.75, 0.25)
+      }
+  }
+
+  rank-profile with_corpus_features {
+      first-phase {
+        expression: bm25(textchunks)
+      }
+      second-phase {
+        expression: reduce(queryTermDocumentFrequency(textchunks), sum, term) + queryTermDocumentFrequency(textchunks){term:"0"}
+      }
+      rank-features { averageFieldLength(textchunks) num_docs_indexed }
+      match-features { averageFieldLength(textchunks) num_docs_indexed }
+      summary-features { averageFieldLength(textchunks) num_docs_indexed queryTermDocumentFrequency(textchunks) }
+  }
+
+  rank-profile with_tensor_from_dotted_attr {
+      summary-features {
+          tensorFromLabelsWithOffset(attribute(m_chunk.cnum), i, offset)
+          attribute(m_chunk.cnum)
       }
   }
 }

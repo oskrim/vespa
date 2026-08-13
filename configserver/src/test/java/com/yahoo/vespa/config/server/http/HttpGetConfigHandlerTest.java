@@ -7,7 +7,6 @@ import com.yahoo.config.provision.TenantName;
 import com.yahoo.container.jdisc.HttpRequest;
 import com.yahoo.container.jdisc.HttpResponse;
 import com.yahoo.vespa.config.server.ApplicationRepository;
-import com.yahoo.vespa.config.server.application.OrchestratorMock;
 import com.yahoo.vespa.config.server.session.PrepareParams;
 import com.yahoo.vespa.config.server.tenant.TenantRepository;
 import com.yahoo.vespa.config.server.tenant.TestTenantRepository;
@@ -57,11 +56,10 @@ public class HttpGetConfigHandlerTest {
         tenantRepository.addTenant(tenant);
         ApplicationRepository applicationRepository = new ApplicationRepository.Builder()
                 .withTenantRepository(tenantRepository)
-                .withOrchestrator(new OrchestratorMock())
                 .withConfigserverConfig(configserverConfig)
                 .build();
         handler = new HttpGetConfigHandler(HttpGetConfigHandler.testContext(), tenantRepository);
-        applicationRepository.deploy(testApp, prepareParams());
+        applicationRepository.prepareAndActivate(testApp, prepareParams());
     }
 
     @Test

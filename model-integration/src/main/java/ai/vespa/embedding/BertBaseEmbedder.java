@@ -10,10 +10,12 @@ import com.yahoo.component.annotation.Inject;
 import com.yahoo.embedding.BertBaseEmbedderConfig;
 import com.yahoo.language.process.Embedder;
 import com.yahoo.language.wordpiece.WordPieceEmbedder;
+import ai.vespa.modelintegration.evaluator.config.OnnxEvaluatorConfig;
 import com.yahoo.tensor.IndexedTensor;
 import com.yahoo.tensor.Tensor;
 import com.yahoo.tensor.TensorType;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -30,6 +32,7 @@ import java.util.Map;
  * See bert-base-embedder.def for configurable parameters.
  *
  * @author lesters
+ * @author glebashnik
  */
 public class BertBaseEmbedder extends AbstractComponent implements Embedder {
 
@@ -47,27 +50,23 @@ public class BertBaseEmbedder extends AbstractComponent implements Embedder {
     private final OnnxEvaluator evaluator;
 
     @Inject
-    public BertBaseEmbedder(OnnxRuntime onnx, Embedder.Runtime runtime, BertBaseEmbedderConfig config) {
+    public BertBaseEmbedder(OnnxRuntime onnx, Embedder.Runtime runtime, BertBaseEmbedderConfig embedderConfig, OnnxEvaluatorConfig onnxConfig) {
         this.runtime = runtime;
-        maxTokens = config.transformerMaxTokens();
-        startSequenceToken = config.transformerStartSequenceToken();
-        endSequenceToken = config.transformerEndSequenceToken();
-        inputIdsName = config.transformerInputIds();
-        attentionMaskName = config.transformerAttentionMask();
-        tokenTypeIdsName = config.transformerTokenTypeIds();
-        outputName = config.transformerOutput();
-        poolingStrategy = PoolingStrategy.fromString(config.poolingStrategy().toString());
-
-        OnnxEvaluatorOptions.Builder optionsBuilder = new OnnxEvaluatorOptions.Builder()
-                .setExecutionMode(config.onnxExecutionMode().toString())
-                .setThreads(config.onnxInterOpThreads(), config.onnxIntraOpThreads());
-        if (config.onnxGpuDevice() >= 0) optionsBuilder.setGpuDevice(config.onnxGpuDevice());
-        OnnxEvaluatorOptions options = optionsBuilder.build();
-
-        tokenizer = new WordPieceEmbedder.Builder(config.tokenizerVocab().toString()).build();
+        maxTokens = embedderConfig.transformerMaxTokens();
+        startSequenceToken = embedderConfig.transformerStartSequenceToken();
+        endSequenceToken = embedderConfig.transformerEndSequenceToken();
+        inputIdsName = embedderConfig.transformerInputIds();
+        attentionMaskName = embedderConfig.transformerAttentionMask();
+        tokenTypeIdsName = embedderConfig.transformerTokenTypeIds();
+        outputName = embedderConfig.transformerOutput();
+        poolingStrategy = PoolingStrategy.fromString(embedderConfig.poolingStrategy().toString());
+        tokenizer = new WordPieceEmbedder.Builder(embedderConfig.tokenizerVocab().toString()).build();
+        
         var resolver = new OnnxExternalDataResolver();
-        this.evaluator = onnx.evaluatorOf(resolver.resolveOnnxModel(config.transformerModelReference()).toString(), options);
-
+        var onnxOpts = OnnxEvaluatorOptions.of(onnxConfig);
+        var modelPath = resolver.resolveOnnxModel(embedderConfig.transformerModelReference()).toString();
+        this.evaluator = onnx.evaluatorOf(modelPath, onnxOpts);
+        
         validateModel();
     }
 
@@ -111,7 +110,7 @@ public class BertBaseEmbedder extends AbstractComponent implements Embedder {
         }
         List<Integer> tokens = embedWithSeparatorTokens(text, context, maxTokens);
         runtime.sampleSequenceLength(tokens.size(), context);
-        var embedding = embedTokens(tokens, type);
+        var embedding = embedTokens(tokens, type, OnnxEmbedderTimeout.remainingOrThrow(context));
         runtime.sampleEmbeddingLatency((System.nanoTime() - start)/1_000_000d, context);
         return embedding;
     }
@@ -121,6 +120,10 @@ public class BertBaseEmbedder extends AbstractComponent implements Embedder {
     private List<Integer> tokenize(String text, Context ctx) { return tokenizer.embed(text, ctx); }
 
     Tensor embedTokens(List<Integer> tokens, TensorType type) {
+        return embedTokens(tokens, type, null);
+    }
+
+    Tensor embedTokens(List<Integer> tokens, TensorType type, Duration timeout) {
         Tensor inputSequence = createTensorRepresentation(tokens, "d1");
         Tensor attentionMask = createAttentionMask(inputSequence);
         Tensor tokenTypeIds = createTokenTypeIds(inputSequence);
@@ -135,7 +138,7 @@ public class BertBaseEmbedder extends AbstractComponent implements Embedder {
             inputs = Map.of(inputIdsName, inputSequence.expand("d0"),
                                  attentionMaskName, attentionMask.expand("d0"));
         }
-        Map<String, Tensor> outputs = evaluator.evaluate(inputs);
+        Map<String, Tensor> outputs = evaluator.evaluate(inputs, timeout);
 
         Tensor tokenEmbeddings = outputs.get(outputName);
 

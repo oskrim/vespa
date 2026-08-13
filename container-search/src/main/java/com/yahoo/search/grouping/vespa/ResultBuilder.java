@@ -30,6 +30,7 @@ import com.yahoo.searchlib.aggregation.Hit;
 import com.yahoo.searchlib.aggregation.HitsAggregationResult;
 import com.yahoo.searchlib.aggregation.MaxAggregationResult;
 import com.yahoo.searchlib.aggregation.MinAggregationResult;
+import com.yahoo.searchlib.aggregation.QuantileAggregationResult;
 import com.yahoo.searchlib.aggregation.RawData;
 import com.yahoo.searchlib.aggregation.StandardDeviationAggregationResult;
 import com.yahoo.searchlib.aggregation.SumAggregationResult;
@@ -46,6 +47,7 @@ import com.yahoo.searchlib.expression.RawResultNode;
 import com.yahoo.searchlib.expression.ResultNode;
 import com.yahoo.searchlib.expression.StringBucketResultNode;
 import com.yahoo.searchlib.expression.StringResultNode;
+import com.yahoo.search.Query;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -62,10 +64,15 @@ import java.util.Map;
 class ResultBuilder {
 
     private final CompositeContinuation continuation = new CompositeContinuation();
+    private final Query query;
     private RootGroup root;
     private GroupListBuilder rootBuilder;
     private HitConverter hitConverter;
     private GroupingTransform transform;
+
+    ResultBuilder(Query query) {
+        this.query = query;
+    }
 
     /**
      * Sets the id of the {@link GroupingRequest} that this builder is creating the result for.
@@ -74,7 +81,7 @@ class ResultBuilder {
      * @return this, to allow chaining
      */
     public ResultBuilder setRequestId(int requestId) {
-        root = new RootGroup(requestId, continuation);
+        root = new RootGroup(requestId, continuation, query);
         rootBuilder = new GroupListBuilder(ResultId.valueOf(requestId), 0, true, true);
         return this;
     }
@@ -147,8 +154,8 @@ class ResultBuilder {
 
     private class GroupBuilder {
         private static final int CHILDLIST_SIZE_INCREMENTS = 4;
-        boolean [] results = new boolean[8];
-        GroupListBuilder [] childLists;
+        boolean[] results = new boolean[8];
+        GroupListBuilder[] childLists;
         int childCount = 0;
         final ResultId resultId;
         final com.yahoo.searchlib.aggregation.Group group;
@@ -161,7 +168,7 @@ class ResultBuilder {
         }
 
         Group build(double relevance) {
-            return fill(new Group(newGroupId(group), new Relevance(relevance)));
+            return fill(new Group(newGroupId(group), new Relevance(relevance), query));
         }
 
         Group fill(Group group) {
@@ -256,6 +263,8 @@ class ResultBuilder {
                 return ((AverageAggregationResult)execResult).getAverage().getNumber();
             } else if (execResult instanceof CountAggregationResult) {
                 return ((CountAggregationResult)execResult).getCount();
+            } else if (execResult instanceof QuantileAggregationResult quantiles) {
+                return quantiles.getQuantileResults();
             } else if (execResult instanceof ExpressionCountAggregationResult) {
                 long count = ((ExpressionCountAggregationResult)execResult).getEstimatedUniqueCount();
                 return correctExpressionCountEstimate(count, tag);

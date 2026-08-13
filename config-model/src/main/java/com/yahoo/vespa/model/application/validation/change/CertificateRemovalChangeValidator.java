@@ -2,6 +2,7 @@
 package com.yahoo.vespa.model.application.validation.change;
 
 import com.yahoo.config.application.api.ValidationId;
+import com.yahoo.text.Text;
 import com.yahoo.vespa.model.application.validation.Validation.ChangeContext;
 import com.yahoo.vespa.model.container.http.Client;
 
@@ -16,7 +17,7 @@ import java.util.stream.Collectors;
 /**
  * Check that data plane certificates are not removed from a cluster.
  *
- * @author mortent
+ * @author Morten Tokle
  */
 public class CertificateRemovalChangeValidator implements ChangeValidator {
 
@@ -48,8 +49,7 @@ public class CertificateRemovalChangeValidator implements ChangeValidator {
                 .flatMap(Collection::stream)
                 .toList();
 
-        logger.log(Level.FINE, "Certificates for cluster %s: Current: [%s], Next: [%s]"
-                .formatted(clusterId,
+        logger.log(Level.FINE, Text.format("Certificates for cluster %s: Current: [%s], Next: [%s]", clusterId,
                            currentCertificates.stream().map(cert -> cert.getSubjectX500Principal().getName()).collect(Collectors.joining(", ")),
                            nextCertificates.stream().map(cert -> cert.getSubjectX500Principal().getName()).collect(Collectors.joining(", "))));
 

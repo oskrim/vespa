@@ -13,16 +13,21 @@ import com.yahoo.vespa.model.application.validation.change.ConfigValueChangeVali
 import com.yahoo.vespa.model.application.validation.change.ContainerRestartValidator;
 import com.yahoo.vespa.model.application.validation.change.ContentClusterRemovalValidator;
 import com.yahoo.vespa.model.application.validation.change.ContentTypeRemovalValidator;
+import com.yahoo.vespa.model.application.validation.change.DataplaneProxyChangeValidator;
+import com.yahoo.vespa.model.application.validation.change.DataplaneTokenRemovalValidator;
 import com.yahoo.vespa.model.application.validation.change.GlobalDocumentChangeValidator;
 import com.yahoo.vespa.model.application.validation.change.IndexedSearchClusterChangeValidator;
 import com.yahoo.vespa.model.application.validation.change.IndexingModeChangeValidator;
 import com.yahoo.vespa.model.application.validation.change.NodeResourceChangeValidator;
-import com.yahoo.vespa.model.application.validation.change.ResourcesReductionValidator;
 import com.yahoo.vespa.model.application.validation.change.RestartOnDeployForLocalLLMValidator;
+import com.yahoo.vespa.model.application.validation.change.RestartOnDeployForContainerThreadpoolChangeValidator;
 import com.yahoo.vespa.model.application.validation.change.RestartOnDeployForOnnxModelChangesValidator;
+import com.yahoo.vespa.model.application.validation.change.RestartOnDeployForSidecarValidator;
+import com.yahoo.vespa.model.application.validation.change.RestartOnDeployForTritonOnnxRuntimeValidator;
 import com.yahoo.vespa.model.application.validation.change.StartupCommandChangeValidator;
 import com.yahoo.vespa.model.application.validation.change.StreamingSearchClusterChangeValidator;
 import com.yahoo.vespa.model.application.validation.change.VespaRestartAction;
+import com.yahoo.vespa.model.application.validation.first.MinimumNodeCountValidator;
 import com.yahoo.vespa.model.application.validation.first.RedundancyValidator;
 import com.yahoo.yolean.Exceptions;
 
@@ -55,7 +60,7 @@ public class Validation {
      * @throws ValidationOverrides.ValidationException if the change fails validation
      */
     public List<ConfigChangeAction> validate(VespaModel model, ValidationParameters validationParameters, DeployState deployState) {
-        Execution execution = new Execution(model, deployState);
+        Execution execution = (Execution)createContext(model, deployState);
         if (validationParameters.checkRouting()) {
             validateRouting(execution);
         }
@@ -75,6 +80,10 @@ public class Validation {
 
         execution.throwIfFailed();
         return execution.actions;
+    }
+
+    public static ChangeContext createContext(VespaModel model, DeployState deployState) {
+        return new Execution(model, deployState);
     }
 
     private static void validateRouting(Execution execution) {
@@ -112,10 +121,12 @@ public class Validation {
         new TenantSecretValidator().validate(execution);
         new HnswValidator().validate(execution);
         new EmbedExpressionValidator().validate(execution);
+        new MaxDocumentSizeValidator().validate(execution);
     }
 
     private static void validateFirstTimeDeployment(Execution execution) {
         new RedundancyValidator().validate((Context) execution);
+        new MinimumNodeCountValidator().validate((Context) execution);
     }
 
     private static void validateChanges(Execution execution) {
@@ -127,13 +138,18 @@ public class Validation {
         new StartupCommandChangeValidator().validate(execution);
         new ContentTypeRemovalValidator().validate(execution);
         new ContentClusterRemovalValidator().validate(execution);
-        new ResourcesReductionValidator().validate(execution);
         new ContainerRestartValidator().validate(execution);
         new NodeResourceChangeValidator().validate(execution);
         new CertificateRemovalChangeValidator().validate(execution);
         new RedundancyValidator().validate(execution);
+        new MinimumNodeCountValidator().validate(execution);
         new RestartOnDeployForOnnxModelChangesValidator().validate(execution);
         new RestartOnDeployForLocalLLMValidator().validate(execution);
+        new RestartOnDeployForTritonOnnxRuntimeValidator().validate(execution);
+        new DataplaneTokenRemovalValidator().validate(execution);
+        new DataplaneProxyChangeValidator().validate(execution);
+        new RestartOnDeployForSidecarValidator().validate(execution);
+        new RestartOnDeployForContainerThreadpoolChangeValidator().validate(execution);
     }
 
     public interface Context {
@@ -159,7 +175,7 @@ public class Validation {
         void require(ConfigChangeAction action);
     }
 
-    static class Execution implements ChangeContext {
+    public static class Execution implements ChangeContext {
 
         private final List<String> errors = new ArrayList<>();
         private final Map<ValidationId, List<String>> failures = new LinkedHashMap<>();
@@ -172,9 +188,9 @@ public class Validation {
             this.deployState = deployState;
         }
 
-        void throwIfFailed() {
+        public void throwIfFailed() {
             Optional<ValidationException> invalidException = deployState.validationOverrides().invalidException(failures, deployState.now());
-            if (invalidException.isPresent() && deployState.isHosted() && deployState.zone().environment().isManuallyDeployed()) {
+            if (invalidException.isPresent() && deployState.warnOnlyOnValidationFailure()) {
                 deployState.getDeployLogger().logApplicationPackage(Level.WARNING,
                                                                     "Auto-overriding validation which would be disallowed in production: " +
                                                                     Exceptions.toMessageString(invalidException.get()));

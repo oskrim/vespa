@@ -46,13 +46,6 @@ if (VESPA_USE_SANITIZER)
     set(C_WARN_OPTS "${C_WARN_OPTS} -Wno-tsan")
   endif()
 endif()
-if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 12.0 AND NOT CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 13.0)
-  if(VESPA_OS_DISTRO_COMBINED STREQUAL "debian 12" OR VESPA_OS_DISTRO_COMBINED STREQUAL "ubuntu 22.04")
-    # Turn off restrict warnings when compiling with gcc 12 on Debian 12 or
-    # Ubuntu 22.04
-    set(C_WARN_OPTS "${C_WARN_OPTS} -Wno-restrict")
-  endif()
-endif()
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 14.0)
     # Turn off maybe uninitialized warning and don't promote inline warning
     # to error when compiling with gcc 14 or newer.
@@ -104,6 +97,12 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
   endif()
 endif()
 
+include(CheckCompilerFlag)
+check_compiler_flag(CXX "-Wpsabi" HAS_W_PSABI)
+if(HAS_W_PSABI)
+    set(CXX_SPECIFIC_WARN_OPTS "-Wno-psabi ${CXX_SPECIFIC_WARN_OPTS}")
+endif()
+
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND VESPA_USE_LTO)
   # Enable lto
   set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -flto=auto -ffat-lto-objects")
@@ -131,6 +130,16 @@ endif()
 if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 17.0)
   # Turn off dynamic_cast optimization that came with clang 17.0.1
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-assume-unique-vtables")
+endif()
+if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 18.0 AND CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux")
+    # Avoid ABI incompatibilities between libraries built by GCC and code compiled by Clang caused
+    # by differences in symbol mangling. See:
+    #  - https://github.com/llvm/llvm-project/issues/102443
+    #  - https://gcc.gnu.org/bugzilla/show_bug.cgi?id=114383
+    # Note that this particular workaround comes with its own set of downsides, in that libraries
+    # built with this setting cannot be used with those built with Clang 18+ that does _not_ have
+    # the same setting.
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fclang-abi-compat=17")
 endif()
 if(CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 16.0)
   # Turn off dynamic_cast optimization that came with Command Line Tools 16
@@ -214,7 +223,7 @@ endif()
 find_program(VALGRIND_EXECUTABLE valgrind)
 if(VALGRIND_EXECUTABLE)
     set(VALGRIND_SUPPRESSIONS_FILE "${PROJECT_SOURCE_DIR}/valgrind-suppressions.txt")
-    set(VALGRIND_OPTIONS "--leak-check=yes --fair-sched=yes --error-exitcode=1 --run-libc-freeres=no --track-origins=yes --suppressions=${VALGRIND_SUPPRESSIONS_FILE}")
+    set(VALGRIND_OPTIONS "--leak-check=yes --fair-sched=yes --error-exitcode=1 --run-libc-freeres=yes --track-origins=yes --suppressions=${VALGRIND_SUPPRESSIONS_FILE}")
     set(VALGRIND_COMMAND "${VALGRIND_EXECUTABLE} ${VALGRIND_OPTIONS}")
 endif()
 # Automatically set sanitizer suppressions file and arguments for unit tests

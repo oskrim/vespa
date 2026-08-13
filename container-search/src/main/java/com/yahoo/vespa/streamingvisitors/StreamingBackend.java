@@ -30,6 +30,7 @@ import com.yahoo.search.result.FeatureData;
 import com.yahoo.search.result.Relevance;
 import com.yahoo.search.searchchain.Execution;
 import com.yahoo.searchlib.aggregation.Grouping;
+import com.yahoo.text.Text;
 import com.yahoo.vdslib.DocumentSummary;
 import com.yahoo.vdslib.SearchResult;
 import com.yahoo.vdslib.VisitorStatistics;
@@ -39,6 +40,7 @@ import com.yahoo.yolean.Exceptions;
 import java.math.BigInteger;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -61,6 +63,7 @@ public class StreamingBackend extends VespaBackend {
     static final String STREAMING_STATISTICS = "streaming.statistics";
     private final VisitorFactory visitorFactory;
     private final TracingOptions tracingOptions;
+    private final ClusterParams clusterParams;
 
     private final Route route;
 
@@ -76,6 +79,7 @@ public class StreamingBackend extends VespaBackend {
 
     StreamingBackend(ClusterParams clusterParams, String searchClusterName, VisitorFactory visitorFactory, String storageClusterRouteSpec, TracingOptions tracingOptions) {
         super(clusterParams);
+        this.clusterParams = clusterParams;
         this.visitorFactory = visitorFactory;
         this.tracingOptions = tracingOptions;
         this.searchClusterName = searchClusterName;
@@ -130,21 +134,24 @@ public class StreamingBackend extends VespaBackend {
                 : query.getTrace().getLevel();
     }
 
+    private boolean sendOldQueryStack() {
+        var config = clusterParams.getQrSearchersConfig();
+        return config != null && config.sendOldQueryStack();
+    }
+
     @Override
     public Result doSearch2(String schema, Query query) {
         if (query.getTimeLeft() <= 0)
-            return new Result(query, ErrorMessage.createTimeout(String.format("No time left for searching (timeout=%d)", query.getTimeout())));
+            return new Result(query, ErrorMessage.createTimeout(Text.format("No time left for searching (timeout=%d)", query.getTimeout())));
 
         initializeMissingQueryFields(query);
         if (documentSelectionQueryParameterCount(query) != 1) {
             return new Result(query, ErrorMessage.createIllegalQuery("Streaming search requires either " +
                                                                      "streaming.groupname or streaming.selection"));
         }
-        try {
-            ensureLegalSummaryClass(query, PartialSummaryHandler.PRESENTATION);
-        } catch (IllegalInputException e) {
-            return new Result(query, ErrorMessage.createIllegalQuery(Exceptions.toMessageString(e)));
-        }
+        Optional<String> summaryError = validateSummaryClass(PartialSummaryHandler.PRESENTATION, query);
+        if (summaryError.isPresent())
+            return new Result(query, ErrorMessage.createIllegalQuery(summaryError.get()));
 
         if (query.getTrace().isTraceable(4))
             query.trace("Routing to search cluster " + getSearchClusterName() + " and document type " + schema, 4);
@@ -158,7 +165,8 @@ public class StreamingBackend extends VespaBackend {
             partialSummaryHandler = new PartialSummaryHandler(db);
             partialSummaryHandler.wantToFill(query);
         }
-        var visitorContext = new Visitor.Context(getSearchClusterName(), schema, effectiveTraceLevel, partialSummaryHandler);
+        var visitorContext = new Visitor.Context(getSearchClusterName(), schema, effectiveTraceLevel,
+                                                 sendOldQueryStack(), partialSummaryHandler);
         Visitor visitor = visitorFactory.createVisitor(query, route, visitorContext);
         try {
             visitor.doSearch();
@@ -172,7 +180,7 @@ public class StreamingBackend extends VespaBackend {
             double elapsedMillis = durationInMillisFromNanoTime(timeStartedNanos);
             if ((effectiveTraceLevel > 0) && timeoutBadEnoughToBeReported(query, elapsedMillis)) {
                 tracingOptions.getTraceExporter().maybeExport(() -> new TraceDescription(visitor.getTrace(),
-                                                                                         String.format("Trace of %s which timed out after %.3g seconds",
+                                                                                         Text.format("Trace of %s which timed out after %.3g seconds",
                                                                                                        query, elapsedMillis / 1000.0)));
             }
             return new Result(query, ErrorMessage.createTimeout(e.getMessage()));
@@ -231,7 +239,7 @@ public class StreamingBackend extends VespaBackend {
         query.trace(visitor.getStatistics().toString(), false, 2);
         query.getContext(true).setProperty(STREAMING_STATISTICS, stats);
 
-        DocsumPacket[] summaryPackets = new DocsumPacket [hits.size()];
+        DocsumPacket[] summaryPackets = new DocsumPacket[hits.size()];
 
         int index = 0;
         boolean skippedEarlierResult = false;
@@ -437,15 +445,11 @@ public class StreamingBackend extends VespaBackend {
      *         when things are working normally we return 0.
      */
     protected FillHitsResult fillHits(Result result, DocsumPacket[] packets, String summaryClass) {
-        // System.err.println("fill result with packets: " + packets.length);
         int skippedHits = 0;
         String lastError = null;
         int packetIndex = 0;
         for (Hit hit : iterableHits(result)) {
-            // System.err.println("fill? hit " + hit);
             if (hit instanceof FastHit fastHit && ! hit.isFilled(summaryClass)) {
-                // System.err.println("yes for " + summaryClass);
-
                 DocsumPacket docsum = packets[packetIndex];
 
                 packetIndex++;
@@ -465,7 +469,6 @@ public class StreamingBackend extends VespaBackend {
     }
 
     private String decodeSummary(String summaryClass, FastHit hit, byte[] docsumdata) {
-        // System.err.println("get db from q");
         DocumentDatabase db = getDocumentDatabase(hit.getQuery());
         hit.setField(Hit.SDDOCNAME_FIELD, db.schema().name());
         return decodeSummary(summaryClass, hit, docsumdata, db.getDocsumDefinitionSet());

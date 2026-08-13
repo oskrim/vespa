@@ -20,7 +20,11 @@
       <onnx-intraop-threads>10</onnx-intraop-threads>
       <onnx-interop-threads>8</onnx-interop-threads>
       <onnx-gpu-device>1</onnx-gpu-device>
+      <onnx-optimize-model>true</onnx-optimize-model>
       <pooling-strategy>mean</pooling-strategy>
+      <batching max-size="16" max-delay="100ms"/>
+      <concurrency type="relative">2.0</concurrency>
+      <model-config-override>files/hf_config.pbtxt</model-config-override>
     </component>
 
     <component id="splade" type="splade-embedder">
@@ -36,6 +40,9 @@
       <onnx-intraop-threads>10</onnx-intraop-threads>
       <onnx-interop-threads>8</onnx-interop-threads>
       <onnx-gpu-device>1</onnx-gpu-device>
+      <batching max-size="8" max-delay="50ms"/>
+      <concurrency type="absolute">4</concurrency>
+      <model-config-override>files/splade_config.pbtxt</model-config-override>
     </component>
 
     <component id="hf-tokenizer" type="hugging-face-tokenizer">
@@ -60,6 +67,9 @@
       <onnx-intraop-threads>4</onnx-intraop-threads>
       <onnx-interop-threads>8</onnx-interop-threads>
       <onnx-gpu-device>1</onnx-gpu-device>
+      <batching max-size="32" max-delay="200ms"/>
+      <concurrency type="absolute">2</concurrency>
+      <model-config-override>files/bert_config.pbtxt</model-config-override>
     </component>
 
     <component id="colbert" type="colbert-embedder">
@@ -75,10 +85,14 @@
       <transformer-input-ids>my_input_ids</transformer-input-ids>
       <transformer-attention-mask>my_attention_mask</transformer-attention-mask>
       <transformer-output>my_output</transformer-output>
+      <attend-to-expansion-tokens>false</attend-to-expansion-tokens>
       <onnx-execution-mode>parallel</onnx-execution-mode>
       <onnx-intraop-threads>10</onnx-intraop-threads>
       <onnx-interop-threads>8</onnx-interop-threads>
       <onnx-gpu-device>1</onnx-gpu-device>
+      <batching max-size="12" max-delay="150ms"/>
+      <concurrency type="relative">1.5</concurrency>
+      <model-config-override>files/colbert_config.pbtxt</model-config-override>
     </component>
 
     <nodes>

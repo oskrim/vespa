@@ -3,7 +3,6 @@ package com.yahoo.config.provision;
 
 import java.util.Objects;
 import java.util.Optional;
-import java.util.logging.Logger;
 
 /**
  * The node resources required by an application cluster
@@ -441,7 +440,7 @@ public class NodeResources {
         other.ensureSpecified();
         if (this.vcpu < other.vcpu) return false;
         if (this.memoryGiB < other.memoryGiB) return false;
-        if (this.diskGb < other.diskGb) return false;
+        if ( ! this.diskIsUnspecified() && ! other.diskIsUnspecified() && this.diskGb < other.diskGb) return false;
         if (this.bandwidthGbps < other.bandwidthGbps) return false;
         if (this.gpuResources.lessThan(other.gpuResources)) return false;
         // disallow substitution of GPU type
@@ -450,7 +449,7 @@ public class NodeResources {
         }
 
         // Why doesn't a fast disk satisfy a slow disk? Because if slow disk is explicitly specified
-        // (i.e not "any"), you should not randomly, sometimes get a faster disk as that means you may
+        // (i.e. not "any"), you should not randomly, sometimes get a faster disk as that means you may
         // draw conclusions about performance on the basis of better resources than you think you have
         if (other.diskSpeed != DiskSpeed.any && other.diskSpeed != this.diskSpeed) return false;
 
@@ -464,16 +463,24 @@ public class NodeResources {
     }
 
     /**
-     * Returns true if all the resources of this are the same as or compatible with the requested resources:
-     * - Equal numbers only where request implies it (i.e not for disk if storage is any/remote, and not for bandwidth
+     * Returns true if all the resources of this are compatible and numerically equal the requested resources.
+     * - Equal numbers only where request implies it (i.e. not for disk if storage is any/remote, and not for bandwidth
      *   where we don't enforce constraints),
      * - Compatible non-numbers.
      */
     public boolean compatibleWith(NodeResources requested) {
-        if ( ! equal(this.vcpu, requested.vcpu)) return false;
-        if ( ! equal(this.memoryGiB, requested.memoryGiB)) return false;
+        return compatibleWith(requested, 0.00000001);
+    }
+
+    /**
+     * Returns whether this is {@link #compatibleWith} the given resources within a given tolerance factor:
+     * For each numeric resource: abs(1 - this resource / requested resource) <= tolerance.
+     */
+    public boolean compatibleWith(NodeResources requested, double tolerance) {
+        if ( ! equal(this.vcpu, requested.vcpu, tolerance)) return false;
+        if ( ! equal(this.memoryGiB, requested.memoryGiB, tolerance)) return false;
         if (this.storageType == StorageType.local || requested.storageType == StorageType.local) {
-            if ( ! equal(this.diskGb, requested.diskGb)) return false;
+            if ( ! equal(this.diskGb, requested.diskGb, tolerance)) return false;
         }
         else {
             if (this.diskGb < requested.diskGb) return false;
@@ -529,8 +536,14 @@ public class NodeResources {
         return this.isUnspecified() ? Optional.empty() : Optional.of(this);
     }
 
+
     private static boolean equal(double a, double b) {
-        return Math.abs(a - b) < 0.00000001;
+        return equal(a, b, 0.00000001);
+    }
+
+    private static boolean equal(double a, double b, double tolerance) {
+        if (b == 0) return a == 0;
+        return Math.abs(1.0 - a/b) < tolerance;
     }
 
     private static double validate(double value, String valueName) {

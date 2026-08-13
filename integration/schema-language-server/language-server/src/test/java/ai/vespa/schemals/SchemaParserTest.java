@@ -22,7 +22,11 @@ import ai.vespa.schemals.schemadocument.SchemaDocument;
 import ai.vespa.schemals.schemadocument.SchemaDocument.ParseResult;
 import ai.vespa.schemals.schemadocument.SchemaDocumentScheduler;
 
-import ai.vespa.schemals.testutils.*;
+import ai.vespa.schemals.testutils.TestLogger;
+import ai.vespa.schemals.testutils.TestSchemaDiagnosticsHandler;
+import ai.vespa.schemals.testutils.TestSchemaMessageHandler;
+import ai.vespa.schemals.testutils.TestSchemaProgressHandler;
+import ai.vespa.schemals.testutils.Utils;
 
 public class SchemaParserTest {
 
@@ -151,7 +155,6 @@ public class SchemaParserTest {
             "../../../config-model/src/test/derived/nearestneighbor/test.sd",
             "../../../config-model/src/test/derived/newrank/newrank.sd",
             "../../../config-model/src/test/derived/nuwa/newsindex.sd",
-            "../../../config-model/src/test/derived/orderilscripts/orderilscripts.sd",
             "../../../config-model/src/test/derived/position_array/position_array.sd",
             "../../../config-model/src/test/derived/position_attribute/position_attribute.sd",
             "../../../config-model/src/test/derived/position_extra/position_extra.sd",
@@ -236,12 +239,15 @@ public class SchemaParserTest {
              * CUSTOM TESTS
              * */
             "src/test/sdfiles/single/attributeposition.sd",
+            "src/test/sdfiles/single/bm25label.sd",
             "src/test/sdfiles/single/defaultdefault.sd",
             "src/test/sdfiles/single/elementwise.sd",
             "src/test/sdfiles/single/embed.sd",
+            "src/test/sdfiles/single/foreach.sd",
             "src/test/sdfiles/single/rankprofilebuiltin.sd",
             "src/test/sdfiles/single/structinfieldset.sd",
             "src/test/sdfiles/single/subqueries.sd",
+            "src/test/sdfiles/single/tensorfromlabels.sd",
         };
 
         return Arrays.stream(filePaths)
@@ -277,6 +283,7 @@ public class SchemaParserTest {
              */
             "src/test/sdfiles/multi/types/",
             "src/test/sdfiles/multi/bookandmusic/",
+            "src/test/sdfiles/multi/documentid/",
         };
 
         return Arrays.stream(directories)
@@ -319,12 +326,26 @@ public class SchemaParserTest {
 
             new BadFileTestCase("../../../config-model/src/test/examples/simple.sd", 5), // TODO: unused rank-profile functions should throw errors? Also rank-type doesntexist: ... in field?
 
+            new BadFileTestCase("src/test/sdfiles/single/bm25forlabelsargsbad.sd", 1),
+            new BadFileTestCase("src/test/sdfiles/single/bm25forlabelsattrbad.sd", 1),
+            new BadFileTestCase("src/test/sdfiles/single/bm25labelbarebad.sd", 1),
+            new BadFileTestCase("src/test/sdfiles/single/bm25labelemptybad.sd", 1),
+            new BadFileTestCase("src/test/sdfiles/single/bm25quotelabelemptybad.sd", 1),
+            new BadFileTestCase("src/test/sdfiles/single/bm25labelunknownfieldbad.sd", 1),
+            new BadFileTestCase("src/test/sdfiles/single/bm25labelwrapperbad.sd", 1),
+            new BadFileTestCase("src/test/sdfiles/single/bm25labelwrongtagbad.sd", 1),
+            new BadFileTestCase("src/test/sdfiles/single/bm25numericfieldbad.sd", 1),
+            new BadFileTestCase("src/test/sdfiles/single/bm25quotefieldattrbad.sd", 1),
+            new BadFileTestCase("src/test/sdfiles/single/bm25quotefieldunknownbad.sd", 1),
+            new BadFileTestCase("src/test/sdfiles/single/elementwisebm25labelbad.sd", 1),
             new BadFileTestCase("src/test/sdfiles/single/featuresinheritance.sd", 1),
+            new BadFileTestCase("src/test/sdfiles/single/foreachbad.sd", 1),
             new BadFileTestCase("src/test/sdfiles/single/onnxmodel.sd", 1),
             new BadFileTestCase("src/test/sdfiles/single/onnxmodelinput.sd", 6),
             new BadFileTestCase("src/test/sdfiles/single/rankprofilefuncs.sd", 2),
             new BadFileTestCase("src/test/sdfiles/single/rankproperties.sd", 1),
             new BadFileTestCase("src/test/sdfiles/single/tensorGenerate.sd", 2),
+            new BadFileTestCase("src/test/sdfiles/single/tensorfromlabelsbad.sd", 1),
         };
 
         return Arrays.stream(tests)

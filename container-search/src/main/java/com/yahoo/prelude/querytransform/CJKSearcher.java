@@ -7,6 +7,7 @@ import java.util.Iterator;
 import java.util.ListIterator;
 
 import com.yahoo.language.Language;
+import com.yahoo.prelude.IndexFacts;
 import com.yahoo.search.Query;
 import com.yahoo.search.Result;
 import com.yahoo.component.chain.dependencies.After;
@@ -19,6 +20,7 @@ import com.yahoo.prelude.query.Item;
 import com.yahoo.prelude.query.PhraseItem;
 import com.yahoo.prelude.query.PhraseSegmentItem;
 import com.yahoo.prelude.query.SegmentItem;
+import com.yahoo.prelude.query.TaggableItem;
 import com.yahoo.prelude.query.WordItem;
 import com.yahoo.search.Searcher;
 import com.yahoo.search.query.QueryTree;
@@ -26,7 +28,7 @@ import com.yahoo.search.searchchain.Execution;
 import com.yahoo.search.searchchain.PhaseNames;
 
 /**
- * Search to do necessary transforms if the query is in segmented in a CJK language.
+ * Does necessary transforms if the query is in segmented in a CJK language.
  *
  * @author Steinar Knutsen
  */
@@ -40,59 +42,93 @@ public class CJKSearcher extends Searcher {
     @Override
     public Result search(Query query, Execution execution) {
         Language language = query.getModel().getParsingLanguage();
-        if ( ! language.isCjk()) return execution.search(query);
 
         QueryTree tree = query.getModel().getQueryTree();
-        tree.setRoot(transform(tree.getRoot()));
-        query.trace("Rewriting for CJK behavior for implicit phrases", true, 2);
+        boolean[] modified = { false };
+        Item newRoot = transform(tree.getRoot(), language, execution.context().getIndexFacts().newSession(query), modified);
+        if (modified[0]) {
+            tree.setRoot(newRoot);
+            query.trace("Rewriting for CJK behavior for implicit phrases", true, 2);
+        }
         return execution.search(query);
     }
 
-    private Item transform(Item root) {
-        if (root instanceof PhraseItem asPhrase) {
-            if (asPhrase.isExplicit() || hasOverlappingTokens(asPhrase)) return root;
+    private Item transform(Item item, Language language, IndexFacts.Session indexFacts, boolean[] modified) {
+        if (item.getLanguage() != Language.UNKNOWN)
+            language = item.getLanguage();
+
+        if (item instanceof PhraseItem phrase) {
+            if ( ! language.isCjk()) return item;
+            if (phrase.isExplicit()) return item;
+            if (indexFacts.getIndex(phrase.getFieldName()).isNGram()) return item;
+            if (hasOverlappingTokens(phrase)) return item;
 
             AndItem replacement = new AndItem();
-            for (ListIterator<Item> i = asPhrase.getItemIterator(); i.hasNext();) {
-                Item item = i.next();
-                if (item instanceof WordItem)
-                    replacement.addItem(item);
-                else if (item instanceof PhraseSegmentItem asSegment)
-                    replacement.addItem(new AndSegmentItem(asSegment));
+            for (ListIterator<Item> i = phrase.getItemIterator(); i.hasNext();) {
+                Item child = i.next();
+                if (child instanceof WordItem)
+                    replacement.addItem(child);
+                else if (child instanceof PhraseSegmentItem asSegment)
+                    replacement.addItem(propagateLabelToLeaves(asSegment, new AndSegmentItem(asSegment)));
                 else
-                    replacement.addItem(item); // should never get here
+                    replacement.addItem(child); // should never get here
             }
-            return replacement;
+            modified[0] = true;
+            return propagateLabelToLeaves(phrase, replacement);
         }
-        else if (root instanceof PhraseSegmentItem asSegment) {
-            if (asSegment.isExplicit() || hasOverlappingTokens(asSegment))
-                return root;
-            else
-                return new AndSegmentItem(asSegment);
+        else if (item instanceof PhraseSegmentItem segment) {
+            if ( ! language.isCjk()) return item;
+            if (segment.isExplicit() || hasOverlappingTokens(segment))
+                return item;
+            modified[0] = true;
+            return propagateLabelToLeaves(segment, new AndSegmentItem(segment));
         }
-        else if (root instanceof SegmentItem) {
-            return root; // avoid descending into AndSegmentItems and similar
+        else if (item instanceof SegmentItem) {
+            return item; // avoid descending into AndSegmentItems and similar
         }
-        else if (root instanceof CompositeItem asComposite) {
-            for (ListIterator<Item> i = asComposite.getItemIterator(); i.hasNext();) {
-                Item item = i.next();
-                Item transformedItem = transform(item);
-                if (item != transformedItem && asComposite.acceptsItemsOfType(transformedItem.getItemType()))
+        else if (item instanceof CompositeItem composite) {
+            for (ListIterator<Item> i = composite.getItemIterator(); i.hasNext();) {
+                Item child = i.next();
+                Item transformedItem = transform(child, language, indexFacts, modified);
+                if (child != transformedItem && composite.acceptsItemsOfType(transformedItem.getItemType()))
                     i.set(transformedItem);
             }
-            return root;
+            return item;
         }
-        return root;
+        return item;
+    }
+
+    /**
+     * The source items replaced here are taggable ranking leaves, while their replacements are plain
+     * composites whose taggable leaves are the words inside them. A label on the source must therefore
+     * move to those words to remain addressable from rank features, the same way YQL label annotations
+     * on composites are inherited by each taggable leaf. Existing (more specific) labels are kept.
+     */
+    private Item propagateLabelToLeaves(Item source, Item replacement) {
+        String label = source.getLabel();
+        if (label != null)
+            setLabelIfUnset(replacement, label);
+        return replacement;
+    }
+
+    private void setLabelIfUnset(Item item, String label) {
+        if (item instanceof TaggableItem) { // tested before descending, as in Model.collectTaggableItems
+            if (item.getLabel() == null)
+                item.setLabel(label);
+        }
+        else if (item instanceof CompositeItem composite) {
+            for (Iterator<Item> i = composite.getItemIterator(); i.hasNext(); )
+                setLabelIfUnset(i.next(), label);
+        }
     }
 
     private boolean hasOverlappingTokens(PhraseItem phrase) {
-        boolean has = false;
         for (Iterator<Item> i = phrase.getItemIterator(); i.hasNext(); ) {
             Item segment = i.next();
-            if (segment instanceof PhraseSegmentItem) has = hasOverlappingTokens((PhraseSegmentItem) segment);
-            if (has) return true;
+            if (segment instanceof PhraseSegmentItem && hasOverlappingTokens((PhraseSegmentItem) segment))
+                return true;
         }
-        return has;
+        return false;
     }
 
     /*
@@ -102,10 +138,12 @@ public class CJKSearcher extends Searcher {
      * if the sum of length of tokens is greater than the length of the original word
      */
     private boolean hasOverlappingTokens(PhraseSegmentItem segments) {
-        int segmentsLength=0;
+        int segmentsLength = 0;
         for (Iterator<Item> i = segments.getItemIterator(); i.hasNext(); ) {
-            WordItem segment = (WordItem) i.next();
-            segmentsLength += segment.getWord().length();
+            Item item = i.next();
+            if (item instanceof WordItem wordItem) {
+                segmentsLength += wordItem.getWord().length();
+            }
         }
         return segmentsLength > segments.getRawWord().length();
     }

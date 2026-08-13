@@ -5,6 +5,7 @@ import com.yahoo.config.model.ApplicationConfigProducerRoot.StatePortInfo;
 import com.yahoo.config.model.producer.TreeConfigProducer;
 import com.yahoo.config.model.test.MockRoot;
 import com.yahoo.config.provision.ApplicationId;
+import com.yahoo.config.provision.AzName;
 import com.yahoo.config.provision.ClusterMembership;
 import com.yahoo.config.provision.Environment;
 import com.yahoo.config.provision.HostSpec;
@@ -20,7 +21,9 @@ import com.yahoo.vespa.model.PortAllocBridge;
 import org.junit.jupiter.api.Test;
 import java.util.List;
 import java.util.Optional;
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * @author arnej
@@ -41,7 +44,8 @@ public class OpenTelemetryConfigGeneratorTest {
         var mockHostSpec = new HostSpec("localhost1.local",
                                         noResource, noResource, noResource,
                                         mockCluster,
-                                        Optional.empty(), Optional.empty(), Optional.empty());
+                                        Optional.empty(), Optional.empty(), Optional.empty(),
+                                        AzName.defaultName());
         var mockHostResource = new HostResource(mockHost, mockHostSpec);
         var mockSvc1 = new MockService(root, "sentinel");
         mockSvc1.setHostResource(mockHostResource);

@@ -193,9 +193,9 @@ public class SearchBuilderTest extends ContainerModelBuilderTestBase {
 
         ContainerThreadpoolConfig config = root.getConfig(
                 ContainerThreadpoolConfig.class, "default/component/" + SearchHandler.HANDLER_CLASSNAME + "/threadpool@search-handler");
-        assertEquals(-10, config.maxThreads());
-        assertEquals(-10, config.minThreads());
-        assertEquals(-40, config.queueSize());
+        assertEquals(10, config.relativeMaxThreads());
+        assertEquals(10, config.relativeMinThreads());
+        assertEquals(40, config.relativeQueueSize());
     }
 
     @Test
@@ -225,7 +225,7 @@ public class SearchBuilderTest extends ContainerModelBuilderTestBase {
                 "<container id='default' version='1.0'>",
                 "  <search>",
                 "    <threadpool>",
-                "      <threads boost=\"10.2\">0.4</threads>",
+                "      <threads max=\"10.2\">0.4</threads>",
                 "      <queue>50</queue>",
                 "    </threadpool>",
                 "  </search>",
@@ -234,9 +234,9 @@ public class SearchBuilderTest extends ContainerModelBuilderTestBase {
         createModel(root, clusterElem);
         ContainerThreadpoolConfig config = root.getConfig(
                 ContainerThreadpoolConfig.class, "default/component/" + SearchHandler.HANDLER_CLASSNAME + "/threadpool@search-handler");
-        assertEquals(-10, config.maxThreads());
-        assertEquals(-1, config.minThreads());
-        assertEquals(-50, config.queueSize());
+        assertEquals(10.2, config.relativeMaxThreads());
+        assertEquals(0.4, config.relativeMinThreads());
+        assertEquals(50, config.relativeQueueSize());
     }
 
     @Test

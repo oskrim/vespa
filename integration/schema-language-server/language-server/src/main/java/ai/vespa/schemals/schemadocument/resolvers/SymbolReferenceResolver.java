@@ -18,13 +18,13 @@ import ai.vespa.schemals.index.FieldIndex.IndexingType;
 import ai.vespa.schemals.index.Symbol;
 import ai.vespa.schemals.index.Symbol.SymbolStatus;
 import ai.vespa.schemals.index.Symbol.SymbolType;
+import ai.vespa.schemals.parser.ast.DOT;
 import ai.vespa.schemals.parser.ast.REFERENCE;
 import ai.vespa.schemals.parser.ast.dataType;
 import ai.vespa.schemals.parser.ast.matchFeaturesElm;
 import ai.vespa.schemals.parser.ast.summaryFeaturesElm;
 import ai.vespa.schemals.parser.ast.importField;
 import ai.vespa.schemals.parser.ast.mapDataType;
-import ai.vespa.schemals.parser.indexinglanguage.ast.DOT;
 import ai.vespa.schemals.parser.rankingexpression.ast.BaseNode;
 import ai.vespa.schemals.parser.rankingexpression.ast.args;
 import ai.vespa.schemals.schemadocument.resolvers.RankExpression.BuiltInFunctions;
@@ -69,7 +69,7 @@ public class SymbolReferenceResolver {
             } else {
 
                 Node parentField = node.getPreviousSibling();
-                if (parentField.getASTClass() == DOT.class) parentField = parentField.getPreviousSibling();
+                if (parentField.isASTInstance(DOT.class)) parentField = parentField.getPreviousSibling();
 
                 if (parentField.hasSymbol() && parentField.getSymbol().getStatus() == SymbolStatus.REFERENCE) {
                     parentFieldDefinition = context.schemaIndex().getSymbolDefinition(parentField.getSymbol());
@@ -270,7 +270,7 @@ public class SymbolReferenceResolver {
                     if (node.getParent().getASTClass() != importField.class) {
                         diagnostics.add(new SchemaDiagnostic.Builder()
                                 .setRange( node.getRange())
-                                .setMessage( "Field " + referencedSymbol.get().getLongIdentifier() + " can not be accessed directly. Hint: Add an import field statement to access the field.")
+                                .setMessage( "Field " + referencedSymbol.get().getLongIdentifier() + " cannot be accessed directly. Hint: Add an import field statement to access the field.")
                                 .setSeverity( DiagnosticSeverity.Error)
                                 .setCode(DiagnosticCode.ACCESS_UNIMPORTED_FIELD)
                                 .build());
@@ -406,8 +406,10 @@ public class SymbolReferenceResolver {
         Node identifierNode = argsNode.getParent().get(0);
         SchemaNode containingFeature = argsNode.getParent().getSchemaNode();
 
-        // we can be certain that this is a ReferenceNode
+        // we can be certain that this is a ReferenceNode, but it may be null if parsing is incomplete
         ReferenceNode functionExpressionNode = (ReferenceNode)((BaseNode)containingFeature.getOriginalRankExpressionNode()).expressionNode;
+        if (functionExpressionNode == null) return false;
+
         ExpressionNode myArg = ((BaseNode)argsChild.getOriginalRankExpressionNode()).expressionNode;
         int myArgIndex = functionExpressionNode.children().indexOf(myArg);
 
@@ -438,6 +440,11 @@ public class SymbolReferenceResolver {
 
         if (functionIdentifier.equals("tensorFromWeightedSet") || functionIdentifier.equals("tensorFromLabels")) {
             return myArgIndex == 1;
+        }
+
+        if (functionIdentifier.equals("tensorFromLabelsWithOffset")) {
+            // both the label dimension and the offset dimension are names, not symbols
+            return myArgIndex == 1 || myArgIndex == 2;
         }
 
         if (functionIdentifier.equals("query")) {

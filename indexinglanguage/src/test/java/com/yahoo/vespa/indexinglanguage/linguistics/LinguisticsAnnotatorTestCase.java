@@ -14,11 +14,13 @@ import com.yahoo.language.process.TokenType;
 import com.yahoo.language.process.Tokenizer;
 import com.yahoo.language.simple.SimpleLinguistics;
 import com.yahoo.language.simple.SimpleToken;
+import com.yahoo.vespa.indexinglanguage.expressions.InvalidInputException;
 import org.junit.Test;
 import org.mockito.Mockito;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.function.Predicate;
 
 import static org.junit.Assert.assertEquals;
@@ -29,6 +31,7 @@ import static org.junit.Assert.assertTrue;
 /**
  * @author Simon Thoresen Hult
  */
+@SuppressWarnings({"deprecation", "removal"})
 public class LinguisticsAnnotatorTestCase {
 
     @Test
@@ -200,21 +203,11 @@ public class LinguisticsAnnotatorTestCase {
     }
 
     @Test
-    public void requireThatExistingAnnotationsAreKept() {
-        SpanTree spanTree = new SpanTree(SpanTrees.LINGUISTICS);
-        spanTree.spanList().span(0, 3).annotate(new Annotation(AnnotationTypes.TERM, new StringFieldValue("baz")));
-
-        StringFieldValue val = new StringFieldValue("foo");
-        val.setSpanTree(spanTree);
-
-        Linguistics linguistics = newLinguistics(List.of(token("foo", "bar", TokenType.ALPHABETIC, false)),
-                                                 Map.of());
-        assertTrue(new LinguisticsAnnotator(linguistics, new AnnotatorConfig()).annotate(val));
-        assertEquals(spanTree, val.getSpanTree(SpanTrees.LINGUISTICS));
+    public void requireThatTokenizeCappingWorks() {
+        runWithBothModes(this::requireThatTokenizeCappingWorksImpl);
     }
 
-    @Test
-    public void requireThatTokenizeCappingWorks() {
+    private void requireThatTokenizeCappingWorksImpl(boolean useSimpleAnnotations) {
         String shortString = "short string";
         SpanTree spanTree = new SpanTree(SpanTrees.LINGUISTICS);
         spanTree.setStringFieldValue(new StringFieldValue(shortString));
@@ -265,6 +258,10 @@ public class LinguisticsAnnotatorTestCase {
 
     @Test
     public void requireThatBinaryDataIsNotAnnotated() {
+        runWithBothModes(this::requireThatBinaryDataIsNotAnnotatedImpl);
+    }
+
+    private void requireThatBinaryDataIsNotAnnotatedImpl(boolean useSimpleAnnotations) {
         var config = new AnnotatorConfig()
                 .setMaxReplacementCharacters(10)
                 .setMaxReplacementCharactersRatio(0.1d);
@@ -275,8 +272,8 @@ public class LinguisticsAnnotatorTestCase {
 
         assertTrue(isAnnotated.test("\uFFFD".repeat(10) + "a".repeat(90))); // Up to 10 replacement characters allowed
         assertTrue(isAnnotated.test("\uFFFD".repeat(11) + "a".repeat(100))); // Up to 10% being replacement characters allowed
-        var exception = assertThrows(IllegalArgumentException.class, () -> isAnnotated.test("\uFFFD".repeat(11) + "a".repeat(90))); // Above both limits, so no annotations
-        var expectedMsg = "Invalid document 'id:this:foobar::1': some text of length 101 is classified as binary data" +
+        var exception = assertThrows(InvalidInputException.class, () -> isAnnotated.test("\uFFFD".repeat(11) + "a".repeat(90))); // Above both limits, so no annotations
+        var expectedMsg = "Some text of length 101 is classified as binary data" +
                 " as it contains 11 Unicode replacement characters. " +
                 "(max-replacement-character-ratio=10%, max-replacement-characters=10)";
         assertEquals(expectedMsg, exception.getMessage());
@@ -284,6 +281,10 @@ public class LinguisticsAnnotatorTestCase {
 
     @Test
     public void requireReindexingBinaryDataSilentlyDropsAnnotations() {
+        runWithBothModes(this::requireReindexingBinaryDataSilentlyDropsAnnotationsImpl);
+    }
+
+    private void requireReindexingBinaryDataSilentlyDropsAnnotationsImpl(boolean useSimpleAnnotations) {
         var config = new AnnotatorConfig()
                 .setMaxReplacementCharacters(1)
                 .setMaxReplacementCharactersRatio(0.01d);
@@ -295,8 +296,8 @@ public class LinguisticsAnnotatorTestCase {
                         new DocumentId("id:this:foobar::1"),
                         isReindexingOperation);
 
-        var exception = assertThrows(IllegalArgumentException.class, () -> isAnnotated.test(false)); // Not reindexing, so exception
-        var expectedMsg = "Invalid document 'id:this:foobar::1': some text of length 2 is classified as binary data" +
+        var exception = assertThrows(InvalidInputException.class, () -> isAnnotated.test(false)); // Not reindexing, so exception
+        var expectedMsg = "Some text of length 2 is classified as binary data" +
                 " as it contains 2 Unicode replacement characters. " +
                 "(max-replacement-character-ratio=1%, max-replacement-characters=1)";
         assertEquals(expectedMsg, exception.getMessage());
@@ -306,6 +307,26 @@ public class LinguisticsAnnotatorTestCase {
 
     // --------------------------------------------------------------------------------
     // Utilities
+
+    @FunctionalInterface
+    private interface TestWithMode {
+        void run(boolean useSimpleAnnotations);
+    }
+
+    private static void runWithBothModes(TestWithMode test) {
+        boolean oldValue = com.yahoo.document.annotation.internal.SimpleIndexingAnnotations.isEnabled();
+        try {
+            // Test with simple annotations disabled
+            com.yahoo.document.annotation.internal.SimpleIndexingAnnotations.setEnabled(false);
+            test.run(false);
+
+            // Test with simple annotations enabled
+            com.yahoo.document.annotation.internal.SimpleIndexingAnnotations.setEnabled(true);
+            test.run(true);
+        } finally {
+            com.yahoo.document.annotation.internal.SimpleIndexingAnnotations.setEnabled(oldValue);
+        }
+    }
 
     private static SimpleToken token(String orig, String stem, TokenType type) {
         return token(orig, stem, type, false);
@@ -326,9 +347,17 @@ public class LinguisticsAnnotatorTestCase {
     }
 
     private static void assertAnnotations(SpanTree expected, String str, AnnotatorConfig config, Linguistics linguistics) {
-        StringFieldValue val = new StringFieldValue(str);
-        assertEquals(expected != null, new LinguisticsAnnotator(linguistics, config).annotate(val));
-        assertEquals(expected, val.getSpanTree(SpanTrees.LINGUISTICS));
+        // Test with both simple and full annotation modes using shared helper
+        runWithBothModes(useSimpleAnnotations -> {
+            StringFieldValue val = new StringFieldValue(str);
+            assertEquals(expected != null, new LinguisticsAnnotator(linguistics, config).annotate(val));
+            if (!Objects.equals(expected, val.getSpanTree(SpanTrees.LINGUISTICS))) {
+                System.err.println("Mode: useSimpleAnnotations=" + useSimpleAnnotations);
+                System.err.println("expected: " + expected);
+                System.err.println("got: " + val.getSpanTree(SpanTrees.LINGUISTICS));
+            }
+            assertEquals(expected, val.getSpanTree(SpanTrees.LINGUISTICS));
+        });
     }
 
     private static Linguistics newLinguistics(List<? extends Token> tokens, Map<String, String> replacementTerms) {

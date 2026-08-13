@@ -208,6 +208,7 @@ public class XmlReadingTestCase {
             fail("Should have failed");
         }
         catch (IllegalArgumentException e) {
+            e.printStackTrace();
             assertEquals("Could not parse 'unparseable.xml', error at line 2, column 21: Element type \"query-profile\" must be followed by either attribute specifications, \">\" or \"/>\".", Exceptions.toMessageString(e));
         }
     }

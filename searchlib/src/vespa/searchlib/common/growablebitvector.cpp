@@ -1,6 +1,9 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "growablebitvector.h"
+
+#include "transient_bitvector_snapshot.h"
+
 #include <cassert>
 
 /////////////////////////////////
@@ -14,22 +17,39 @@ namespace {
 struct GenerationHeldAllocatedBitVector : public vespalib::GenerationHeldBase {
     std::unique_ptr<AllocatedBitVector> vector;
     GenerationHeldAllocatedBitVector(std::unique_ptr<AllocatedBitVector> vector_in)
-      : GenerationHeldBase(sizeof(AllocatedBitVector) + vector_in->extraByteSize()),
-        vector(std::move(vector_in)) {}
+        : GenerationHeldBase(sizeof(AllocatedBitVector) + vector_in->extraByteSize()), vector(std::move(vector_in)) {}
 };
 
+} // namespace
+
+GrowableBitVector::GrowableBitVector(BitWord::Index newSize, BitWord::Index newCapacity,
+                                     GenerationHolder& generationHolder, const Alloc* init_alloc)
+    : _stored(std::make_unique<AllocatedBitVector>(newSize, newCapacity, nullptr, init_alloc, true)),
+      _self(_stored.get()),
+      _generationHolder(generationHolder) {
+    assert(newSize <= newCapacity);
 }
 
-GenerationHeldBase::UP
-GrowableBitVector::grow(BitWord::Index newSize, BitWord::Index newCapacity)
-{
-    AllocatedBitVector &self = *_stored;
+GrowableBitVector::~GrowableBitVector() = default;
+
+TransientBitVectorSnapshot GrowableBitVector::make_snapshot(BitWord::Index new_size) {
+    AllocatedBitVector& self = *_stored;
+    assert(new_size <= self.size());
+    return TransientBitVectorSnapshot(new_size, self);
+}
+
+void GrowableBitVector::fixup_after_load() {
+    AllocatedBitVector& self = *_stored;
+    self.set_dynamic_guard_bits(self.size());
+    self.set_dynamic_guard_bits(self.capacity());
+    self.updateCount();
+}
+
+GenerationHeldBase::UP GrowableBitVector::grow(BitWord::Index newSize, BitWord::Index newCapacity) {
+    AllocatedBitVector& self = *_stored;
     assert(newCapacity >= newSize);
     if (newCapacity != self.capacity()) {
-        auto tbv = std::make_unique<AllocatedBitVector>(newSize, newCapacity, self._alloc.get(), self.size(), &self._alloc);
-        if (newSize > self.size()) {
-            tbv->clear_bit_and_maintain_count_no_range_check(self.size());  // Clear old guard bit.
-        }
+        auto tbv = std::make_unique<AllocatedBitVector>(newSize, newCapacity, &self, &self._alloc, true);
         auto to_hold = std::make_unique<GenerationHeldAllocatedBitVector>(std::move(_stored));
         _self.store(tbv.get(), std::memory_order_release);
         _stored = std::move(tbv);
@@ -48,19 +68,7 @@ GrowableBitVector::grow(BitWord::Index newSize, BitWord::Index newCapacity)
     return {};
 }
 
-GrowableBitVector::GrowableBitVector(BitWord::Index newSize, BitWord::Index newCapacity,
-                                     GenerationHolder &generationHolder,
-                                     const Alloc *init_alloc)
-  : _stored(std::make_unique<AllocatedBitVector>(newSize, newCapacity, nullptr, 0, init_alloc)),
-    _self(_stored.get()),
-    _generationHolder(generationHolder)
-{
-    assert(newSize <= newCapacity);
-}
-
-bool
-GrowableBitVector::reserve(BitWord::Index newCapacity)
-{
+bool GrowableBitVector::reserve(BitWord::Index newCapacity) {
     BitWord::Index oldCapacity = _stored->capacity();
     assert(newCapacity >= oldCapacity);
     if (newCapacity == oldCapacity)
@@ -68,9 +76,7 @@ GrowableBitVector::reserve(BitWord::Index newCapacity)
     return hold(grow(_stored->size(), newCapacity));
 }
 
-bool
-GrowableBitVector::hold(GenerationHeldBase::UP v)
-{
+bool GrowableBitVector::hold(GenerationHeldBase::UP v) {
     if (v) {
         _generationHolder.insert(std::move(v));
         return true;
@@ -78,18 +84,14 @@ GrowableBitVector::hold(GenerationHeldBase::UP v)
     return false;
 }
 
-bool
-GrowableBitVector::shrink(BitWord::Index newCapacity)
-{
+bool GrowableBitVector::shrink(BitWord::Index newCapacity) {
     BitWord::Index oldCapacity = _stored->capacity();
     assert(newCapacity <= oldCapacity);
-    (void) oldCapacity;
+    (void)oldCapacity;
     return hold(grow(newCapacity, std::max(_stored->capacity(), newCapacity)));
 }
 
-bool
-GrowableBitVector::extend(BitWord::Index newCapacity)
-{
+bool GrowableBitVector::extend(BitWord::Index newCapacity) {
     return hold(grow(newCapacity, std::max(_stored->capacity(), newCapacity)));
 }
 

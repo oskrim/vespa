@@ -56,6 +56,15 @@ public class EvaluationTestCase {
     }
 
     @Test
+    public void testNamedStringValue() {
+        NamedStringValue value = new NamedStringValue("label", "title-terms");
+        assertEquals("label:title-terms", value.asString());
+
+        value.freeze();
+        assertTrue(value.asMutable() instanceof NamedStringValue);
+    }
+
+    @Test
     public void testEvaluationOrder() {
         EvaluationTester tester = new EvaluationTester();
         tester.assertEvaluates(-4, "1 + -2 + -3");
@@ -114,6 +123,14 @@ public class EvaluationTestCase {
         tester.assertEvaluates(3.5, "if(0.0, 2.5, 3.5)");
         tester.assertEvaluates(2.5, "if(1.0-1.1, 2.5, 3.5)");
         tester.assertEvaluates(3.5, "if(1.0-1.0, 2.5, 3.5)");
+
+        // Switch expressions
+        tester.assertEvaluates(0.5, "switch(one) { case 1: one_half, case 2: a_quarter, default: 0 }");
+        tester.assertEvaluates(0.25, "switch(2) { case 1: one_half, case 2: a_quarter, default: 0 }");
+        tester.assertEvaluates(0, "switch(3) { case 1: one_half, case 2: a_quarter, default: 0 }");
+        tester.assertEvaluates(1, "switch(foo) { case \"foo\": 1, case \"bar\": 2, default: 0 }");
+        tester.assertEvaluates(2, "switch(\"bar\") { case \"foo\": 1, case \"bar\": 2, default: 0 }");
+        tester.assertEvaluates(0, "switch(\"baz\") { case \"foo\": 1, case \"bar\": 2, default: 0 }");
 
         // Conditionals with branch probabilities
         RankingExpression e = tester.assertEvaluates(3.5, "if(1.0-1.0, 2.5, 3.5, 0.3)");

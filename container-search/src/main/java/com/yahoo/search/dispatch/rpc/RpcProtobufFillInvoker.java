@@ -5,6 +5,7 @@ import ai.vespa.searchlib.searchprotocol.protobuf.SearchProtocol;
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.yahoo.collections.ListMap;
 import com.yahoo.compress.Compressor;
+import com.yahoo.container.QrSearchersConfig;
 import com.yahoo.container.protect.Error;
 import com.yahoo.data.access.Inspector;
 import com.yahoo.data.access.slime.SlimeAdapter;
@@ -55,6 +56,7 @@ public class RpcProtobufFillInvoker extends FillInvoker {
     private final String serverId;
     private final CompressPayload compressor;
     private final DecodePolicy decodePolicy;
+    private final QrSearchersConfig qrSearchersConfig;
 
     private record ResponseAndHits(Client.ResponseOrError<ProtobufResponse> response, List<FastHit> hits) {}
 
@@ -68,14 +70,20 @@ public class RpcProtobufFillInvoker extends FillInvoker {
     private int numOkFilledHits = 0;
     private int numHitsToFill = 0;
 
+    private static final AtomicInteger retryCounter = new AtomicInteger();
+    private static final AtomicInteger noRetryCounter = new AtomicInteger();
+    private static final AtomicInteger retryTimeoutCounter = new AtomicInteger();
+
     RpcProtobufFillInvoker(RpcConnectionPool resourcePool, CompressPayload compressor, DocumentDatabase documentDb,
-                           String serverId, DecodePolicy decodePolicy, boolean summaryNeedsQuery) {
+                           String serverId, DecodePolicy decodePolicy, boolean summaryNeedsQuery,
+                           QrSearchersConfig qrSearchersConfig) {
         this.documentDb = documentDb;
         this.resourcePool = resourcePool;
         this.serverId = serverId;
         this.summaryNeedsQuery = summaryNeedsQuery;
         this.compressor = compressor;
         this.decodePolicy = decodePolicy;
+        this.qrSearchersConfig = qrSearchersConfig;
         this.partialSummaryHandler = new PartialSummaryHandler(documentDb);
     }
 
@@ -108,7 +116,7 @@ public class RpcProtobufFillInvoker extends FillInvoker {
         String askForSummary = partialSummaryHandler.askForSummary();
         Set<String> onlyFields = partialSummaryHandler.askForFields();
         var builder = ProtobufSerialization.createDocsumRequestBuilder(
-                result.getQuery(), serverId, askForSummary, onlyFields, summaryNeedsQuery, timeout.request());
+                result.getQuery(), serverId, askForSummary, onlyFields, summaryNeedsQuery, timeout.request(), qrSearchersConfig);
         hitsByNode.forEach((nodeId, hits) -> {
             var payload = ProtobufSerialization.serializeDocsumRequest(builder, hits);
             sendDocsumsRequest(nodeId, hits, payload, result, timeout.client());
@@ -198,7 +206,7 @@ public class RpcProtobufFillInvoker extends FillInvoker {
                 if (responseAndHits == null) {
                     throwTimeout();
                 }
-                skippedHits.addAll(processOneResponse(result, responseAndHits, summaryClass, false));
+                skippedHits.addAll(processOneResponse(result, responseAndHits, false));
                 outstandingResponses--;
             }
             if (skippedHits.isEmpty()) {
@@ -215,12 +223,9 @@ public class RpcProtobufFillInvoker extends FillInvoker {
         }
     }
 
-    private List<FastHit> processOneResponse(
-            Result result,
-            ResponseAndHits responseAndHits,
-            String summaryClass,
-            boolean isRetry)
-    {
+    private List<FastHit> processOneResponse(Result result,
+                                             ResponseAndHits responseAndHits,
+                                             boolean isRetry) {
         var responseOrError = responseAndHits.response();
         if (responseOrError.error().isPresent()) {
             if (hasReportedError || isRetry) {
@@ -233,7 +238,7 @@ public class RpcProtobufFillInvoker extends FillInvoker {
         } else {
             Client.ProtobufResponse response = responseOrError.response().get();
             byte[] responseBytes = compressor.decompress(response);
-            return fill(result, responseAndHits.hits(), summaryClass, responseBytes, isRetry);
+            return fill(result, responseAndHits.hits(), responseBytes, isRetry);
         }
         return List.of();
     }
@@ -251,7 +256,7 @@ public class RpcProtobufFillInvoker extends FillInvoker {
         }
     }
 
-    private List<FastHit> fill(Result result, List<FastHit> hits, String summaryClass, byte[] payload, boolean isRetry) {
+    private List<FastHit> fill(Result result, List<FastHit> hits, byte[] payload, boolean isRetry) {
         try {
             var protobuf = SearchProtocol.DocsumReply.parseFrom(payload);
             var root = (decodePolicy == DecodePolicy.ONDEMAND)
@@ -325,7 +330,7 @@ public class RpcProtobufFillInvoker extends FillInvoker {
             // no retry if there is only one node
             if (retryMap.size() > 0) {
                 if (shouldLogRetry()) {
-                    log.log(Level.WARNING, "Retry docsum fetch for " + numSkipped + " hits (" + numOkFilledHits + " ok hits)");
+                    log.log(Level.INFO, "Retry docsum fetch for " + numSkipped + " hits (" + numOkFilledHits + " ok hits)");
                 }
                 summaryNeedsQuery = true;
                 sendFillRequestByNode(result, summaryClass, retryMap);
@@ -337,7 +342,7 @@ public class RpcProtobufFillInvoker extends FillInvoker {
                         }
                         break;
                     }
-                    processOneResponse(result, responseAndHits, summaryClass, true);
+                    processOneResponse(result, responseAndHits, true);
                     outstandingResponses--;
                 }
                 skippedHits.removeIf(hit -> !partialSummaryHandler.needFill(hit));
@@ -356,17 +361,17 @@ public class RpcProtobufFillInvoker extends FillInvoker {
         if (count < 100000) return (count % 1000) == 0;
         return (count % 10000) == 0;
     }
-    private static final AtomicInteger retryCounter = new AtomicInteger();
-    private static final AtomicInteger noRetryCounter = new AtomicInteger();
-    private static final AtomicInteger retryTimeoutCounter = new AtomicInteger();
+
     private static boolean shouldLogRetry() {
         int count = retryCounter.getAndAdd(1);
         return shouldLogForCount(count);
     }
+
     private static boolean shouldLogNoRetry() {
         int count = noRetryCounter.getAndAdd(1);
         return shouldLogForCount(count);
     }
+
     private static boolean shouldLogRetryTimeout() {
         int count = retryTimeoutCounter.getAndAdd(1);
         return shouldLogForCount(count);

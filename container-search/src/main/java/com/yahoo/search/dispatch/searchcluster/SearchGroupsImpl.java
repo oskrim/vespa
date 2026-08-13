@@ -14,10 +14,12 @@ public class SearchGroupsImpl implements SearchGroups {
 
     private final AvailabilityPolicy availabilityPolicy;
     private final Map<Integer, Group> groups;
+    private volatile DocumentCount documentCount;
 
     public SearchGroupsImpl(AvailabilityPolicy availabilityPolicy, Map<Integer, Group> groups) {
         this.availabilityPolicy = availabilityPolicy;
         this.groups = Map.copyOf(groups);
+        this.documentCount = new DocumentCount();
     }
 
     @Override public Group get(int id) { return groups.get(id); }
@@ -35,27 +37,28 @@ public class SearchGroupsImpl implements SearchGroups {
 
     public boolean isGroupCoverageSufficient(boolean currentIsGroupCoverageSufficient,
                                              long groupDocumentCount, long medianDocumentCount, long maxDocumentCount) {
-        if (medianDocumentCount <= 0) return true;
+        // If no group has any active documents, coverage checks are meaningless — consider all groups sufficient.
+        if (maxDocumentCount <= 0) return true;
         if (currentIsGroupCoverageSufficient) {
             if (availabilityPolicy.prioritizeAvailability()) {
                 // To take a group *out of* rotation, require that it has less active documents than the median.
                 // This avoids scenarios where incorrect accounting in a single group takes all other groups offline.
-                return hasBetterCoverageThan(groupDocumentCount, medianDocumentCount);
+                return hasSufficientCoverage(groupDocumentCount, medianDocumentCount);
             }
             else {
                 // Only serve from groups that have the maximal coverage, prioritizing 100% coverage over availability
                 // when there is a conflict.
-                return hasBetterCoverageThan(groupDocumentCount, maxDocumentCount);
+                return hasSufficientCoverage(groupDocumentCount, maxDocumentCount);
             }
         }
         else {
             // to put a group *in* rotation, require that it has as many documents as the largest group,
             // to avoid taking groups in too early when the majority of the groups have just been added.
-            return hasBetterCoverageThan(groupDocumentCount, maxDocumentCount);
+            return hasSufficientCoverage(groupDocumentCount, maxDocumentCount);
         }
     }
 
-    public boolean hasBetterCoverageThan(long groupDocumentCount, long documentCount) {
+    public boolean hasSufficientCoverage(long groupDocumentCount, long documentCount) {
         double documentCoverage = 100.0 * (double) groupDocumentCount / documentCount;
         return documentCoverage >= availabilityPolicy.minActiveDocsPercentage();
     }
@@ -70,4 +73,19 @@ public class SearchGroupsImpl implements SearchGroups {
         return (long)groups().stream().mapToDouble(Group::activeDocuments).max().orElse(0);
     }
 
+    public long maxTargetDocumentCount() {
+        return (long)groups().stream().mapToDouble(Group::targetActiveDocuments).max().orElse(0);
+    }
+
+    public boolean hasGroupWithAllNodesWorking() {
+        return groups().stream().anyMatch(Group::allNodesWorking);
+    }
+
+    public DocumentCount getDocumentCount() {
+        return this.documentCount;
+    }
+
+    public void setDocumentCount(DocumentCount documentCount) {
+        this.documentCount = documentCount;
+    }
 }

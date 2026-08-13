@@ -13,6 +13,7 @@ import com.yahoo.config.model.api.Reindexing;
 import com.yahoo.config.model.application.provider.SimpleApplicationValidator;
 import com.yahoo.config.model.builder.xml.test.DomBuilderTest;
 import com.yahoo.config.model.deploy.DeployState;
+import com.yahoo.config.model.deploy.TestDeployState;
 import com.yahoo.config.model.test.MockApplicationPackage;
 import com.yahoo.config.model.test.TestDriver;
 import com.yahoo.config.model.test.TestRoot;
@@ -48,7 +49,11 @@ import java.util.Optional;
 import java.util.Set;
 
 import static java.util.stream.Collectors.toSet;
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Test for creating cluster controllers under the admin tag.
@@ -496,7 +501,7 @@ public class ClusterControllerTestCase extends DomBuilderTest {
     }
 
     private VespaModel createVespaModel(String servicesXml) throws IOException, SAXException {
-        return createVespaModel(servicesXml, new DeployState.Builder());
+        return createVespaModel(servicesXml, TestDeployState.createBuilder());
     }
 
     private VespaModel createVespaModel(String servicesXml, DeployState.Builder deployStateBuilder) throws IOException, SAXException {

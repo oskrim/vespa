@@ -2,6 +2,7 @@ package ai.vespa.schemals.lsp.yqlplus.completion.provider;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 
 import org.eclipse.lsp4j.CompletionItem;
 import org.eclipse.lsp4j.Position;
@@ -27,13 +28,13 @@ public class GroupingExpressionProvider implements CompletionProvider {
 
 
     private final static List<String> mathFunctions = Arrays.stream(MathFunctions.Function.values())
-                                                            .map(func -> func.name().toLowerCase())
+                                                            .map(func -> func.name().toLowerCase(Locale.ROOT))
                                                             .toList();
 
     private final static List<String> timeFunctions = Arrays.stream(TimeFunctions.Type.values())
                                                             .map(func -> func.name()
                                                                              .replaceAll("_", "")
-                                                                             .toLowerCase())
+                                                                             .toLowerCase(Locale.ROOT))
                                                             .toList();
 
     private final static List<CompletionItem> expressionCompletions = List.of(
@@ -60,6 +61,7 @@ public class GroupingExpressionProvider implements CompletionProvider {
            CompletionUtils.constructSnippet("now", "now()"),
            CompletionUtils.constructSnippet("or", "or($0)"),
            CompletionUtils.constructSnippet("predefined", "predefined(${1:expr}, ${2:bucket})"),
+           CompletionUtils.constructSnippet("quantiles", "quantiles([${1:quantiles}], ${2:expr})"),
            CompletionUtils.constructSnippet("relevance", "relevance()"),
            CompletionUtils.constructSnippet("reverse", "reverse($0)"),
            CompletionUtils.constructSnippet("size", "size($0)"),

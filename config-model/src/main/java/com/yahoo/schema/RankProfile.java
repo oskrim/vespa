@@ -11,7 +11,7 @@ import com.yahoo.search.query.profile.QueryProfileRegistry;
 import com.yahoo.search.query.profile.types.FieldDescription;
 import com.yahoo.search.query.profile.types.QueryProfileType;
 import com.yahoo.search.query.ranking.Diversity;
-import com.yahoo.schema.ElementGap;
+import com.yahoo.search.query.ranking.ElementGap;
 import com.yahoo.schema.document.Attribute;
 import com.yahoo.schema.document.ImmutableSDField;
 import com.yahoo.schema.document.SDDocumentType;
@@ -45,6 +45,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalDouble;
+import java.util.OptionalInt;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.function.Predicate;
@@ -89,14 +90,20 @@ public class RankProfile implements Cloneable {
     /** The ranking expression to be used for global-phase */
     private RankingExpressionFunction globalPhaseRanking = null;
 
-    /** Number of hits to be reranked in second phase, -1 means use default */
-    private int rerankCount = -1;
+    /** Number of hits to be reranked in second phase */
+    private Optional<Integer> rerankCount = Optional.empty();
+
+    /** Number of hits to be reranked in second phase across all nodes, */
+    private Optional<Integer> totalRerankCount = Optional.empty();
 
     /** Number of hits to be reranked in global-phase, -1 means use default */
     private int globalPhaseRerankCount = -1;
 
-    /** Mysterious attribute */
-    private int keepRankCount = -1;
+    /** The number of hits per node for which to keep rank data in first phase, empty to use the default */
+    private Optional<Integer> keepRankCount = Optional.empty();
+
+    /** The number of hits across all nodes for which to keep rank data in first phase, empty to use keepRankCount */
+    private Optional<Integer> totalKeepRankCount = Optional.empty();
 
     private int numThreadsPerSearch = -1;
     private int minHitsPerThread = -1;
@@ -108,6 +115,7 @@ public class RankProfile implements Cloneable {
     private Double filterFirstThreshold = null;
     private Double filterFirstExploration = null;
     private Double explorationSlack = null;
+    private Boolean prefetchTensors = null;
     private Double targetHitsMaxAdjustmentFactor = null;
     private Double weakandStopwordLimit = null;
     private Boolean weakandAllowDropAll = null;
@@ -120,11 +128,11 @@ public class RankProfile implements Cloneable {
     private double globalPhaseRankScoreDropLimit = -Double.MAX_VALUE;
 
     private Set<ReferenceNode> summaryFeatures;
-    private List<String> inheritedSummaryFeaturesProfileNames = new ArrayList<>();
+    private final List<String> inheritedSummaryFeaturesProfileNames = new ArrayList<>();
 
     private Set<ReferenceNode> matchFeatures;
     private Set<ReferenceNode> hiddenMatchFeatures;
-    private List<String> inheritedMatchFeaturesProfileNames = new ArrayList<>();
+    private final List<String> inheritedMatchFeaturesProfileNames = new ArrayList<>();
 
     private Set<ReferenceNode> rankFeatures;
 
@@ -602,8 +610,7 @@ public class RankProfile implements Cloneable {
      * or if match features are set in this, only have the match features in this.
      * With this set the resulting match features of this will be the superset of those defined in this and
      * the final (with inheritance included) match features of the given parent.
-     * The profile must be one which which is directly inherited by this.
-     *
+     * The profile must be one which is directly inherited by this.
      */
     public void addInheritedMatchFeatures(String parentProfile) {
         if ( ! inheritedNames().contains(parentProfile))
@@ -763,11 +770,18 @@ public class RankProfile implements Cloneable {
         rankProperties.computeIfAbsent(rankProperty.getName(), (String key) -> new ArrayList<>(1)).add(rankProperty);
     }
 
-    public void setRerankCount(int rerankCount) { this.rerankCount = rerankCount; }
+    public void setRerankCount(int rerankCount) { this.rerankCount = Optional.of(rerankCount); }
 
-    public int getRerankCount() {
-        if (rerankCount >= 0) return rerankCount;
-        return uniquelyInherited(RankProfile::getRerankCount, c -> c >= 0, "rerank-count").orElse(-1);
+    public void setTotalRerankCount(int totalRerankCount) { this.totalRerankCount = Optional.of(totalRerankCount); }
+
+    public Optional<Integer> getRerankCount() {
+        if (rerankCount.isPresent()) return rerankCount;
+        return uniquelyInherited(RankProfile::getRerankCount, Optional::isPresent, "rerank-count").orElse(Optional.empty());
+    }
+
+    public Optional<Integer> getTotalRerankCount() {
+        if (totalRerankCount.isPresent()) return totalRerankCount;
+        return uniquelyInherited(RankProfile::getTotalRerankCount, Optional::isPresent, "total-rerank-count").orElse(Optional.empty());
     }
 
     public void setGlobalPhaseRerankCount(int count) { this.globalPhaseRerankCount = count; }
@@ -805,6 +819,7 @@ public class RankProfile implements Cloneable {
     public void setFilterFirstThreshold(double threshold) { this.filterFirstThreshold = threshold; }
     public void setFilterFirstExploration(double exploration) { this.filterFirstExploration = exploration; }
     public void setExplorationSlack(double slack) { this.explorationSlack = slack; }
+    public void setPrefetchTensors(boolean value) { this.prefetchTensors = value; }
     public void setTargetHitsMaxAdjustmentFactor(double factor) { this.targetHitsMaxAdjustmentFactor = factor; }
     public void setWeakandStopwordLimit(double limit) { this.weakandStopwordLimit = limit; }
     public void setWeakandAdjustTarget(double target) { this.weakandAdjustTarget = target; }
@@ -852,6 +867,13 @@ public class RankProfile implements Cloneable {
         return uniquelyInherited(RankProfile::getExplorationSlack, OptionalDouble::isPresent, "exploration-slack").orElse(OptionalDouble.empty());
     }
 
+    public Boolean getPrefetchTensors() {
+        if (prefetchTensors != null) {
+            return prefetchTensors;
+        }
+        return uniquelyInherited(RankProfile::getPrefetchTensors, "prefetch-tensors").orElse(null);
+    }
+
     public OptionalDouble getTargetHitsMaxAdjustmentFactor() {
         if (targetHitsMaxAdjustmentFactor != null) {
             return OptionalDouble.of(targetHitsMaxAdjustmentFactor);
@@ -897,11 +919,18 @@ public class RankProfile implements Cloneable {
         return uniquelyInherited(RankProfile::getIgnoreDefaultRankFeatures, "ignore-default-rank-features").orElse(false);
     }
 
-    public void setKeepRankCount(int rerankArraySize) { this.keepRankCount = rerankArraySize; }
+    public void setKeepRankCount(int count) { this.keepRankCount = Optional.of(count); }
 
-    public int getKeepRankCount() {
-        if (keepRankCount >= 0) return keepRankCount;
-        return uniquelyInherited(RankProfile::getKeepRankCount, c -> c >= 0, "keep-rank-count").orElse(-1);
+    public Optional<Integer> getKeepRankCount() {
+        if (keepRankCount.isPresent()) return keepRankCount;
+        return uniquelyInherited(RankProfile::getKeepRankCount, Optional::isPresent, "keep-rank-count").orElse(Optional.empty());
+    }
+
+    public void setTotalKeepRankCount(int totalKeepRankCount) { this.totalKeepRankCount = Optional.of(totalKeepRankCount); }
+
+    public Optional<Integer> getTotalKeepRankCount() {
+        if (totalKeepRankCount.isPresent()) return totalKeepRankCount;
+        return uniquelyInherited(RankProfile::getTotalKeepRankCount, Optional::isPresent, "total-keep-rank-count").orElse(Optional.empty());
     }
 
     public void setRankScoreDropLimit(double rankScoreDropLimit) { this.rankScoreDropLimit = rankScoreDropLimit; }
@@ -1010,9 +1039,7 @@ public class RankProfile implements Cloneable {
         addRankProperty(prefix + ".attribute", op.attribute);
         addRankProperty(prefix + ".operation", op.operation);
     }
-    public void addMutateOperation(MutateOperation.Phase phase, String attribute, String operation) {
-        addMutateOperation(new MutateOperation(phase, attribute, operation));
-    }
+
     public List<MutateOperation> getMutateOperations() { return mutateOperations; }
 
     public RankingExpressionFunction findFunction(String name) {
@@ -1086,7 +1113,44 @@ public class RankProfile implements Cloneable {
         explicitFieldRankElementGaps = new LinkedHashMap<>(fieldElementGaps);
     }
 
-    public Map<String, ElementGap> explicitFieldRankElementGaps() { return explicitFieldRankElementGaps; }
+    public Map<String, ElementGap> explicitFieldRankElementGaps() {
+        if (explicitFieldRankElementGaps.isEmpty() && inherited().isEmpty()) return Map.of();
+        if (inherited().isEmpty()) return Collections.unmodifiableMap(explicitFieldRankElementGaps);
+
+        var inheritedElementGaps = uniquelyInherited(RankProfile::explicitFieldRankElementGaps, m -> ! m.isEmpty(), "element-gap")
+                                           .orElse(Map.of());
+        if (explicitFieldRankElementGaps.isEmpty()) return inheritedElementGaps;
+
+        // Neither is empty
+        Map<String, ElementGap> combined = new LinkedHashMap<>(inheritedElementGaps);
+        combined.putAll(explicitFieldRankElementGaps);
+        return Collections.unmodifiableMap(combined);
+    }
+
+    public Map<String, ElementGap> getFieldRankElementGaps() {
+        Map<String, ElementGap> unionOfInheritedGaps = new LinkedHashMap<>();
+        for (var parent : inherited()) {
+            var fromParent = parent.getFieldRankElementGaps();
+            for (var entry : fromParent.entrySet()) {
+                String fieldName = entry.getKey();
+                ElementGap gap = entry.getValue();
+                ElementGap old = unionOfInheritedGaps.get(fieldName);
+                if (old == null) {
+                    unionOfInheritedGaps.put(fieldName, gap);
+                } else if (! old.equals(gap)) {
+                    // will we override it?
+                    if (explicitFieldRankElementGaps == null || ! explicitFieldRankElementGaps.containsKey(fieldName)) {
+                        throw new IllegalArgumentException("Several of the profiles inherited by " + this +
+                                                           " contains element-gap for field " + fieldName + ", cannot resolve conflict");
+                    }
+                }
+            }
+        }
+        if (explicitFieldRankElementGaps != null) {
+            unionOfInheritedGaps.putAll(explicitFieldRankElementGaps);
+        }
+        return unionOfInheritedGaps;
+    }
 
     private ExpressionFunction parseRankingExpression(String name, List<String> arguments, String expression) throws ParseException {
         if (expression.trim().isEmpty())
@@ -1428,6 +1492,12 @@ public class RankProfile implements Cloneable {
                 featureTypes.put(FeatureNames.asAttributeFeature(name), new AttributeErrorType(deployLogger, name, a.getCollectionType()));
             }
         });
+        // attributes on struct fields are named "field.structField" and are not in allFieldsList();
+        // imported fields do not support struct traversal, their struct fields are imported one by one
+        if ( ! field.isImportedField()) {
+            for (ImmutableSDField structField : field.getStructFields())
+                addAttributeFeatureTypes(structField, featureTypes);
+        }
     }
 
     @Override
@@ -1626,32 +1696,33 @@ public class RankProfile implements Cloneable {
 
         private String attribute = null;
         private boolean ascending = false;
-        private int maxHits = 0; // try to get this many hits before degrading the match phase
+        private Optional<Long> maxHits = Optional.empty(); // try to get this many hits on each node before degrading the match phase
+        private Optional<Long> totalMaxHits = Optional.empty(); // try to get this many hits across all nodes before degrading the match phase
         private double maxFilterCoverage = 0.2; // Max coverage of original corpus that will trigger the filter.
         private double evaluationPoint = 0.20;
         private double prePostFilterTippingPoint = 1.0;
 
         public void setAscending(boolean value) { ascending = value; }
         public void setAttribute(String value) { attribute = value; }
-        public void setMaxHits(int value) { maxHits = value; }
+        public void setMaxHits(long value) { maxHits = Optional.of(value); }
+        public void setTotalMaxHits(long value) { totalMaxHits = Optional.of(value); }
         public void setMaxFilterCoverage(double value) { maxFilterCoverage = value; }
         public void setEvaluationPoint(double evaluationPoint) { this.evaluationPoint = evaluationPoint; }
         public void setPrePostFilterTippingPoint(double prePostFilterTippingPoint) { this.prePostFilterTippingPoint = prePostFilterTippingPoint; }
 
         public boolean                getAscending() { return ascending; }
         public String                 getAttribute() { return attribute; }
-        public int                      getMaxHits() { return maxHits; }
+        public Optional<Long>        getMaxHits() { return maxHits; }
+        public Optional<Long>   getTotalMaxHits() { return totalMaxHits; }
         public double         getMaxFilterCoverage() { return maxFilterCoverage; }
         public double           getEvaluationPoint() { return evaluationPoint; }
         public double getPrePostFilterTippingPoint() { return prePostFilterTippingPoint; }
 
         public void checkValid() {
-            if (attribute == null) {
-                throw new IllegalArgumentException("match-phase did not set any attribute");
-            }
-            if (! (maxHits > 0)) {
-                throw new IllegalArgumentException("match-phase did not set max-hits > 0");
-            }
+            if (attribute == null)
+                throw new IllegalArgumentException("match-phase must specify an attribute");
+            if (maxHits.isEmpty() && totalMaxHits.isEmpty())
+                throw new IllegalArgumentException("match-phase must contain max-hits or total-max-hits");
         }
 
     }
@@ -1833,7 +1904,8 @@ public class RankProfile implements Cloneable {
         for (var inheritedProfile : inherited()) {
             all.putAll(inheritedProfile.getFeatureNormalizers());
         }
-        for (var n : featureNormalizers) {
+        // Use a copy to avoid concurrent modification exceptions, see addFeatureNormalizer() below
+        for (var n : new ArrayList<>(featureNormalizers)) {
             all.put(n.name(), n);
         }
         return all;
@@ -1869,6 +1941,5 @@ public class RankProfile implements Cloneable {
             }
         }
     }
-
 
 }

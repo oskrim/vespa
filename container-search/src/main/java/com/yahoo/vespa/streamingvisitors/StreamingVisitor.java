@@ -16,8 +16,10 @@ import com.yahoo.messagebus.Message;
 import com.yahoo.messagebus.Trace;
 import com.yahoo.messagebus.routing.Route;
 import com.yahoo.prelude.fastsearch.TimeoutException;
+import com.yahoo.prelude.query.SerializationContext;
 import com.yahoo.processing.request.CompoundName;
 import com.yahoo.search.Query;
+import com.yahoo.search.dispatch.rpc.ProtobufSerialization;
 import com.yahoo.search.grouping.vespa.GroupingExecutor;
 import com.yahoo.search.query.Model;
 import com.yahoo.search.query.Ranking;
@@ -30,6 +32,7 @@ import com.yahoo.vespa.objects.BufferSerializer;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -69,7 +72,7 @@ class StreamingVisitor extends VisitorDataHandler implements Visitor {
 
     private final Map<String, DocumentSummary.Summary> summaryMap = new HashMap<>();
     private final Map<Integer, Grouping> groupingMap = new ConcurrentHashMap<>();
-    private Query query = null;
+    private final Query query;
     private final VisitorSessionFactory visitorSessionFactory;
     private final int traceLevelOverride;
     private Trace sessionTrace;
@@ -80,8 +83,7 @@ class StreamingVisitor extends VisitorDataHandler implements Visitor {
 
     public StreamingVisitor(Query query, Route route,
                             VisitorSessionFactory visitorSessionFactory,
-                            Visitor.Context context)
-    {
+                            Visitor.Context context) {
         this.query = query;
         this.visitorSessionFactory = visitorSessionFactory;
         this.traceLevelOverride = context.traceLevelOverride();
@@ -146,9 +148,20 @@ class StreamingVisitor extends VisitorDataHandler implements Visitor {
         }
 
         EncodedData ed = new EncodedData();
-        encodeQueryData(query, 0, ed);
-        params.setLibraryParameter("query", ed.getEncodedData());
-        params.setLibraryParameter("querystackcount", String.valueOf(ed.getReturned()));
+        if (context.sendOldQueryStack()) {
+            ProtobufSerialization.setProtobufAlsoSerialized(true);
+            encodeQueryData(query, 0, ed);
+            params.setLibraryParameter("query", ed.getEncodedData());
+            params.setLibraryParameter("querystackcount", String.valueOf(ed.getReturned()));
+        } else {
+            // TODO: remove dummies - it's for backwards compatibility only
+            params.setLibraryParameter("query", new byte[]{(byte) 0});
+            params.setLibraryParameter("querystackcount", "1");
+        }
+        var serializationContext = SerializationContext.ignored(); // Not tracking content share in streaming
+        var protobufTree = query.getModel().getQueryTree().toProtobufQueryTree(serializationContext);
+        params.setLibraryParameter("querytree", protobufTree.toByteArray());
+
         params.setLibraryParameter("searchcluster", context.searchCluster().getBytes(StandardCharsets.UTF_8));
         params.setLibraryParameter("schema", context.schema().getBytes(StandardCharsets.UTF_8));
 
@@ -246,12 +259,12 @@ class StreamingVisitor extends VisitorDataHandler implements Visitor {
 
     }
 
-    private static void encodeQueryData(Query query, int code, EncodedData ed){
+    private static void encodeQueryData(Query query, int code, EncodedData ed) {
         ByteBuffer buf = ByteBuffer.allocate(1024);
         while (true) {
             try {
                 switch (code) {
-                    case 0 -> ed.setReturned(query.getModel().getQueryTree().getRoot().encode(buf));
+                    case 0 -> ed.setReturned(query.getModel().getQueryTree().getRoot().encode(buf, SerializationContext.ignored()));
                     case 1 -> ed.setReturned(QueryEncoder.encodeAsProperties(query, buf));
                     case 2 -> throw new IllegalArgumentException("old aggregation no longer exists!");
                     case 3 -> {
@@ -281,7 +294,7 @@ class StreamingVisitor extends VisitorDataHandler implements Visitor {
                 log.log(Level.FINE, () -> "StreamingVisitor returned from waitUntilDone without being completed for " + query +
                                           " with selection " + params.getDocumentSelection());
                 session.abort();
-                throw new TimeoutException("Query timed out in " + StreamingBackend.class.getName());
+                throw new TimeoutException("Query timed out in " + this);
             }
         } finally {
             session.destroy();
@@ -338,9 +351,7 @@ class StreamingVisitor extends VisitorDataHandler implements Visitor {
             totalHitCount += result.getTotalHitCount();
             hits = ListMerger.mergeIntoArrayList(hits, newHits, query.getOffset() + query.getHits());
             var newErrors = result.getErrors();
-            for (var error : newErrors) {
-                errors.add(error);
-            }
+            Collections.addAll(errors, newErrors);
         }
 
         Map<Integer, byte[]> newGroupingMap = result.getGroupingList();
@@ -407,4 +418,10 @@ class StreamingVisitor extends VisitorDataHandler implements Visitor {
 
     @Override
     public Set<String> getErrors() { return Set.copyOf(errors); }
+
+    @Override
+    public String toString() {
+        return "streaming visitor";
+    }
+
 }

@@ -1,6 +1,7 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.prelude.query;
 
+import ai.vespa.searchlib.searchprotocol.protobuf.SearchProtocol;
 import com.yahoo.prelude.query.textualrepresentation.Discloser;
 
 import java.nio.ByteBuffer;
@@ -63,11 +64,6 @@ public class PhraseItem extends CompositeIndexedItem {
         return explicit;
     }
 
-    private IndexedItem convertIntToWord(Item orig) {
-        IntItem o = (IntItem) orig;
-        return new WordItem(o.stringValue(), o.getIndexName(), o.isFromQuery());
-    }
-
     /**
      * Adds subitem. The word will have its index name set to the index name of
      * this phrase. If the item is a word, it will simply be added, if the item
@@ -80,8 +76,8 @@ public class PhraseItem extends CompositeIndexedItem {
         if (item instanceof WordItem || item instanceof PhraseSegmentItem || item instanceof WordAlternativesItem) {
             addIndexedItem((IndexedItem) item);
         }
-        else if (item instanceof IntItem) {
-            addIndexedItem(convertIntToWord(item));
+        else if (item instanceof IntItem intItem) {
+            addIndexedItem(intItem.asWord());
         }
         else if (item instanceof PhraseItem || item instanceof AndSegmentItem) {
             for (Iterator<Item> i = ((CompositeItem) item).getItemIterator(); i.hasNext();)
@@ -93,20 +89,11 @@ public class PhraseItem extends CompositeIndexedItem {
     }
 
     @Override
-    public boolean acceptsItemsOfType(ItemType itemType) {
-        return itemType == ItemType.WORD ||
-               itemType == ItemType.WORD_ALTERNATIVES ||
-               itemType == ItemType.INT ||
-               itemType == ItemType.EXACT ||
-               itemType == ItemType.PHRASE;
-    }
-
-    @Override
     public void addItem(int index, Item item) {
-        if (item instanceof WordItem || item instanceof PhraseSegmentItem) {
+        if (item instanceof WordItem || item instanceof PhraseSegmentItem || item instanceof WordAlternativesItem) {
             addIndexedItem(index, (IndexedItem) item);
-        } else if (item instanceof IntItem) {
-            addIndexedItem(index, convertIntToWord(item));
+        } else if (item instanceof IntItem intItem) {
+            addIndexedItem(index, intItem.asWord());
         } else if (item instanceof PhraseItem phrase) {
             for (Iterator<Item> i = phrase.getItemIterator(); i.hasNext();) {
                 addIndexedItem(index++, (WordItem) i.next());
@@ -118,10 +105,10 @@ public class PhraseItem extends CompositeIndexedItem {
 
     @Override
     public Item setItem(int index, Item item) {
-        if (item instanceof WordItem || item instanceof PhraseSegmentItem) {
+        if (item instanceof WordItem || item instanceof PhraseSegmentItem || item instanceof WordAlternativesItem) {
             return setIndexedItem(index, (IndexedItem) item);
-        } else if (item instanceof IntItem) {
-            return setIndexedItem(index, convertIntToWord(item));
+        } else if (item instanceof IntItem intItem) {
+            return setIndexedItem(index, intItem.asWord());
         } else if (item instanceof PhraseItem phrase) {
             Iterator<Item> i = phrase.getItemIterator();
             // we assume we don't try to add empty phrases
@@ -135,6 +122,15 @@ public class PhraseItem extends CompositeIndexedItem {
         } else {
             throw new IllegalArgumentException("Can not add " + item + " to a phrase");
         }
+    }
+
+    @Override
+    public boolean acceptsItemsOfType(ItemType itemType) {
+        return itemType == ItemType.WORD ||
+               itemType == ItemType.WORD_ALTERNATIVES ||
+               itemType == ItemType.INT ||
+               itemType == ItemType.EXACT ||
+               itemType == ItemType.PHRASE;
     }
 
     @Override
@@ -195,13 +191,13 @@ public class PhraseItem extends CompositeIndexedItem {
     }
 
     @Override
-    protected void encodeThis(ByteBuffer buffer) {
-        super.encodeThis(buffer); // takes care of index bytes
+    protected void encodeThis(ByteBuffer buffer, SerializationContext context) {
+        super.encodeThis(buffer, context); // takes care of index bytes
     }
 
     @Override
-    public int encode(ByteBuffer buffer) {
-        encodeThis(buffer);
+    public int encode(ByteBuffer buffer, SerializationContext context) {
+        encodeThis(buffer, context);
         int itemCount = 1;
 
         for (Iterator<Item> i = getItemIterator(); i.hasNext();) {
@@ -209,9 +205,9 @@ public class PhraseItem extends CompositeIndexedItem {
 
             if (subitem instanceof PhraseSegmentItem segment) {
                 // "What encode does, minus what encodeThis does"
-                itemCount += segment.encodeContent(buffer);
+                itemCount += segment.encodeContent(buffer, context);
             } else {
-                itemCount += subitem.encode(buffer);
+                itemCount += subitem.encode(buffer, context);
             }
         }
         return itemCount;
@@ -292,6 +288,26 @@ public class PhraseItem extends CompositeIndexedItem {
     @Override
     public int hashCode() {
         return Objects.hash(super.hashCode(), explicit);
+    }
+
+    @Override
+    SearchProtocol.QueryTreeItem toProtobuf(SerializationContext context) {
+        var builder = SearchProtocol.ItemPhrase.newBuilder();
+        builder.setProperties(ToProtobuf.buildTermProperties(this, getIndexName()));
+        for (var child : items()) {
+            if (child instanceof PhraseSegmentItem segment) {
+                // Mimic behavior of old encode function: Unpack PhraseSegmentItem
+                for (var segmentChild : segment.items()) {
+                    builder.addChildren(segmentChild.toProtobuf(context));
+                }
+            } else {
+                // Regular case: Just encode child
+                builder.addChildren(child.toProtobuf(context));
+            }
+        }
+        return SearchProtocol.QueryTreeItem.newBuilder()
+                .setItemPhrase(builder.build())
+                .build();
     }
 
 }

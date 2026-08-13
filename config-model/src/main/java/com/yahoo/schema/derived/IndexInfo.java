@@ -45,6 +45,7 @@ public class IndexInfo extends Derived {
     private static final String CMD_INDEX = "index";
     private static final String CMD_LOWERCASE = "lowercase";
     private static final String CMD_NORMALIZE = "normalize";
+    private static final String CMD_LINGUISTICS_PROFILE = "linguistics-profile";
     private static final String CMD_STEM = "stem";
     private static final String CMD_URLHOST = "urlhost";
     private static final String CMD_WORD = "word";
@@ -75,7 +76,7 @@ public class IndexInfo extends Derived {
     protected void derive(Schema schema) {
         super.derive(schema); // Derive per field
         this.schema = schema;
-        // Populate fieldsets with actual field objects, bit late to do that here but
+        // Populate fieldsets with actual field objects, a bit late to do that here but
         for (FieldSet fs : fieldSets.values()) {
             for (String fieldName : fs.getFieldNames()) {
                 fs.fields().add(schema.getField(fieldName));
@@ -170,6 +171,9 @@ public class IndexInfo extends Derived {
             }
             if (normalizeAccents(field)) {
                 addIndexCommand(field, CMD_NORMALIZE);
+            }
+            if (field.getSearchLinguisticsProfile() != null) {
+                addIndexCommand(field, CMD_LINGUISTICS_PROFILE + " " + field.getSearchLinguisticsProfile());
             }
             if (field.getMatching() == null || field.getMatching().getType().equals(MatchType.TEXT)) {
                 addIndexCommand(field, CMD_PLAIN_TOKENS);
@@ -346,6 +350,9 @@ public class IndexInfo extends Derived {
     private void addFieldSetCommands(IndexInfoConfig.Indexinfo.Builder iiB, FieldSet fieldSet) {
         for (String qc : fieldSet.queryCommands()) {
             addIndexCommand(iiB, fieldSet.getName(), qc);
+        }
+        if (fieldSet.getLinguisticsProfile() != null) {
+            addIndexCommand(iiB, fieldSet.getName(), CMD_LINGUISTICS_PROFILE + " " + fieldSet.getLinguisticsProfile());
         }
         boolean anyIndexing = false;
         boolean anyAttributing = false;

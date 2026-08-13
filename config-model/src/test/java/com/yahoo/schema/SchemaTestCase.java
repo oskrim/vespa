@@ -3,6 +3,7 @@ package com.yahoo.schema;
 
 import com.yahoo.document.config.DocumentmanagerConfig;
 import com.yahoo.search.config.IndexInfoConfig;
+import com.yahoo.search.config.SchemaInfoConfig;
 import com.yahoo.searchlib.ranking.features.FeatureNames;
 import com.yahoo.schema.derived.DerivedConfiguration;
 import com.yahoo.schema.document.Stemming;
@@ -13,6 +14,7 @@ import com.yahoo.vespa.configdefinition.IlscriptsConfig;
 import com.yahoo.vespa.configmodel.producers.DocumentManager;
 import com.yahoo.vespa.documentmodel.DocumentSummary;
 import com.yahoo.vespa.model.test.utils.DeployLoggerStub;
+import com.yahoo.yolean.Exceptions;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -121,6 +123,38 @@ public class SchemaTestCase {
         var input = application.schemas().get("msmarco").onnxModels().get("ltr_tensorflow").getInputMap().get("input:0");
         assertNotNull(input);
         assertEquals("vespa_input", input);
+    }
+
+    @Test
+    void testOnnxModelOptimizeModel() throws Exception {
+        String schema =
+                """
+                schema test {
+                    document test {
+                        field id type string {
+                            indexing: summary | attribute
+                        }
+                    }
+                    onnx-model default_model {
+                        file: files/default.onnx
+                    }
+                    onnx-model optimized_model {
+                        file: files/optimized.onnx
+                        optimize-model: true
+                    }
+                    onnx-model unoptimized_model {
+                        file: files/unoptimized.onnx
+                        optimize-model: false
+                    }
+                }""";
+        ApplicationBuilder builder = new ApplicationBuilder(new DeployLoggerStub());
+        builder.processorsToSkip().add(OnnxModelTypeResolver.class); // Avoid discovering the Onnx model referenced does not exist
+        builder.addSchema(schema);
+        var application = builder.build(true);
+        var models = application.schemas().get("test").onnxModels();
+        assertTrue(models.get("default_model").getOptimizeModel());
+        assertTrue(models.get("optimized_model").getOptimizeModel());
+        assertFalse(models.get("unoptimized_model").getOptimizeModel());
     }
 
     @Test
@@ -355,6 +389,7 @@ public class SchemaTestCase {
                         "    summary pf1 {}" +
                         "  }" +
                         "  import field parentschema_ref.name as parent_imported {}" +
+                        "  documentid: attribute" +
                         "  raw-as-base64-in-summary" +
                         "}");
         String childLines = joinLines(
@@ -486,6 +521,47 @@ public class SchemaTestCase {
     }
 
     @Test
+    void testInheritingRankProfileElements() throws ParseException {
+        String profile = """
+                    schema test {
+                      document test {
+                        field array1 type array<string> {
+                          indexing: index
+                        }
+                        field array2 type array<string> {
+                          indexing: index
+                        }
+                      }
+                      rank-profile r1 {
+                        rank myArray1 {
+                          element-gap: 7
+                        }
+                        rank myArray2 {
+                          element-gap: 5
+                        }
+                      }
+                      rank-profile r2 inherits r1 {
+                      }
+                      rank-profile r3 inherits r1 {
+                        rank myArray1 {
+                          element-gap: 3
+                        }
+                      }
+                    }
+                    """;
+        var application = ApplicationBuilder.createFromStrings(new DeployLoggerStub(), profile);
+        var r1Gaps = application.getRankProfileRegistry().get("test", "r1").explicitFieldRankElementGaps();
+        assertEquals(7, r1Gaps.get("myArray1").get().getAsInt());
+        assertEquals(5, r1Gaps.get("myArray2").get().getAsInt());
+        var r2Gaps = application.getRankProfileRegistry().get("test", "r2").explicitFieldRankElementGaps();
+        assertEquals(7, r2Gaps.get("myArray1").get().getAsInt());
+        assertEquals(5, r1Gaps.get("myArray2").get().getAsInt());
+        var r3Gaps = application.getRankProfileRegistry().get("test", "r3").explicitFieldRankElementGaps();
+        assertEquals(3, r3Gaps.get("myArray1").get().getAsInt());
+        assertEquals(5, r1Gaps.get("myArray2").get().getAsInt());
+    }
+
+    @Test
     void testDerivingHash() throws Exception {
         String schema =
                 """
@@ -598,6 +674,71 @@ public class SchemaTestCase {
     }
 
     @Test
+    void testLinguisticsProfile() throws Exception {
+        String schema =
+                """
+                schema doc {
+
+                    document doc {
+
+                        field s1 type string {
+                            indexing: index
+                            linguistics {
+                                profile: p1
+                            }
+                        }
+                        field s2 type string {
+                            indexing: index
+                            linguistics {
+                                profile: p2
+                            }
+                        }
+                        field s3 type string {
+                            indexing: index
+                            linguistics {
+                                profile {
+                                    search: p3
+                                    index: p4
+                                }
+                            }
+                        }
+                        field s4 type string {
+                            indexing: index
+                            linguistics {
+                                profile: p3
+                            }
+                        }
+                    }
+                    fieldset fs1 {
+                        fields: s3, s4
+                    }
+                }""";
+        ApplicationBuilder builder = new ApplicationBuilder(new DeployLoggerStub());
+        builder.addSchema(schema);
+        var application = builder.build(true);
+        var derived = new DerivedConfiguration(application.schemas().get("doc"), application.rankProfileRegistry());
+
+        var ilConfigBuilder = new IlscriptsConfig.Builder();
+        derived.getIndexingScript().getConfig(ilConfigBuilder);
+        assertEquals("clear_state | guard { input s1 | tokenize normalize profile:\"p1\" stem:\"BEST\" | index s1; }",
+                     ilConfigBuilder.build().ilscript().get(0).content(0));
+        assertEquals("clear_state | guard { input s2 | tokenize normalize profile:\"p2\" stem:\"BEST\" | index s2; }",
+                     ilConfigBuilder.build().ilscript().get(0).content(1));
+        assertEquals("clear_state | guard { input s3 | tokenize normalize profile:\"p4\" stem:\"BEST\" | index s3; }",
+                     ilConfigBuilder.build().ilscript().get(0).content(2));
+
+
+        var indexInfoConfigBuilder = new IndexInfoConfig.Builder();
+        derived.getIndexInfo().getConfig(indexInfoConfigBuilder);
+        var config = indexInfoConfigBuilder.build();
+        assertCommand("s1", "linguistics-profile p1", config);
+        assertCommand("s2", "linguistics-profile p2", config);
+        assertCommand("s3", "linguistics-profile p3", config);
+        assertNoCommand("s3", "linguistics-profile p4", config);
+        assertCommand("fs1", "linguistics-profile p3", config);
+    }
+
+    @Test
     void testCasedWordMatching() throws Exception {
         String schema =
                 """
@@ -665,7 +806,7 @@ public class SchemaTestCase {
     }
 
     @Test
-    void testDuplicateField() throws Exception {
+    void testDuplicateField() {
         String schema =
                 """
                 schema doc {
@@ -693,6 +834,219 @@ public class SchemaTestCase {
         }
     }
 
+    @Test
+    void testInnerRankProfiles() throws Exception {
+        String schema =
+                """
+                schema doc {
+                    document doc {
+                    }
+                    rank-profile outer {
+                        first-phase {
+                            expression: 1
+                        }
+                        rank-profile inner1 inherits outer {
+                            first-phase {
+                                expression: 2
+                            }
+                        }
+                        rank-profile inner2 inherits outer {
+                            first-phase {
+                                expression: 3
+                            }
+                            rank-profile grandinner inherits inner2 {
+                                first-phase {
+                                    expression: 4
+                                }
+                                rank-profile grandgrandinner inherits grandinner {
+                                    first-phase {
+                                        expression: 5
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }""";
+        ApplicationBuilder builder = new ApplicationBuilder(new DeployLoggerStub());
+        builder.addSchema(schema);
+        var application = builder.build(true);
+        new DerivedConfiguration(application.schemas().get("doc"), application.rankProfileRegistry());
+        assertEquals(7, application.rankProfileRegistry().rankProfilesOf(application.schemas().get("doc")).size());
+
+        var inner1 = application.rankProfileRegistry().get("doc", "outer.inner1");
+        assertNotNull(inner1);
+        assertEquals("outer.inner1", inner1.name());
+        assertEquals("2", inner1.getFirstPhase().function().getBody().getRoot().toString());
+
+        var inner2 = application.rankProfileRegistry().get("doc", "outer.inner2");
+        assertNotNull(inner2);
+        assertEquals("outer.inner2", inner2.name());
+        assertEquals("3", inner2.getFirstPhase().function().getBody().getRoot().toString());
+
+        var grandinner = application.rankProfileRegistry().get("doc", "outer.inner2.grandinner");
+        assertNotNull(grandinner);
+        assertEquals("outer.inner2.grandinner", grandinner.name());
+        assertEquals("4", grandinner.getFirstPhase().function().getBody().getRoot().toString());
+
+        var grandgrandinner = application.rankProfileRegistry().get("doc", "outer.inner2.grandinner.grandgrandinner");
+        assertNotNull(grandgrandinner);
+        assertEquals("outer.inner2.grandinner.grandgrandinner", grandgrandinner.name());
+        assertEquals("5", grandgrandinner.getFirstPhase().function().getBody().getRoot().toString());
+    }
+
+    @Test
+    void testInnerRankProfileMustInheritOuter() throws Exception {
+        String schema =
+                """
+                schema doc {
+                    document doc {
+                    }
+                    rank-profile outer {
+                        rank-profile inner1 { # missing inherits outer
+                        }
+                    }
+                }""";
+        try {
+            ApplicationBuilder builder = new ApplicationBuilder(new DeployLoggerStub());
+            builder.addSchema(schema);
+            var application = builder.build(true);
+            new DerivedConfiguration(application.schemas().get("doc"), application.rankProfileRegistry());
+            fail("Expected exception");
+        }
+        catch (IllegalArgumentException e) {
+            assertEquals("In rank-profile 'inner1': Inner profile 'inner1' must inherit 'outer'",
+                         Exceptions.toMessageString(e));
+        }
+    }
+
+    @Test
+    void testInnerProfilesWithDuplicateNamesAreAllowed() throws ParseException {
+        String schema =
+                """
+                schema doc {
+                    document doc {}
+                    rank-profile ranking_a {
+                        rank-profile debug inherits ranking_a {}
+                    }
+                    rank-profile ranking_b {
+                        rank-profile debug inherits ranking_b {}
+                    }
+                }""";
+        ApplicationBuilder builder = new ApplicationBuilder(new DeployLoggerStub());
+        builder.addSchema(schema);
+        var application = builder.build(true);
+        new DerivedConfiguration(application.schemas().get("doc"), application.rankProfileRegistry());
+    }
+
+    @Test
+    void testRankSettingsToSchemaInfo() throws Exception {
+        String schema =
+                """
+                schema doc {
+                    document doc {
+                        field test type int {
+                            indexing: attribute
+                            attribute: fast-search
+                        }
+                    }
+                    rank-profile test {
+                        match-phase {
+                            attribute: test
+                            max-hits: 456
+                        }
+                        first-phase {
+                            keep-rank-count: 1234
+                        }
+                        second-phase {
+                            rerank-count: 43
+                        }
+                    }
+                }""";
+        ApplicationBuilder builder = new ApplicationBuilder(new DeployLoggerStub());
+        builder.addSchema(schema);
+        var application = builder.build(true);
+        var derived = new DerivedConfiguration(application.schemas().get("doc"), application.rankProfileRegistry());
+        var schemaInfoConfigBuilder = new SchemaInfoConfig.Builder();
+        derived.getSchemaInfo().getConfig(schemaInfoConfigBuilder);
+        var schemaInfoConfig = schemaInfoConfigBuilder.build().toString();
+        assertTrue(schemaInfoConfig.contains("rerankCount 43"));
+        assertTrue(schemaInfoConfig.contains("keepRankCount 1234"));
+        assertTrue(schemaInfoConfig.contains("matchPhaseMaxHits 456"));
+    }
+
+    @Test
+    void testTotalRankSettingsToSchemaInfo() throws Exception {
+        String schema =
+                """
+                schema doc {
+                    document doc {
+                        field test type int {
+                            indexing: attribute
+                            attribute: fast-search
+                        }
+                    }
+                    rank-profile test {
+                        match-phase {
+                            attribute: test
+                            total-max-hits: 4567
+                        }
+                        first-phase {
+                            total-keep-rank-count: 2345
+                        }
+                        second-phase {
+                            total-rerank-count: 213
+                        }
+                    }
+                }""";
+        ApplicationBuilder builder = new ApplicationBuilder(new DeployLoggerStub());
+        builder.addSchema(schema);
+        var application = builder.build(true);
+        var derived = new DerivedConfiguration(application.schemas().get("doc"), application.rankProfileRegistry());
+        var schemaInfoConfigBuilder = new SchemaInfoConfig.Builder();
+        derived.getSchemaInfo().getConfig(schemaInfoConfigBuilder);
+        var schemaInfoConfig = schemaInfoConfigBuilder.build().toString();
+        assertTrue(schemaInfoConfig.contains("totalRerankCount 213"));
+        assertTrue(schemaInfoConfig.contains("totalKeepRankCount 2345"));
+        assertTrue(schemaInfoConfig.contains("totalMatchPhaseMaxHits 4567"));
+    }
+
+    @Test
+    void testDocumentIdAttributeToSchema() throws Exception {
+        String schema_default =
+                """
+                schema doc {
+                    document doc {
+                    }
+                }""";
+        assertFalse(documentIdAttributeEnabled(schema_default));
+
+        String schema_fromdisk =
+                """
+                schema doc {
+                    documentid: from-disk
+                    document doc {
+                    }
+                }""";
+        assertFalse(documentIdAttributeEnabled(schema_fromdisk));
+
+        String schema_attribute =
+                """
+                schema doc {
+                    documentid: attribute
+                    document doc {
+                    }
+                }""";
+        assertTrue(documentIdAttributeEnabled(schema_attribute));
+    }
+
+    private boolean documentIdAttributeEnabled(String schema_string) throws Exception {
+        ApplicationBuilder builder = new ApplicationBuilder(new DeployLoggerStub());
+        builder.addSchema(schema_string);
+        var application = builder.build(true);
+        var schema = application.schemas().get("doc");
+        return schema.documentIdAttributeEnabled();
+    }
+
     private void assertInheritedFromParent(Schema schema, RankProfileRegistry rankProfileRegistry) {
         assertEquals("pf1", schema.fieldSets().userFieldSets().get("parent_set").getFieldNames().stream().findFirst().get());
         assertEquals(Stemming.NONE, schema.getStemming());
@@ -710,7 +1064,25 @@ public class SchemaTestCase {
         assertNotNull(schema.getExplicitSummaryField("pf1"));
         assertNotNull(schema.getUniqueNamedSummaryFields().get("pf1"));
         assertNotNull(schema.temporaryImportedFields().get().fields().get("parent_imported"));
+        assertTrue(schema.documentIdAttributeEnabled());
         assertTrue(schema.isRawAsBase64());
+    }
+
+    private void assertCommand(String field, String command, IndexInfoConfig config) {
+        assertTrue(containsCommand(field, command, config), "Field '" + field + "' has '" + command + "'");
+    }
+
+    private void assertNoCommand(String field, String command, IndexInfoConfig config) {
+        assertFalse(containsCommand(field, command, config), "Field '" + field + "' does not have '" + command + "'");
+    }
+
+    private boolean containsCommand(String field, String command, IndexInfoConfig config) {
+        if (config.indexinfo().size() != 1) throw new IllegalArgumentException("Support multiple doc types");
+        for (var commandConfig : config.indexinfo(0).command()) {
+            if (commandConfig.indexname().equals(field) && commandConfig.command().equals(command))
+                return true;
+        }
+        return false;
     }
 
 }

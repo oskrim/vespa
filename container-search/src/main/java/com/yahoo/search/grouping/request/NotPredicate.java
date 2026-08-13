@@ -2,6 +2,7 @@
 package com.yahoo.search.grouping.request;
 
 import com.yahoo.api.annotations.Beta;
+import com.yahoo.text.Text;
 
 import java.util.Objects;
 
@@ -12,6 +13,7 @@ import java.util.Objects;
  */
 @Beta
 public class NotPredicate extends FilterExpression {
+
     private final FilterExpression expression;
 
     public NotPredicate(FilterExpression expression) {
@@ -25,7 +27,7 @@ public class NotPredicate extends FilterExpression {
 
     @Override
     public String toString() {
-        return "(not %s".formatted(expression) + ")";
+        return Text.format("(not %s)", expression);
     }
 
     @Override

@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include <cstdint>
 #include <memory>
 
 namespace proton::flushengine {
@@ -15,6 +16,7 @@ class FlushStrategyIdListener {
 protected:
     std::weak_ptr<FlushStrategyIdNotifier> _notifier;
     bool                                   _strategy_id_listener_removed;
+
 public:
     FlushStrategyIdListener(std::shared_ptr<FlushStrategyIdNotifier> notifier);
     virtual ~FlushStrategyIdListener();
@@ -26,4 +28,4 @@ public:
     void set_strategy_id_listener_removed() noexcept { _strategy_id_listener_removed = true; }
 };
 
-}
+} // namespace proton::flushengine

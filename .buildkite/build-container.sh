@@ -1,48 +1,132 @@
-#!/bin/bash
+#!/usr/bin/env bash
+#
 # Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+#
 
-set -euo pipefail
+set -o errexit
+set -o nounset
+set -o pipefail
+set -o xtrace
+
+: "${SOURCE_DIR:?Environment variable SOURCE_DIR must be set (path to source code)}"
+: "${VESPA_BUILDOS_LABEL:?Environment variable VESPA_BUILDOS_LABEL must be set (build OS label)}"
 
 if ! docker ps &> /dev/null; then
     echo "No working docker command found."
     exit 1
 fi
 
-if [[ ! -d $WORKDIR/docker-image ]]; then
-    git clone --depth 1 https://github.com/vespa-engine/docker-image "$WORKDIR/docker-image"
+case "${VESPA_BUILDOS_LABEL}" in
+    alma8)
+        VESPA_BASE_IMAGE="el8"
+        SYSTEM_TEST_BASE_IMAGE="almalinux:8"
+        ;;
+    alma9)
+        VESPA_BASE_IMAGE="el9"
+        SYSTEM_TEST_BASE_IMAGE="almalinux:9"
+        ;;
+    *)
+        echo "Unknown build os: ${VESPA_BUILDOS_LABEL}" 1>&2
+        exit 1
+        ;;
+esac
+
+echo "--- Setting up docker-image repository"
+if [[ ! -d "${WORKDIR}/docker-image" ]]; then
+    echo "Cloning docker-image repository..."
+    git clone --quiet --depth 1 https://github.com/vespa-engine/docker-image "$WORKDIR/docker-image"
+else
+    echo "Using existing docker-image repository"
 fi
 
-rm -rf docker-image/rpms
-cp -a "$WORKDIR/artifacts/$ARCH/rpms" docker-image/
+echo "Preparing RPMs for container build..."
+# Ensure clean state for rpms directory
+rm -rf "${WORKDIR}/docker-image/rpms" && mkdir -p "${WORKDIR}/docker-image/rpms"
+# Note: Appending "./" ensures that the directory's contents are copied, rather than the directory itself.
+cp -a "${LOCAL_RPM_REPO}/." "${WORKDIR}/docker-image/rpms/"
 
-cd "$WORKDIR/docker-image"
+cd "${WORKDIR}/docker-image"
 SOURCE_GITREF=$(git rev-parse HEAD)
+
+select_dockerfile() {
+    wanted="Dockerfile.${VESPA_BUILDOS_LABEL}"
+    if [ -f "${wanted}" ]; then
+        echo "${wanted}"
+    else
+        echo "Dockerfile"
+    fi
+}
+
+target_option=""
+if [ "${PREBUILT_BASE_IMAGE:-}" != "" ]; then
+    VESPA_BASE_IMAGE=${PREBUILT_BASE_IMAGE}
+    SYSTEM_TEST_BASE_IMAGE=${VESPA_BASE_IMAGE}
+    target_option="--target vespa"
+fi
+
+echo "--- Building Vespa preview container"
+GHCR_PREVIEW_TAG=ghcr.io/vespa-engine/vespa-preview-${ARCH}:${VESPA_VERSION}${VESPA_CONTAINER_IMAGE_VERSION_TAG_SUFFIX}
+echo "Building container with tag: ${GHCR_PREVIEW_TAG}"
+# shellcheck disable=SC2086
 docker build --progress plain \
              --build-arg SOURCE_GITREF="$SOURCE_GITREF" \
              --build-arg VESPA_VERSION="$VESPA_VERSION" \
+             --build-arg VESPA_BASE_IMAGE="$VESPA_BASE_IMAGE" \
              --tag vespaengine/vespa \
-             --tag "ghcr.io/vespa-engine/vespa-preview-$ARCH:$VESPA_VERSION" \
-             --file Dockerfile .
+             --tag "${GHCR_PREVIEW_TAG}" \
+             ${target_option} \
+             --file "$(select_dockerfile)" .
 
 declare -r GITREF="${GITREF_SYSTEM_TEST:-HEAD}"
 
+echo "--- Setting up system-test repository"
 cd "$WORKDIR"
 if [[ ! -d $WORKDIR/system-test ]]; then
-    git clone --filter="blob:none" https://github.com/vespa-engine/system-test
+    echo "Cloning system-test repository..."
+    git clone --quiet --filter="blob:none" https://github.com/vespa-engine/system-test
+else
+    echo "Using existing system-test repository"
 fi
 
+echo "Preparing system-test environment (checking out ${GITREF})..."
 cd system-test
 git checkout "$GITREF"
 mkdir -p docker/vespa-systemtests
 git archive HEAD --format tar | tar x -C docker/vespa-systemtests
+before="\\\$[{]vespa.version[}]"
+after="${VESPA_VERSION}"
+find docker/vespa-systemtests -name pom.xml -print0 | xargs -0 perl -pi -e "s,>${before}<,>${after}<,"
+"${SOURCE_DIR}/mvnw" -Daether.dependencyCollector.impl=bf -Dvespa.version="${VESPA_VERSION}" \
+    --threads 1 --batch-mode \
+    --file docker/vespa-systemtests/tests/pom.xml \
+    dependency:go-offline
 cd docker
+echo "Copying Maven repository and RPMs for system-test container..."
 rm -rf maven-repo
 cp -a "$HOME/.m2/repository" maven-repo
+find maven-repo -type f -name 'maven-metadata-central.xml*' | while read -r fn; do
+    cp -a "$fn" "${fn/maven-metadata-central./maven-metadata.}"
+done
+
 rm -rf rpms
 mv "$WORKDIR/docker-image/rpms" rpms
-docker build --progress=plain \
-             --build-arg VESPA_BASE_IMAGE="ghcr.io/vespa-engine/vespa-preview-$ARCH:$VESPA_VERSION" \
-             --target systemtest \
-             --tag "docker.io/vespaengine/vespa-systemtest-preview-$ARCH:$VESPA_VERSION" \
-             --file Dockerfile .
 
+dep_versions="${SOURCE_DIR}/dependency-versions/pom.xml"
+
+if [ -f "${dep_versions}" ]; then
+    : no-op
+    # Disabled. We've run into the denial-of-service protection
+    # since mvn will re-download all the plexus versions
+    # we're trying to remove here:
+    # grep plexus "${dep_versions}" > include/allow-versions.txt
+fi
+
+echo "--- Building system-test container"
+DOCKER_SYSTEMTEST_TAG=docker.io/vespaengine/vespa-systemtest-preview-${ARCH}:${VESPA_VERSION}${VESPA_CONTAINER_IMAGE_VERSION_TAG_SUFFIX}
+echo "Building system-test container with tag: ${DOCKER_SYSTEMTEST_TAG}"
+docker build --progress=plain \
+             --build-arg BASE_IMAGE="$SYSTEM_TEST_BASE_IMAGE" \
+             --build-arg VESPA_BASE_IMAGE="${GHCR_PREVIEW_TAG}" \
+             --target systemtest \
+             --tag "$DOCKER_SYSTEMTEST_TAG" \
+             --file "$(select_dockerfile)" .

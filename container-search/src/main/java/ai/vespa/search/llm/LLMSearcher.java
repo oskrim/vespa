@@ -1,5 +1,6 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package ai.vespa.search.llm;
+import java.nio.charset.StandardCharsets;
 
 import ai.vespa.llm.InferenceParameters;
 import ai.vespa.llm.LanguageModel;
@@ -19,6 +20,7 @@ import com.yahoo.search.result.ErrorMessage;
 import com.yahoo.search.result.EventStream;
 import com.yahoo.search.result.HitGroup;
 import com.yahoo.search.searchchain.Execution;
+import com.yahoo.text.Text;
 import com.yahoo.text.Utf8;
 
 import java.io.ByteArrayOutputStream;
@@ -77,7 +79,7 @@ public class LLMSearcher extends Searcher {
         } else if (config.promptTemplate().isPresent()) {
             Path path = config.promptTemplate().get();
             try {
-                return new String(Files.readAllBytes(path));
+                return new String(Files.readAllBytes(path), StandardCharsets.UTF_8);
             } catch (IOException e) {
                 throw new IllegalArgumentException("Could not read prompt template file: " + path, e);
             }
@@ -283,7 +285,7 @@ public class LLMSearcher extends Searcher {
             return "Time to first token: " + timeToFirstToken + " ms, " +
                    "Generation time: " + generationTime + " ms, " +
                    "Generated tokens: " + tokens + " " +
-                   String.format("(%.2f tokens/sec)", tokens / (generationTime / 1000.0));
+                   Text.format("(%.2f tokens/sec)", tokens / (generationTime / 1000.0));
         }
 
     }

@@ -33,6 +33,7 @@ vespa_define_module(
     src/tests/array
     src/tests/arrayqueue
     src/tests/assert
+    src/tests/atomics
     src/tests/barrier
     src/tests/barrier_bench
     src/tests/benchmark
@@ -102,6 +103,7 @@ vespa_define_module(
     src/tests/io/mapped_file_input
     src/tests/latch
     src/tests/left_right_heap
+    src/tests/quant
     src/tests/memory
     src/tests/memorydatastore
     src/tests/metrics
@@ -139,7 +141,6 @@ vespa_define_module(
     src/tests/rendezvous
     src/tests/runnable_pair
     src/tests/rusage
-    src/tests/rw_spin_lock
     src/tests/sequencedtaskexecutor
     src/tests/sha1
     src/tests/shared_operation_throttler
@@ -152,7 +153,6 @@ vespa_define_module(
     src/tests/slime/are_equal
     src/tests/slime/external_data_value
     src/tests/slime/summary-feature-benchmark
-    src/tests/spin_lock
     src/tests/stash
     src/tests/state_server
     src/tests/stllike
@@ -204,6 +204,7 @@ vespa_define_module(
     src/vespa/vespalib/objects
     src/vespa/vespalib/portal
     src/vespa/vespalib/process
+    src/vespa/vespalib/quant
     src/vespa/vespalib/regex
     src/vespa/vespalib/stllike
     src/vespa/vespalib/test

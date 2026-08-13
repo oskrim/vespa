@@ -14,7 +14,7 @@ import java.util.function.Supplier;
  * rendering of Document V1 responses.
  */
 interface StreamableJsonResponse extends AutoCloseable {
-    void commit(int status, boolean fullyApplied) throws IOException;
+    void commit(int status, boolean fullyApplied, boolean ignoredOperation) throws IOException;
     void writeDocumentsArrayStart() throws IOException;
     void writeDocumentsArrayEnd() throws IOException;
     void writeDocumentValue(Document document, CompletionHandler completionHandler) throws IOException;
@@ -24,8 +24,25 @@ interface StreamableJsonResponse extends AutoCloseable {
     // underlying supplied resource may require locking for safe access.
     void reportUpdatedContinuation(Supplier<VisitorContinuation> continuationSupplier) throws IOException;
     void writeEpilogueContinuation(VisitorContinuation continuation) throws IOException;
+    /**
+     * Write a Trace that encapsulates a logical span of the <em>entire</em> request
+     * (e.g. Get/Put or visitor session). For visitor sessions traces are intentionally
+     * limited in total size due to the amount of messages involved, so for that case
+     * this is usually a very truncated representation of the full trace.
+     */
     void writeTrace(Trace trace) throws IOException;
-    void writeMessage(String message) throws IOException;
+
+    enum MessageSeverity {
+        INFO("info"),
+        WARNING("warning"),
+        ERROR("error");
+
+        private final String jsonValue;
+        MessageSeverity(String jsonValue) { this.jsonValue = jsonValue; }
+        public String jsonValue() { return jsonValue; }
+    }
+
+    void writeMessage(String message, MessageSeverity severity) throws IOException;
     void writeDocumentCount(long count) throws IOException;
     void close() throws IOException; // Narrowed exception specifier
 }

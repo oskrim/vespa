@@ -2,6 +2,9 @@
 vespa_add_library(searchlib_attribute OBJECT
     SOURCES
     address_space_components.cpp
+    array_bool_attribute.cpp
+    array_bool_attribute_access.cpp
+    array_bool_ext_attribute.cpp
     address_space_usage.cpp
     array_iterator.cpp
     attribute.cpp
@@ -69,6 +72,7 @@ vespa_add_library(searchlib_attribute OBJECT
     imported_attribute_vector.cpp
     imported_attribute_vector_factory.cpp
     imported_attribute_vector_read_guard.cpp
+    imported_array_bool_read_view.cpp
     imported_multi_value_read_view.cpp
     imported_search_context.cpp
     integerbase.cpp
@@ -100,6 +104,7 @@ vespa_add_library(searchlib_attribute OBJECT
     multivalueattributesaverutils.cpp
     not_implemented_attribute.cpp
     numeric_matcher.cpp
+    numeric_posting_search_context.cpp
     numeric_range_matcher.cpp
     numeric_search_context.cpp
     numeric_sort_blob_writer.cpp
@@ -124,7 +129,7 @@ vespa_add_library(searchlib_attribute OBJECT
     reference_mappings.cpp
     save_utils.cpp
     search_context.cpp
-    searchcontextelementiterator.cpp
+    single_bool_attribute_saver.cpp
     single_enum_search_context.cpp
     single_numeric_enum_search_context.cpp
     single_numeric_search_context.cpp
@@ -133,6 +138,7 @@ vespa_add_library(searchlib_attribute OBJECT
     single_raw_attribute_loader.cpp
     single_raw_attribute_saver.cpp
     single_raw_ext_attribute.cpp
+    single_small_numeric_attribute_saver.cpp
     single_small_numeric_search_context.cpp
     single_string_enum_hint_search_context.cpp
     single_string_enum_search_context.cpp
@@ -148,6 +154,7 @@ vespa_add_library(searchlib_attribute OBJECT
     singlestringpostattribute.cpp
     sourceselector.cpp
     string_matcher.cpp
+    string_posting_search_context.cpp
     string_search_context.cpp
     string_search_helper.cpp
     string_sort_blob_writer.cpp

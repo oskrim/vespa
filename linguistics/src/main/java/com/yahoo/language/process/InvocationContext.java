@@ -4,8 +4,12 @@ package com.yahoo.language.process;
 import com.yahoo.collections.LazyMap;
 import com.yahoo.language.Language;
 
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.function.Supplier;
 
 /**
@@ -15,10 +19,22 @@ import java.util.function.Supplier;
  */
 public class InvocationContext<SUBCLASS extends InvocationContext<SUBCLASS>> {
 
+    public enum DestinationType {
+        /** The embedding is for a query feature with format "query(feature)". */
+        QUERY,
+        /** The embedding is for a document field with format "schema.field". */
+        DOCUMENT;
+
+        public static DestinationType fromDestination(String destination) {
+            return destination.startsWith("query(") ? QUERY : DOCUMENT;
+        }
+    }
+
     private Language language = Language.UNKNOWN;
     private String destination;
     private String componentId = "unknown";
     private final Map<Object, Object> cache;
+    private Deadline deadline;
 
     public InvocationContext(String destination) {
         this(destination, LazyMap.newHashMap());
@@ -37,6 +53,7 @@ public class InvocationContext<SUBCLASS extends InvocationContext<SUBCLASS>> {
         language = other.getLanguage();
         destination = other.getDestination();
         componentId = other.getComponentId();
+        deadline = other.getDeadline().orElse(null);
         this.cache = other.getCache();
     }
 
@@ -50,26 +67,24 @@ public class InvocationContext<SUBCLASS extends InvocationContext<SUBCLASS>> {
         return (SUBCLASS)this;
     }
 
-    /**
-     * Returns the name of the recipient of this invocation.
-     * <p>
-     * This is either a query feature name
-     * ("query(feature)"), or a schema and field name concatenated by a dot ("schema.field").
-     * This cannot be null.
-     */
-    public String getDestination() {return destination;}
+    /** Returns the name of the recipient of this invocation. See {@link DestinationType} for format details. */
+    public String getDestination() { return destination; }
 
-    /**
-     * Sets the name of the recipient of this invocation.
-     * <p>
-     * This is either a query feature name
-     * ("query(feature)"), or a schema and field name concatenated by a dot ("schema.field").
-     */
+    /** Returns the type of destination */
+    public DestinationType getDestinationType() { return DestinationType.fromDestination(destination); }
+
+    /** Sets the name of the recipient of this invocation. See {@link DestinationType} for format details. */
     @SuppressWarnings("unchecked")
     public SUBCLASS setDestination(String destination) {
         this.destination = destination;
         return (SUBCLASS)this;
     }
+
+    /** @return the operation timeout represented as a {@link Deadline} */
+    public Optional<Deadline> getDeadline() { return Optional.ofNullable(deadline); }
+
+    @SuppressWarnings("unchecked")
+    public SUBCLASS setDeadline(Deadline deadline) { this.deadline = deadline; return (SUBCLASS)this; }
 
     /** Return the component id or 'unknown' if not set. */
     public String getComponentId() { return componentId; }
@@ -96,6 +111,35 @@ public class InvocationContext<SUBCLASS extends InvocationContext<SUBCLASS>> {
     @SuppressWarnings("unchecked")
     public <T> T computeCachedValueIfAbsent(Object key, Supplier<? extends T> supplier) {
         return (T) cache.computeIfAbsent(key, __ -> supplier.get());
+    }
+
+    public static class Deadline {
+        private final Clock clock;
+        private final Instant deadlineInstant;
+
+        private Deadline(Clock clock, Instant deadlineInstant) {
+            this.clock = clock;
+            this.deadlineInstant = deadlineInstant;
+        }
+
+        public static Deadline of(Duration duration) {
+            return new Deadline(Clock.systemUTC(), Clock.systemUTC().instant().plus(duration));
+        }
+
+        public static Deadline of(Instant deadline) {
+            return new Deadline(Clock.systemUTC(), deadline);
+        }
+
+        public boolean isExpired() { return clock.instant().isAfter(deadlineInstant); }
+
+        public Duration timeRemaining() {
+            Instant now = clock.instant();
+            if (now.isAfter(deadlineInstant)) {
+                return Duration.ZERO;
+            }
+            return Duration.between(now, deadlineInstant);
+        }
+        public Instant asInstant() { return deadlineInstant; }
     }
 
 }

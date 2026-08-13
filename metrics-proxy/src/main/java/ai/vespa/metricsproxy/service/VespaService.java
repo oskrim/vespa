@@ -36,9 +36,7 @@ public class VespaService implements Comparable<VespaService> {
     // Used to keep the last polled system metrics for service
     private final AtomicReference<Metrics> systemMetrics = new AtomicReference<>();
 
-    private final int statePort;
-
-    private final RemoteHealthMetricFetcher remoteHealthMetricFetcher;
+    private final RemoteHealthStatusFetcher remoteHealthStatusFetcher;
     private final RemoteMetricsFetcher remoteMetricsFetcher;
 
 
@@ -71,12 +69,11 @@ public class VespaService implements Comparable<VespaService> {
         this.instanceName = instanceName;
         serviceId = ServiceId.toServiceId(monitoringPrefix + SEPARATOR + serviceName);
         this.configId = configId;
-        this.statePort = statePort;
         this.dimensions = dimensions;
         this.systemMetrics.set(new Metrics());
         this.isAlive = false;
-        this.remoteMetricsFetcher = (this.statePort> 0) ? new RemoteMetricsFetcher(this, this.statePort) : new DummyMetricsFetcher(this);
-        this.remoteHealthMetricFetcher = (this.statePort > 0) ? new RemoteHealthMetricFetcher(this, this.statePort) : new DummyHealthMetricFetcher(this);
+        this.remoteMetricsFetcher = (statePort > 0) ? new RemoteMetricsFetcher(this, statePort) : new DummyMetricsFetcher(this);
+        this.remoteHealthStatusFetcher = (statePort > 0) ? new RemoteHealthStatusFetcher(this, statePort) : new DummyHealthStatusFetcher(this);
     }
 
     /**
@@ -118,7 +115,7 @@ public class VespaService implements Comparable<VespaService> {
      * @return The health of this service
      */
     public HealthMetric getHealth() {
-        HealthMetric healthMetric = remoteHealthMetricFetcher.getHealth(healthFetchCount.get());
+        HealthMetric healthMetric = remoteHealthStatusFetcher.getHealth(healthFetchCount.get());
         healthFetchCount.getAndIncrement();
         return healthMetric;
     }

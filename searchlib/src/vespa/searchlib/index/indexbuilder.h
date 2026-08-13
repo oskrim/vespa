@@ -1,6 +1,7 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 #pragma once
 
+#include <cstdint>
 #include <memory>
 #include <string>
 
@@ -22,7 +23,7 @@ public:
     virtual ~FieldIndexBuilder() = default;
     virtual void startWord(std::string_view word) = 0;
     virtual void endWord() = 0;
-    virtual void add_document(const DocIdAndFeatures &features) = 0;
+    virtual void add_document(const DocIdAndFeatures& features) = 0;
 };
 
 /**
@@ -31,11 +32,12 @@ public:
  */
 class IndexBuilder {
 protected:
-    const Schema &_schema;
+    const Schema& _schema;
+
 public:
-    explicit IndexBuilder(const Schema &schema);
+    explicit IndexBuilder(const Schema& schema);
     virtual ~IndexBuilder();
     virtual std::unique_ptr<FieldIndexBuilder> startField(uint32_t fieldId) = 0;
 };
 
-}
+} // namespace search::index

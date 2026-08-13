@@ -19,6 +19,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.logging.Level;
 import java.util.stream.Collectors;
 
 import static com.yahoo.text.Lowercase.toLowerCase;
@@ -255,7 +256,7 @@ public abstract class AbstractService extends TreeConfigProducer<AnyConfigProduc
      * @return classname without package prefix.
      */
     private String getShortClassName() {
-        Class myClass = getClass();
+        Class<?> myClass = getClass();
         Package myPackage = myClass.getPackage();
         return myClass.getName().substring(1 + myPackage.getName().length());
     }
@@ -372,9 +373,11 @@ public abstract class AbstractService extends TreeConfigProducer<AnyConfigProduc
         return preload != null ? preload : defaultPreload();
     }
     public void setPreLoad(String preload) {
-        this.preload = preload;
+        if (preload != null && !preload.isEmpty()) {
+            this.preload = preload;
+        }
     }
-    /** If larger or equal to 0 it mean that explicit mmaps shall not be included in coredump.*/
+    /** If larger or equal to 0 it means that explicit mmaps shall not be included in coredump.*/
     public void setMMapNoCoreLimit(long noCoreLimit) {
         if (noCoreLimit >= 0) {
             environmentVariables.put("VESPA_MMAP_NOCORE_LIMIT", noCoreLimit);
@@ -394,6 +397,14 @@ public abstract class AbstractService extends TreeConfigProducer<AnyConfigProduc
     public void setVespaMalloc(String s) { environmentVariables.put("VESPA_USE_VESPAMALLOC", s); }
     public void setVespaMallocDebug(String s) { environmentVariables.put("VESPA_USE_VESPAMALLOC_D", s); }
     public void setVespaMallocDebugStackTrace(String s) { environmentVariables.put("VESPA_USE_VESPAMALLOC_DST", s); }
+    public void setMallocImpl(String mallocImpl) {
+        if (mallocImpl !=null && !mallocImpl.isEmpty()) {
+            log.log(Level.FINE, "Setting malloc impl for service " + getServiceName() + " to " + mallocImpl);
+            addEnvironmentVariable("VESPA_USE_MALLOC_IMPL", mallocImpl);
+        } else {
+            log.log(Level.FINE, "Null or empty malloc impl supplied for service " + getServiceName() + ", ignoring");
+        }
+    }
 
     private static String toEnvValue(Object o) {
         if (o instanceof Number || o instanceof Boolean) {
@@ -428,9 +439,10 @@ public abstract class AbstractService extends TreeConfigProducer<AnyConfigProduc
         this.basePort = wantedPort;
     }
 
-    public void setHostResource(HostResource hostResource) {
-        this.hostResource = hostResource;
-    }
+    /** Returns the host resources of this, or null if not assigned yet. */
+    public HostResource getHostResource() { return hostResource; }
+
+    public void setHostResource(HostResource hostResource) { this.hostResource = hostResource; }
 
     public boolean isInitialized() {
         return initialized;
@@ -449,10 +461,6 @@ public abstract class AbstractService extends TreeConfigProducer<AnyConfigProduc
     // For testing
     public int getNumPortsAllocated() {
         return ports.size();
-    }
-
-    public HostResource getHostResource() {
-        return hostResource;
     }
 
     public Optional<Affinity> getAffinity() {

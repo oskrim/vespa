@@ -7,6 +7,7 @@ import com.yahoo.cloud.config.SentinelConfig;
 import com.yahoo.config.application.api.ApplicationPackage;
 import com.yahoo.config.model.NullConfigModelRegistry;
 import com.yahoo.config.model.deploy.DeployState;
+import com.yahoo.config.model.deploy.TestDeployState;
 import com.yahoo.config.model.deploy.TestProperties;
 import com.yahoo.config.model.provision.Hosts;
 import com.yahoo.config.model.provision.InMemoryProvisioner;
@@ -29,7 +30,9 @@ import java.util.stream.IntStream;
 import static com.yahoo.config.model.api.container.ContainerServiceType.LOGSERVER_CONTAINER;
 import static com.yahoo.config.model.api.container.ContainerServiceType.METRICS_PROXY_CONTAINER;
 import static com.yahoo.config.model.api.container.ContainerServiceType.CONTAINER;
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * @author Ulf Lilleengen
@@ -125,7 +128,7 @@ public class DedicatedAdminV4Test {
                 "  </container>" +
                 "</services>";
 
-        VespaModel model = createModel(hosts, servicesWith3JdiscClusters);
+        VespaModel model = createModel(hosts, servicesWith3JdiscClusters, TestDeployState.createBuilder());
         assertEquals(4, model.getHosts().size());
 
         // 4 slobroks, 2 per cluster where possible
@@ -247,7 +250,7 @@ public class DedicatedAdminV4Test {
     }
 
     private VespaModel createModel(String hosts, String services) throws IOException, SAXException {
-        return createModel(hosts, services, new DeployState.Builder());
+        return createModel(hosts, services, TestDeployState.createBuilder());
     }
 
     private VespaModel createModel(String hosts, String services, DeployState.Builder deployStateBuilder) throws IOException, SAXException {
