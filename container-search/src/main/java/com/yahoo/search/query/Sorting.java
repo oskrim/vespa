@@ -122,7 +122,12 @@ public class Sorting implements Cloneable {
                     }
                 }
             } else {
-                sorter = new AttributeSorter(canonic(functionName, indexFacts));
+                String canonicName = canonic(functionName, indexFacts);
+                if (isFieldPath(canonicName)) {
+                    sorter = new AttributeMapSorter(canonicName);
+                } else {
+                    sorter = new AttributeSorter(canonicName);
+                }
             }
             Order order = Order.UNDEFINED;
             if (orderMarker == '+' || orderMarker == '-') {
@@ -243,9 +248,13 @@ public class Sorting implements Cloneable {
         return b.length;
     }
 
+    private static boolean isFieldPath(String fieldName) {
+        return fieldName.contains("{") || fieldName.contains("}");
+    }
+
     public static class AttributeSorter implements Cloneable {
 
-        private static final Pattern legalAttributeName = Pattern.compile("[\\[]*[a-zA-Z_][\\.a-zA-Z0-9_-]*[\\]]*");
+        private static final Pattern legalAttributeName = Pattern.compile("[\\[]*[a-zA-Z_][\\.a-zA-Z0-9_-]*([{][^}]*[}])?[\\]]*");
 
         private String fieldName;
 
@@ -289,6 +298,87 @@ public class Sorting implements Cloneable {
         @SuppressWarnings({ "rawtypes", "unchecked" })
         public int compare(Comparable a, Comparable b) {
             return a.compareTo(b);
+        }
+
+    }
+
+    public static class AttributeMapSorter extends AttributeSorter {
+
+        private final String mapName;
+        private final String key;
+
+        public AttributeMapSorter(String fieldPath) {
+            super(fieldPath);
+            int keyStart = fieldPath.indexOf('{');
+            int keyEnd = fieldPath.lastIndexOf('}');
+            if (keyStart <= 0 || keyEnd != fieldPath.length() - 1 || keyEnd == keyStart + 1 ||
+                fieldPath.indexOf('{', keyStart + 1) != -1 || fieldPath.indexOf('}', keyStart) != keyEnd) {
+                throw new IllegalInputException("Invalid map sort field: '" + fieldPath + "'");
+            }
+            this.mapName = fieldPath.substring(0, keyStart);
+            String encodedKey = fieldPath.substring(keyStart + 1, keyEnd);
+            if (encodedKey.startsWith("\"")) {
+                this.key = decodeQuotedKey(encodedKey, fieldPath);
+            } else if (encodedKey.indexOf('"') >= 0 || encodedKey.indexOf('\\') >= 0) {
+                throw new IllegalInputException("Invalid map sort field: '" + fieldPath + "'");
+            } else {
+                this.key = encodedKey;
+            }
+        }
+
+        private static String decodeQuotedKey(String encodedKey, String fieldPath) {
+            if (encodedKey.length() < 2 || !encodedKey.endsWith("\"")) {
+                throw new IllegalInputException("Invalid map sort field: '" + fieldPath + "'");
+            }
+            var decoded = new StringBuilder(encodedKey.length() - 2);
+            for (int i = 1; i < encodedKey.length() - 1; i++) {
+                char c = encodedKey.charAt(i);
+                if (c == '\\') {
+                    if (++i >= encodedKey.length() - 1) {
+                        throw new IllegalInputException("Invalid map sort field: '" + fieldPath + "'");
+                    }
+                    c = encodedKey.charAt(i);
+                    if (c != '\\' && c != '"') {
+                        throw new IllegalInputException("Invalid map sort field: '" + fieldPath + "'");
+                    }
+                } else if (c == '"') {
+                    throw new IllegalInputException("Invalid map sort field: '" + fieldPath + "'");
+                }
+                decoded.append(c);
+            }
+            if (decoded.isEmpty()) {
+                throw new IllegalInputException("Invalid map sort field: '" + fieldPath + "'");
+            }
+            return decoded.toString();
+        }
+
+        public String getMapName() { return mapName; }
+        public String getKey() { return key; }
+
+        public String getKeyAttribute() {
+            return mapName + ".key";
+        }
+
+        public String getValueAttribute() {
+            return mapName + ".value";
+        }
+
+        @Override
+        public String toSerialForm() {
+            return mapName + "{\"" + key.replace("\\", "\\\\").replace("\"", "\\\"") + "\"}";
+        }
+
+        @Override
+        public boolean equals(Object other) {
+            if (!(other instanceof AttributeMapSorter)) {
+                return false;
+            }
+            return super.equals(other);
+        }
+
+        @Override
+        public AttributeMapSorter clone() {
+            return (AttributeMapSorter)super.clone();
         }
 
     }
@@ -626,12 +716,34 @@ public class Sorting implements Cloneable {
                 return new String();
             }
             var oldPos = pos;
+            boolean inFieldPath = false;
+            boolean inQuotes = false;
+            boolean escaped = false;
+
             while (pos < spec.length()) {
                 var c = spec.charAt(pos);
-                if (c == ' ' || c == ',' || c == '(' || c == ')' || c == '\\' || c == '"') {
-                    break;
+
+                if (inFieldPath) {
+                    if (escaped) {
+                        escaped = false;
+                    } else if (c == '\\' && inQuotes) {
+                        escaped = true;
+                    } else if (c == '"') {
+                        inQuotes = !inQuotes;
+                    } else if (c == '}' && !inQuotes) {
+                        ++pos;
+                        break;
+                    }
+                    ++pos;
+                } else {
+                    if (c == ' ' || c == ',' || c == '(' || c == ')' || c == '\\' || c == '"') {
+                        break;
+                    }
+                    if (c == '{') {
+                        inFieldPath = true;
+                    }
+                    ++pos;
                 }
-                ++pos;
             }
             return spec.substring(oldPos, pos);
         }

@@ -68,11 +68,12 @@ private:
          * @param fid the field id of the attribute field.
          * @param attr a guard to the attribute vector.
          **/
-        AttrInfo(vsm::FieldIdT fid, search::AttributeGuard::UP attr) noexcept;
+        AttrInfo(vsm::FieldIdT fid, search::AttributeGuard::UP attr, bool fill = true) noexcept;
 
         vsm::FieldIdT                                       _field;
         search::AttributeGuard::UP                          _attr;
         std::unique_ptr<search::attribute::ISortBlobWriter> _sort_blob_writer;
+        bool                                                _fill;
     };
 
     /**

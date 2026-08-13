@@ -53,7 +53,9 @@ using search::SerializedQueryTree;
 using search::SerializedQueryTreeSP;
 using search::aggregation::HitsAggregationResult;
 using search::attribute::IAttributeVector;
+using search::attribute::make_map_value_sort_blob_writer;
 using search::attribute::make_sort_blob_writer;
+using search::attribute::parse_map_sort_field;
 using search::expression::ConfigureStaticParams;
 using search::fef::ElementGap;
 using search::streaming::Query;
@@ -182,8 +184,8 @@ AttributeVector::SP createAttribute(const std::string& name, const document::Fie
     return {};
 }
 
-SearchVisitor::AttrInfo::AttrInfo(vsm::FieldIdT fid, search::AttributeGuard::UP attr) noexcept
-    : _field(fid), _attr(std::move(attr)), _sort_blob_writer() {
+SearchVisitor::AttrInfo::AttrInfo(vsm::FieldIdT fid, search::AttributeGuard::UP attr, bool fill) noexcept
+    : _field(fid), _attr(std::move(attr)), _sort_blob_writer(), _fill(fill) {
 }
 
 SearchVisitor::StreamingDocsumsState::StreamingDocsumsState(search::docsummary::GetDocsumsStateCallback& callback,
@@ -960,13 +962,36 @@ bool notContained(const std::vector<size_t>& sortList, size_t idx) {
 void SearchVisitor::setupAttributeVectorsForSorting(const search::common::SortSpec& sortList) {
     if (!sortList.empty()) {
         for (const search::common::FieldSortSpec& field_sort_spec : sortList) {
-            vsm::FieldIdT fid = _fieldSearchSpecMap.nameIdMap().fieldNo(field_sort_spec._field);
+            auto map_field = parse_map_sort_field(field_sort_spec._field);
+            const std::string key_name = map_field ? map_field->map_name + ".key" : std::string();
+            const std::string value_name = map_field ? map_field->map_name + ".value" : field_sort_spec._field;
+            const vsm::FieldIdT fid = _fieldSearchSpecMap.nameIdMap().fieldNo(value_name);
             if (fid != StringFieldIdTMap::npos) {
-                AttributeGuard::UP attr(_attrMan.getAttribute(field_sort_spec._field));
+                AttributeGuard::UP attr(_attrMan.getAttribute(value_name));
                 if (attr->valid()) {
                     if (attr->get()->is_sortable()) {
                         size_t index(_attributeFields.size());
-                        auto   sort_blob_writer = make_sort_blob_writer(attr->get(), field_sort_spec);
+                        std::unique_ptr<search::attribute::ISortBlobWriter> sort_blob_writer;
+                        if (map_field) {
+                            const vsm::FieldIdT key_fid = _fieldSearchSpecMap.nameIdMap().fieldNo(key_name);
+                            AttributeGuard::UP key_attr(_attrMan.getAttribute(key_name));
+                            if (key_fid == vsm::StringFieldIdTMap::npos || !key_attr->valid()) {
+                                Issue::report("Map sort field '%s' requires key and value attributes",
+                                              field_sort_spec._field.c_str());
+                                continue;
+                            }
+                            sort_blob_writer = make_map_value_sort_blob_writer(key_attr->get(), attr->get(),
+                                                                               map_field->key, field_sort_spec);
+                            bool key_is_filled = false;
+                            for (const auto& field : _attributeFields) {
+                                key_is_filled = key_is_filled || (field._field == key_fid && field._fill);
+                            }
+                            if (!key_is_filled) {
+                                _attributeFields.emplace_back(key_fid, std::move(key_attr));
+                            }
+                        } else {
+                            sort_blob_writer = make_sort_blob_writer(attr->get(), field_sort_spec);
+                        }
                         if (!sort_blob_writer) {
                             continue;
                         }
@@ -976,18 +1001,22 @@ void SearchVisitor::setupAttributeVectorsForSorting(const search::common::SortSp
                             }
                         }
                         if (index == _attributeFields.size()) {
-                            _attributeFields.emplace_back(fid, std::move(attr));
+                            bool field_is_filled = false;
+                            for (const auto& field : _attributeFields) {
+                                field_is_filled = field_is_filled || (field._field == fid && field._fill);
+                            }
+                            _attributeFields.emplace_back(fid, std::move(attr), !field_is_filled);
                         }
                         _attributeFields[index]._sort_blob_writer = std::move(sort_blob_writer);
                         _sortList.push_back(index);
                     } else {
-                        Issue::report("Attribute '%s' is not sortable", field_sort_spec._field.c_str());
+                        Issue::report("Attribute '%s' is not sortable", value_name.c_str());
                     }
                 } else {
-                    Issue::report("Attribute '%s' is not valid", field_sort_spec._field.c_str());
+                    Issue::report("Attribute '%s' is not valid", value_name.c_str());
                 }
             } else {
-                Issue::report("Cannot locate field '%s' in field name registry", field_sort_spec._field.c_str());
+                Issue::report("Cannot locate field '%s' in field name registry", value_name.c_str());
             }
         }
     } else {
@@ -1139,6 +1168,9 @@ bool SearchVisitor::match(const StorageDocument& doc) {
 
 void SearchVisitor::fillAttributeVectors(const std::string& documentId, const StorageDocument& document) {
     for (const AttrInfo& finfo : _attributeFields) {
+        if (!finfo._fill) {
+            continue;
+        }
         const AttributeGuard& finfoGuard(*finfo._attr);
         bool isPosition = finfoGuard->isIntegerType() && PositionDataType::isZCurveFieldName(finfoGuard->getName());
         LOG(debug, "Filling attribute '%s',  isPosition='%s'", finfoGuard->getName().c_str(),

@@ -18,7 +18,9 @@ LOG_SETUP(".search.attribute.sortresults");
 using search::RankedHit;
 using search::attribute::IAttributeContext;
 using search::attribute::IAttributeVector;
+using search::attribute::make_map_value_sort_blob_writer;
 using search::attribute::make_sort_blob_writer;
+using search::attribute::parse_map_sort_field;
 using search::common::FieldSortSpec;
 using search::common::SortSpec;
 using vespalib::alloc::Alloc;
@@ -173,6 +175,18 @@ bool FastS_SortSpec::Add(IAttributeContext& vecMan, const FieldSortSpec& field_s
     } else if ((field_sort_spec._field.size() == 7) && (field_sort_spec._field == "[docid]")) {
         type = (field_sort_spec.is_ascending()) ? ASC_DOCID : DESC_DOCID;
         vector = vecMan.getAttribute(_documentmetastore);
+    } else if (auto map_field = parse_map_sort_field(field_sort_spec._field)) {
+        type = (field_sort_spec.is_ascending()) ? ASC_VECTOR : DESC_VECTOR;
+        const auto* key_vector = vecMan.getAttribute(map_field->map_name + ".key");
+        vector = vecMan.getAttribute(map_field->map_name + ".value");
+        auto writer = make_map_value_sort_blob_writer(key_vector, vector, map_field->key, field_sort_spec);
+        if (!writer) {
+            Issue::report("sort spec: Map attributes for '%s' are not valid. Skipped in sorting",
+                          field_sort_spec._field.c_str());
+            return false;
+        }
+        _vectors.emplace_back(type, vector, std::move(writer));
+        return true;
     } else {
         type = (field_sort_spec.is_ascending()) ? ASC_VECTOR : DESC_VECTOR;
         vector = vecMan.getAttribute(field_sort_spec._field);

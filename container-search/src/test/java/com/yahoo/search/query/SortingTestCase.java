@@ -38,11 +38,15 @@ public class SortingTestCase {
         assertNotNull(Sorting.fromString("+a"));
         assertNotNull(Sorting.fromString("-a"));
         assertNotNull(Sorting.fromString("a.b"));
+        assertNotNull(Sorting.fromString("myMap{myKey}"));
+        assertNotNull(Sorting.fromString("+myMap{myKey}"));
+        assertNotNull(Sorting.fromString("-myMap{myKey}"));
+        assertNotNull(Sorting.fromString("myMap{\"quoted key\"}"));
         try {
             assertNotNull(Sorting.fromString("-1"));
             fail("'-1' should not be allowed as attribute name.");
         } catch (IllegalArgumentException e) {
-            assertEquals("Illegal attribute name '1' for sorting. Requires '[\\[]*[a-zA-Z_][\\.a-zA-Z0-9_-]*[\\]]*'",
+            assertEquals("Illegal attribute name '1' for sorting. Requires '[\\[]*[a-zA-Z_][\\.a-zA-Z0-9_-]*([{][^}]*[}])?[\\]]*'",
                          e.getMessage());
         } catch (Exception e) {
             fail("I only expect 'IllegalArgumentException', not: + " + e.toString());
@@ -120,6 +124,39 @@ public class SortingTestCase {
     private static String failedSpec(String spec) {
         var e = assertThrows(IllegalInputException.class, () -> { Sorting.fromString(spec); });
         return e.getMessage();
+    }
+
+    @Test
+    void mapSortingIsParsedAndSerializedCanonically() {
+        Sorting sorting = Sorting.fromString("myMap{myKey}");
+        assertEquals(1, sorting.fieldOrders().size());
+        Sorting.FieldOrder fo = sorting.fieldOrders().get(0);
+        assertTrue(fo.getSorter() instanceof Sorting.AttributeMapSorter);
+        Sorting.AttributeMapSorter mapSorter = (Sorting.AttributeMapSorter) fo.getSorter();
+        assertEquals("myMap", mapSorter.getMapName());
+        assertEquals("myKey", mapSorter.getKey());
+        assertEquals("myMap.key", mapSorter.getKeyAttribute());
+        assertEquals("myMap.value", mapSorter.getValueAttribute());
+        assertEquals("myMap{\"myKey\"}", mapSorter.toSerialForm());
+
+        Sorting quotedSorting = Sorting.fromString("myMap{\"quoted key\"}");
+        Sorting.AttributeMapSorter quotedMapSorter = (Sorting.AttributeMapSorter) quotedSorting.fieldOrders().get(0).getSorter();
+        assertEquals("quoted key", quotedMapSorter.getKey());
+        assertEquals("-myMap{\"quoted key\"}", quotedSorting.toSerialForm());
+
+        Sorting escapedSorting = Sorting.fromString("myMap{\"a\\\\b\\\"c\"}");
+        Sorting.AttributeMapSorter escapedMapSorter =
+                (Sorting.AttributeMapSorter) escapedSorting.fieldOrders().get(0).getSorter();
+        assertEquals("a\\b\"c", escapedMapSorter.getKey());
+        assertEquals("-myMap{\"a\\\\b\\\"c\"}", escapedSorting.toSerialForm());
+    }
+
+    @Test
+    void malformedMapSortingIsRejected() {
+        assertThrows(IllegalInputException.class, () -> Sorting.fromString("myMap{}"));
+        assertThrows(IllegalInputException.class, () -> Sorting.fromString("myMap{key"));
+        assertThrows(IllegalInputException.class, () -> Sorting.fromString("myMap{\"unterminated}"));
+        assertThrows(IllegalInputException.class, () -> Sorting.fromString("myMap{\"bad\\q\"}"));
     }
 
     @Test

@@ -48,9 +48,9 @@ public class UniqueGroupingSearcherTestCase {
         } catch (IllegalArgumentException e) {
             // As expected.
             assertEquals("Could not set 'ranking.sorting': " +
-                         "Illegal attribute name '1' for sorting. " +
-                         "Requires '[\\[]*[a-zA-Z_][\\.a-zA-Z0-9_-]*[\\]]*'",
-                         Exceptions.toMessageString(e));
+                          "Illegal attribute name '1' for sorting. " +
+                          "Requires '[\\[]*[a-zA-Z_][\\.a-zA-Z0-9_-]*([{][^}]*[}])?[\\]]*'",
+                          Exceptions.toMessageString(e));
         }
     }
 

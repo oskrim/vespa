@@ -90,10 +90,31 @@ public:
 };
 
 std::string_view Tokenizer::token() {
-    auto old_pos = _pos;
-    _pos = _spec.find_first_of(delimiters, _pos);
-    if (_pos == std::string_view::npos) {
-        _pos = _spec.size();
+    const auto old_pos = _pos;
+    bool in_map_key = false;
+    bool in_quotes = false;
+    bool escaped = false;
+    while (_pos < _spec.size()) {
+        const char c = _spec[_pos];
+        if (in_map_key) {
+            if (escaped) {
+                escaped = false;
+            } else if (c == '\\' && in_quotes) {
+                escaped = true;
+            } else if (c == '"') {
+                in_quotes = !in_quotes;
+            } else if (c == '}' && !in_quotes) {
+                in_map_key = false;
+            }
+            ++_pos;
+        } else if (c == '{') {
+            in_map_key = true;
+            ++_pos;
+        } else if (delimiters.find(c) != std::string_view::npos) {
+            break;
+        } else {
+            ++_pos;
+        }
     }
     return _spec.substr(old_pos, _pos - old_pos);
 }

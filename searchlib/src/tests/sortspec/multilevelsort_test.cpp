@@ -20,6 +20,7 @@
 #include <vespa/log/log.h>
 LOG_SETUP("multilevelsort_test");
 
+
 using namespace search;
 using search::attribute::make_sort_blob_writer;
 
@@ -467,6 +468,60 @@ TEST(SortTest, make_sort_blob_writer_throws_when_missing_value_is_illegal) {
     verify_make_sort_blob_writer_throws(BasicType::INT64, CollectionType::ARRAY, true);
     verify_make_sort_blob_writer_throws(BasicType::FLOAT, CollectionType::ARRAY, false);
     verify_make_sort_blob_writer_throws(BasicType::FLOAT, CollectionType::ARRAY, true);
+}
+
+TEST(SortTest, map_value_sorting_uses_the_value_at_the_selected_key) {
+    auto keys = AttributeFactory::createAttribute("myMap.key", Config(BasicType::STRING, CollectionType::ARRAY));
+    auto values = AttributeFactory::createAttribute("myMap.value", Config(BasicType::INT32, CollectionType::ARRAY));
+    auto* key_attr = dynamic_cast<StringAttribute*>(keys.get());
+    auto* value_attr = dynamic_cast<IntegerAttribute*>(values.get());
+    ASSERT_NE(nullptr, key_attr);
+    ASSERT_NE(nullptr, value_attr);
+    ASSERT_TRUE(keys->addDocs(4));
+    ASSERT_TRUE(values->addDocs(4));
+    ASSERT_TRUE(key_attr->append(0, "priority", 1));
+    ASSERT_TRUE(key_attr->append(0, "other", 1));
+    ASSERT_TRUE(value_attr->append(0, 30, 1));
+    ASSERT_TRUE(value_attr->append(0, 1, 1));
+    ASSERT_TRUE(key_attr->append(1, "other", 1));
+    ASSERT_TRUE(key_attr->append(1, "priority", 1));
+    ASSERT_TRUE(value_attr->append(1, 1, 1));
+    ASSERT_TRUE(value_attr->append(1, 10, 1));
+    ASSERT_TRUE(key_attr->append(2, "other", 1));
+    ASSERT_TRUE(value_attr->append(2, 1, 1));
+    ASSERT_TRUE(key_attr->append(3, "priority", 1));
+    keys->commit();
+    values->commit();
+
+    search::AttributeManager mgr;
+    mgr.add(keys);
+    mgr.add(values);
+    search::AttributeContext ac(mgr);
+    search::uca::UcaConverterFactory uca_factory;
+    RankedHit hits[4] = {RankedHit(0, 0.0), RankedHit(1, 0.0), RankedHit(2, 0.0), RankedHit(3, 0.0)};
+
+    FastS_SortSpec ascending("no-metastore", 0, vespalib::Doom::never(), uca_factory);
+    ASSERT_TRUE(ascending.Init("+myMap{\"priority\"}", ac));
+    ascending.sortResults(hits, 4, 4);
+    EXPECT_TRUE((hits[0].getDocId() == 2 && hits[1].getDocId() == 3) ||
+                (hits[0].getDocId() == 3 && hits[1].getDocId() == 2));
+    EXPECT_EQ(1u, hits[2].getDocId());
+    EXPECT_EQ(0u, hits[3].getDocId());
+
+    FastS_SortSpec descending("no-metastore", 0, vespalib::Doom::never(), uca_factory);
+    ASSERT_TRUE(descending.Init("-myMap{priority}", ac));
+    descending.sortResults(hits, 4, 4);
+    EXPECT_EQ(0u, hits[0].getDocId());
+    EXPECT_EQ(1u, hits[1].getDocId());
+    EXPECT_TRUE((hits[2].getDocId() == 2 && hits[3].getDocId() == 3) ||
+                (hits[2].getDocId() == 3 && hits[3].getDocId() == 2));
+}
+
+TEST(SortTest, invalid_map_sort_attributes_are_rejected) {
+    auto keys = AttributeFactory::createAttribute("myMap.key", Config(BasicType::INT32, CollectionType::ARRAY));
+    auto values = AttributeFactory::createAttribute("myMap.value", Config(BasicType::INT32, CollectionType::ARRAY));
+    search::common::FieldSortSpec spec("myMap{priority}", true, {});
+    EXPECT_FALSE(search::attribute::make_map_value_sort_blob_writer(keys.get(), values.get(), "priority", spec));
 }
 
 GTEST_MAIN_RUN_ALL_TESTS()
