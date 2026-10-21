@@ -37,6 +37,7 @@
 #include <vespa/searchcore/proton/flushengine/flushengine.h>
 #include <vespa/searchcore/proton/flushengine/tls_stats_factory.h>
 #include <vespa/searchcore/proton/matchengine/matchengine.h>
+#include <vespa/searchcore/proton/matching/paged_attribute_prefetcher.h>
 #include <vespa/searchcore/proton/matching/session_manager_explorer.h>
 #include <vespa/searchcore/proton/metrics/content_proton_metrics.h>
 #include <vespa/searchcore/proton/metrics/metrics_engine.h>
@@ -372,6 +373,7 @@ void Proton::init(const BootstrapConfig::SP& configSnapshot) {
     _matchEngine = std::make_unique<MatchEngine>(protonConfig.numsearcherthreads, getNumThreadsPerSearch(),
                                                  protonConfig.distributionkey, protonConfig.search.async);
     _matchEngine->set_issue_forwarding(protonConfig.forwardIssues);
+    matching::PagedAttributePrefetcher::set_configured_window(protonConfig.matching.prefetchPagedAttributesWindow);
     _distributionKey = protonConfig.distributionkey;
     _summaryEngine = std::make_unique<SummaryEngine>(protonConfig.numsummarythreads, protonConfig.docsum.async);
     _summaryEngine->set_issue_forwarding(protonConfig.forwardIssues);
@@ -494,6 +496,7 @@ void Proton::applyConfig(const BootstrapConfig::SP& configSnapshot) {
     const ProtonConfig& protonConfig = configSnapshot->getProtonConfig();
     setFS4Compression(protonConfig);
     _matchEngine->set_issue_forwarding(protonConfig.forwardIssues);
+    matching::PagedAttributePrefetcher::set_configured_window(protonConfig.matching.prefetchPagedAttributesWindow);
     _summaryEngine->set_issue_forwarding(protonConfig.forwardIssues);
     _attribute_usage_notifier->apply_config(configSnapshot->initialize_threads());
 

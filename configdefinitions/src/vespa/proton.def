@@ -35,6 +35,12 @@ numthreadspersearch int default=1 restart
 ## Num summary threads
 numsummarythreads int default=16 restart
 
+## Second-phase ranking: hint the kernel (madvise WILLNEED) to read the paged tensor attributes that the
+## second phase reads through attribute(name), before the hits are scored, so the disk reads overlap.
+## -1: off. 0: hint all hits up front. N > 0: keep the hints N hits ahead of the hit being scored.
+## Applies to queries started after a config change; no restart.
+matching.prefetch_paged_attributes_window int default=-1 range=[-1,2147483647]
+
 ## Perform extra validation of stored data on startup
 ## It requires a restart to enable, but no restart to disable.
 ## Hence it must always be followed by a manual restart when enabled.

@@ -96,6 +96,7 @@ vespa_define_module(
     src/tests/proton/matching/index_environment
     src/tests/proton/matching/match_loop_communicator
     src/tests/proton/matching/match_phase_limiter
+    src/tests/proton/matching/paged_attribute_prefetcher
     src/tests/proton/matching/partial_result
     src/tests/proton/matching/request_context
     src/tests/proton/matching/unpacking_iterators_optimizer

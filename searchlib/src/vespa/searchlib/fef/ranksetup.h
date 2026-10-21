@@ -458,6 +458,7 @@ public:
     RankProgram::UP create_second_phase_program() const {
         return std::make_unique<RankProgram>(_second_phase_resolver);
     }
+    const BlueprintResolver& get_second_phase_resolver() const noexcept { return *_second_phase_resolver; }
     RankProgram::UP create_match_program() const { return std::make_unique<RankProgram>(_match_resolver); }
     RankProgram::UP create_summary_program() const { return std::make_unique<RankProgram>(_summary_resolver); }
     RankProgram::UP create_dump_program() const { return std::make_unique<RankProgram>(_dumpResolver); }
