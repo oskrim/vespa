@@ -36,7 +36,7 @@ public:
 
     /**
      * Process-wide setting from proton config (matching.prefetch_paged_attributes_window), set at startup and on
-     * every reconfig: -1 = off, 0 = all hits up front, N > 0 = window of N.
+     * every reconfig: negative = off, 0 = all hits up front, N > 0 = window of N.
      */
     static void    set_configured_window(int32_t window) noexcept;
     static int32_t configured_window() noexcept;
