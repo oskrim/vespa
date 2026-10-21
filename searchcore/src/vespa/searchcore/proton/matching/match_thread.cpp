@@ -4,6 +4,7 @@
 
 #include "document_scorer.h"
 #include "match_tools.h"
+#include "paged_attribute_prefetcher.h"
 #include "partial_result.h"
 
 #include <vespa/searchcore/grouping/groupingcontext.h>
@@ -12,6 +13,7 @@
 #include <vespa/searchlib/common/bitvector.h>
 #include <vespa/searchlib/engine/trace.h>
 #include <vespa/searchlib/fef/rank_program.h>
+#include <vespa/searchlib/fef/ranksetup.h>
 #include <vespa/searchlib/queryeval/andnotsearch.h>
 #include <vespa/searchlib/queryeval/multibitvectoriterator.h>
 #include <vespa/searchlib/queryeval/profiled_iterator.h>
@@ -303,7 +305,14 @@ void MatchThread::secondPhase(MatchTools& tools, HitCollector& hits) {
     }
     if (!my_work.empty()) {
         tools.setup_second_phase(second_phase_profiler.get());
-        DocumentScorer scorer(tools.rank_program(), tools.search());
+        std::optional<PagedAttributePrefetcher> prefetcher;
+        if (PagedAttributePrefetcher::enabled_from_env()) {
+            prefetcher.emplace(matchToolsFactory.get_request_context(),
+                               matchToolsFactory.get_rank_setup().get_second_phase_resolver(),
+                               PagedAttributePrefetcher::window_from_env());
+        }
+        const bool use_prefetcher = prefetcher.has_value() && !prefetcher->empty();
+        DocumentScorer scorer(tools.rank_program(), tools.search(), use_prefetcher ? &*prefetcher : nullptr);
         scorer.score(my_work);
     }
     thread_stats.docsReRanked(my_work.size());

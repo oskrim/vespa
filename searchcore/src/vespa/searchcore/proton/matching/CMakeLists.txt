@@ -20,6 +20,7 @@ vespa_add_library(searchcore_matching STATIC
     match_phase_limiter.cpp
     match_thread.cpp
     match_tools.cpp
+    paged_attribute_prefetcher.cpp
     matchdatareservevisitor.cpp
     matcher.cpp
     matching_stats.cpp

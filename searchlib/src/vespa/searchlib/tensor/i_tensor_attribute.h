@@ -82,6 +82,12 @@ public:
     [[nodiscard]] virtual uint32_t get_num_docs() const = 0;
 
     /**
+     * Hint that the tensor of the given document will be read soon. A paged attribute (tensors in an mmap'ed file)
+     * starts reading it from disk without waiting, so the reads for many documents overlap.
+     */
+    virtual void advise_will_need(uint32_t docid) const noexcept { (void)docid; }
+
+    /**
      * Creates a state explorer for this tensor attribute.
      */
     [[nodiscard]] virtual std::unique_ptr<vespalib::StateExplorer> make_state_explorer() const = 0;

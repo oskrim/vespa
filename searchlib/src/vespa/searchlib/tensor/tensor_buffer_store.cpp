@@ -14,6 +14,9 @@
 #include <vespa/vespalib/datastore/buffer_type.hpp>
 #include <vespa/vespalib/datastore/datastore.hpp>
 
+#include <sys/mman.h>
+#include <unistd.h>
+
 using document::DeserializeException;
 using vespalib::alloc::MemoryAllocator;
 using vespalib::datastore::ArrayStoreConfig;
@@ -114,6 +117,22 @@ bool TensorBufferStore::encode_stored_tensor(EntryRef ref, vespalib::nbostream& 
     auto buf = _array_store.get(ref);
     _ops.encode_stored_tensor(buf, _tensor_type, target);
     return true;
+}
+
+void TensorBufferStore::advise_will_need(EntryRef ref) const noexcept {
+    if (!ref.valid()) {
+        return;
+    }
+    // The span of a small array comes from buffer metadata, so this does not touch (fault in) the tensor itself.
+    const auto buf = _array_store.get(ref);
+    if (buf.empty()) {
+        return;
+    }
+    static const uintptr_t page_size = sysconf(_SC_PAGESIZE);
+    const uintptr_t        begin = reinterpret_cast<uintptr_t>(buf.data()) & ~(page_size - 1);
+    const uintptr_t        end = reinterpret_cast<uintptr_t>(buf.data() + buf.size());
+    // A failed hint only means the later read faults the pages in itself.
+    (void)madvise(reinterpret_cast<void*>(begin), end - begin, MADV_WILLNEED);
 }
 
 } // namespace search::tensor

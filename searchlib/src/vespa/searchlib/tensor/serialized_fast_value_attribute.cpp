@@ -54,4 +54,10 @@ void SerializedFastValueAttribute::prefetch_vector(uint32_t docid) const noexcep
     _tensorBufferStore.prefetch_vectors(ref);
 }
 
+void SerializedFastValueAttribute::advise_will_need(uint32_t docid) const noexcept {
+    if (get_memory_allocator()) { // only paged attributes have a memory allocator (mmap'ed file)
+        _tensorBufferStore.advise_will_need(acquire_entry_ref(docid));
+    }
+}
+
 } // namespace search::tensor

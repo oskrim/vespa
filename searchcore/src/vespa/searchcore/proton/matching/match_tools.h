@@ -180,6 +180,7 @@ public:
 
     const Query& query() const { return _query; }
     const RequestContext& get_request_context() const { return _requestContext; }
+    const RankSetup& get_rank_setup() const noexcept { return _rankSetup; }
     // Hand the QueryEvalStats object to the query, which further hands it to the blueprint tree
     void install_stats(search::queryeval::QueryEvalStats& stats) { _query.install_stats(stats); }
 

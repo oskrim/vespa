@@ -13,6 +13,8 @@ class RankProgram;
 
 namespace proton::matching {
 
+class PagedAttributePrefetcher;
+
 /**
  * Class used to calculate the rank score for a set of documents using
  * a rank program for calculation and a search iterator for unpacking
@@ -23,12 +25,15 @@ class DocumentScorer {
 private:
     search::queryeval::SearchIterator& _searchItr;
     search::fef::LazyValue             _scoreFeature;
+    const PagedAttributePrefetcher*    _prefetcher;
 
 public:
     using TaggedHit = IMatchLoopCommunicator::TaggedHit;
     using TaggedHits = IMatchLoopCommunicator::TaggedHits;
 
-    DocumentScorer(search::fef::RankProgram& rankProgram, search::queryeval::SearchIterator& searchItr);
+    // prefetcher may be nullptr (no prefetch).
+    DocumentScorer(search::fef::RankProgram& rankProgram, search::queryeval::SearchIterator& searchItr,
+                   const PagedAttributePrefetcher* prefetcher);
 
     search::feature_t doScore(uint32_t docId) {
         _searchItr.unpack(docId);

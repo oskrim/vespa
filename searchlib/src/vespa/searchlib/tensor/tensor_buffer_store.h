@@ -84,6 +84,8 @@ public:
         }
     }
 
+    void advise_will_need(EntryRef ref) const noexcept;
+
     // Used by unit test
     static constexpr uint32_t get_offset_bits() noexcept { return RefType::offset_bits; }
 };
