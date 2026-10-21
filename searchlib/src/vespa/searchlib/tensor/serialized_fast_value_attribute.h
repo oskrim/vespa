@@ -33,6 +33,7 @@ public:
     VectorBundle get_vectors(uint32_t docid) const noexcept override;
 
     void prefetch_vector(uint32_t docid) const noexcept override;
+    void advise_will_need(uint32_t docid) const noexcept override;
 };
 
 } // namespace search::tensor
