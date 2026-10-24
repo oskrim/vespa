@@ -199,6 +199,13 @@ Config ConfigConverter::convert(const AttributesConfig::Attribute& cfg) {
         retval.set_hnsw_index_params(HnswIndexParams(cfg.index.hnsw.maxlinkspernode,
                                                      cfg.index.hnsw.neighborstoexploreatinsert, dm,
                                                      cfg.index.hnsw.multithreadedindexing));
+        if (cfg.index.ivf.enabled) {
+            IvfIndexParams::Params params;
+            for (const auto& param : cfg.index.ivf.param) {
+                params.emplace_back(param.name, param.value);
+            }
+            retval.set_ivf_index_params(IvfIndexParams(std::move(params)));
+        }
     }
     std::optional<QuantizationParams> quantization_params;
     if (cfg.quantization.bits > 0) {

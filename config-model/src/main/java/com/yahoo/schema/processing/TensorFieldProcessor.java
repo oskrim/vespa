@@ -96,6 +96,12 @@ public class TensorFieldProcessor extends Processor {
         if (index != null && index.getHnswIndexParams().isPresent() && !field.doesIndexing()) {
             fail(schema, field, "A tensor that specifies hnsw index parameters must also specify 'index' in 'indexing'");
         }
+        if (index != null && index.getIvfIndexParams().isPresent() && !field.doesIndexing()) {
+            fail(schema, field, "A tensor that specifies an ivf index must also specify 'index' in 'indexing'");
+        }
+        if (index != null && index.getIvfIndexParams().isPresent() && index.getHnswIndexParams().isPresent()) {
+            fail(schema, field, "A tensor index is either 'hnsw' or 'ivf', not both");
+        }
     }
 
     private void processIndexSettingsForTensorField(SDField field, boolean validate) {
@@ -111,6 +117,7 @@ public class TensorFieldProcessor extends Processor {
             var params = new HnswIndexParams();
             if (index != null) {
                 params = params.overrideFrom(index.getHnswIndexParams());
+                index.getIvfIndexParams().ifPresent(field.getAttribute()::setIvfIndexParams);
             }
             field.getAttribute().setHnswIndexParams(params);
         }

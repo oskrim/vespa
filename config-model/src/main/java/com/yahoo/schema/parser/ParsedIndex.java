@@ -2,6 +2,7 @@
 package com.yahoo.schema.parser;
 
 import com.yahoo.schema.document.HnswIndexParams;
+import com.yahoo.schema.document.IvfIndexParams;
 import com.yahoo.schema.document.Stemming;
 
 import java.util.ArrayList;
@@ -19,6 +20,7 @@ public class ParsedIndex extends ParsedBlock {
     private Boolean enableBm25 = null;
     private Boolean isPrefix = null;
     private HnswIndexParams hnswParams = null;
+    private IvfIndexParams ivfParams = null;
     private final List<String> aliases = new ArrayList<>();
     private Stemming stemming = null;
     private Integer arity = null;
@@ -33,6 +35,7 @@ public class ParsedIndex extends ParsedBlock {
     Optional<Boolean> getEnableBm25() { return Optional.ofNullable(this.enableBm25); }
     Optional<Boolean> getPrefix() { return Optional.ofNullable(this.isPrefix); }
     Optional<HnswIndexParams> getHnswIndexParams() { return Optional.ofNullable(this.hnswParams); }
+    Optional<IvfIndexParams> getIvfIndexParams() { return Optional.ofNullable(this.ivfParams); }
     List<String> getAliases() { return List.copyOf(aliases); }
     boolean hasStemming() { return stemming != null; }
     Optional<Stemming> getStemming() { return Optional.ofNullable(stemming); }
@@ -59,6 +62,10 @@ public class ParsedIndex extends ParsedBlock {
 
     public void setHnswIndexParams(HnswIndexParams params) {
         this.hnswParams = params;
+    }
+
+    public void setIvfIndexParams(IvfIndexParams params) {
+        this.ivfParams = params;
     }
 
     public void setLowerBound(long value) {

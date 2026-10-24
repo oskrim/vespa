@@ -122,6 +122,7 @@ public class AttributeChangeValidator {
                     validateAttributeHnswIndexSetting(id, current, next, HnswIndexParams::maxLinksPerNode, "max-links-per-node", result);
                     validateAttributeHnswIndexSetting(id, current, next, HnswIndexParams::neighborsToExploreAtInsert, "neighbors-to-explore-at-insert", result);
                 }
+                validateAttributeIvfIndexChange(id, current, next, result);
                 validateAttributeQuantizationChanges(current, next);
             }
         }
@@ -167,6 +168,17 @@ public class AttributeChangeValidator {
                 context.invalid(ValidationId.hnswSettingsChange,
                                     message + ". This requires the hnsw index to be rebuilt during initialization, which may take a long time");
             result.add(new VespaRestartAction(id, new ChangeMessageBuilder(nextAttr.getName()).addChange(message).build()));
+        }
+    }
+
+    /** The ivf index is rebuilt from the attribute on load, so a change only needs a restart. */
+    private static void validateAttributeIvfIndexChange(ClusterSpec.Id id, Attribute current, Attribute next,
+                                                        List<VespaConfigChangeAction> result) {
+        if ( ! Objects.equals(current.ivfIndexParams(), next.ivfIndexParams())) {
+            String message = Text.format("change ivf index from '%s' to '%s'",
+                                         current.ivfIndexParams().map(Object::toString).orElse("none"),
+                                         next.ivfIndexParams().map(Object::toString).orElse("none"));
+            result.add(new VespaRestartAction(id, new ChangeMessageBuilder(next.getName()).addChange(message).build()));
         }
     }
 
