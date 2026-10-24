@@ -1,10 +1,14 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.schema.processing;
 
+import com.yahoo.schema.derived.AttributeFields;
 import com.yahoo.schema.document.Attribute;
 import com.yahoo.schema.parser.ParseException;
+import com.yahoo.vespa.config.search.AttributesConfig;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
+import java.util.Map;
 
 import static com.yahoo.schema.ApplicationBuilder.createFromString;
 import static com.yahoo.config.model.test.TestUtil.joinLines;
@@ -142,6 +146,94 @@ public class TensorFieldTestCase {
                     "A tensor that specifies hnsw index parameters must also specify 'index' in 'indexing'",
                     e.getMessage());
         }
+    }
+
+    @Test
+    void ivf_index_is_default_turned_off() throws ParseException {
+        var attr = getAttributeFromSd("field t1 type tensor(x[64]) { indexing: attribute | index }", "t1");
+        assertFalse(attr.ivfIndexParams().isPresent());
+        assertTrue(attr.hnswIndexParams().isPresent());
+    }
+
+    @Test
+    void ivf_index_parameters_are_kept_as_given() throws ParseException {
+        var attr = getAttributeFromSd(joinLines("field t1 type tensor<int8>(chunk{}, x[64]) {",
+                "  indexing: attribute | index",
+                "  attribute: paged",
+                "  index {",
+                "    ivf {",
+                "      posting-capacity: 128",
+                "      filter-probe-mode: adaptive",
+                "      filter-exact-ratio: 0.05",
+                "    }",
+                "  }",
+                "}"), "t1");
+        assertTrue(attr.ivfIndexParams().isPresent());
+        assertEquals(Map.of("posting-capacity", "128", "filter-probe-mode", "adaptive", "filter-exact-ratio", "0.05"),
+                     attr.ivfIndexParams().get().params());
+        assertEquals(List.of("posting-capacity", "filter-probe-mode", "filter-exact-ratio"),
+                     List.copyOf(attr.ivfIndexParams().get().params().keySet()));
+        // The field still has an index for everything that checks the hnsw parameters.
+        assertTrue(attr.hnswIndexParams().isPresent());
+    }
+
+    @Test
+    void ivf_index_without_parameters_uses_defaults() throws ParseException {
+        var attr = getAttributeFromSd("field t1 type tensor(x[64]) { indexing: attribute | index \n index: ivf }", "t1");
+        assertTrue(attr.ivfIndexParams().isPresent());
+        assertTrue(attr.ivfIndexParams().get().params().isEmpty());
+        attr = getAttributeFromSd("field t1 type tensor(x[64]) { indexing: attribute | index \n index { ivf { } } }", "t1");
+        assertTrue(attr.ivfIndexParams().get().params().isEmpty());
+    }
+
+    @Test
+    void ivf_index_is_written_to_attributes_config() throws ParseException {
+        var schema = createFromString(getSd(joinLines("field t1 type tensor(x[64]) {",
+                "  indexing: attribute | index",
+                "  index { ivf { posting-capacity: 64 \n nprobe: 16 } }",
+                "}",
+                "field t2 type tensor(x[64]) { indexing: attribute | index }"))).getSchema();
+        var builder = new AttributesConfig.Builder();
+        new AttributeFields(schema).getConfig(builder);
+        var config = builder.build();
+        var t1 = config.attribute().stream().filter(a -> a.name().equals("t1")).findFirst().orElseThrow();
+        assertTrue(t1.index().hnsw().enabled());
+        assertTrue(t1.index().ivf().enabled());
+        assertEquals(List.of("posting-capacity=64", "nprobe=16"),
+                     t1.index().ivf().param().stream().map(p -> p.name() + "=" + p.value()).toList());
+        var t2 = config.attribute().stream().filter(a -> a.name().equals("t2")).findFirst().orElseThrow();
+        assertTrue(t2.index().hnsw().enabled());
+        assertFalse(t2.index().ivf().enabled());
+        assertTrue(t2.index().ivf().param().isEmpty());
+    }
+
+    @Test
+    void tensor_with_ivf_index_parameters_must_be_an_index() throws ParseException {
+        try {
+            createFromString(getSd("field t1 type tensor(x[64]) { indexing: attribute \n index { ivf { nprobe: 8 } } }"));
+            fail("Expected exception");
+        }
+        catch (IllegalArgumentException e) {
+            assertEquals("For schema 'test', field 't1': A tensor that specifies an ivf index must also specify 'index' in 'indexing'",
+                         e.getMessage());
+        }
+    }
+
+    @Test
+    void tensor_index_cannot_be_both_hnsw_and_ivf() throws ParseException {
+        try {
+            createFromString(getSd("field t1 type tensor(x[64]) { indexing: attribute | index \n index { hnsw \n ivf } }"));
+            fail("Expected exception");
+        }
+        catch (IllegalArgumentException e) {
+            assertEquals("For schema 'test', field 't1': A tensor index is either 'hnsw' or 'ivf', not both", e.getMessage());
+        }
+    }
+
+    @Test
+    void ivf_is_still_usable_as_a_name() throws ParseException {
+        var attr = getAttributeFromSd("field ivf type tensor(x[4]) { indexing: attribute }", "ivf");
+        assertFalse(attr.ivfIndexParams().isPresent());
     }
 
     @Test
