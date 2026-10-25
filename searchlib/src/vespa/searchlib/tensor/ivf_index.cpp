@@ -69,7 +69,27 @@ constexpr size_t   file_header_bytes = 4096;
 constexpr uint64_t posting_file_magic = 0x54534f5046564956ULL; // "VIVFPOST" read as little endian
 constexpr uint32_t posting_file_version = 1;
 constexpr size_t   file_id_offset = 16;
+constexpr uint64_t page_bytes = 4096;
 const std::string  posting_file_suffix(".ivfpostings");
+
+// Adds the bytes and the distinct pages spanned by the file ranges (offset, bytes) to the probe stats.
+void count_pages(std::vector<std::pair<uint64_t, uint64_t>>& ranges, IvfProbeStats& probe_stats) {
+    std::sort(ranges.begin(), ranges.end());
+    uint64_t next_page = 0; // first page not counted yet
+    for (const auto& [offset, bytes] : ranges) {
+        if (bytes == 0) {
+            continue;
+        }
+        uint64_t first = std::max(offset / page_bytes, next_page);
+        uint64_t last = (offset + bytes - 1) / page_bytes;
+        if (first <= last) {
+            probe_stats.pages_read += last - first + 1;
+            next_page = last + 1;
+        }
+        probe_stats.bytes_read += bytes;
+        probe_stats.pages_if_aligned += (bytes + page_bytes - 1) / page_bytes;
+    }
+}
 
 size_t align_up_8(size_t value) noexcept {
     return (value + 7) & ~size_t(7);
@@ -907,7 +927,8 @@ IvfIndex::search(Stats& stats, uint32_t k, const BoundDistanceFunction& df, cons
     }
     std::vector<char> buf;
     buf.reserve(_extent_bytes);
-    std::vector<Neighbor> candidates;
+    std::vector<Neighbor>                      candidates;
+    std::vector<std::pair<uint64_t, uint64_t>> read_ranges;
     for (uint64_t ref : refs) {
         if (doom.is_missed()) {
             break;
@@ -917,6 +938,7 @@ IvfIndex::search(Stats& stats, uint32_t k, const BoundDistanceFunction& df, cons
         if (probe_stats != nullptr) {
             ++probe_stats->postings_probed;
             probe_stats->entries_scanned += posting.length;
+            read_ranges.emplace_back(extent_offset(posting.extent), buf.size());
         }
         for (uint32_t i = 0; i < posting.length; ++i) {
             const char* entry = buf.data() + size_t(i) * _entry_bytes;
@@ -932,6 +954,9 @@ IvfIndex::search(Stats& stats, uint32_t k, const BoundDistanceFunction& df, cons
             stats.count_computed_distance();
             candidates.emplace_back(docid, distance);
         }
+    }
+    if (probe_stats != nullptr) {
+        count_pages(read_ranges, *probe_stats);
     }
     return select_top_k(candidates, k, distance_threshold);
 }
@@ -2090,6 +2115,26 @@ std::vector<std::pair<uint64_t, uint64_t>> IvfIndex::live_posting_ranges() const
         }
     }
     return ranges;
+}
+
+std::vector<std::pair<uint32_t, uint32_t>> IvfIndex::posting_fill() const {
+    std::vector<std::pair<uint32_t, uint32_t>> fill;
+    std::vector<char>                          buf;
+    uint32_t                                   limit = _slot_limit.load(std::memory_order_relaxed);
+    for (uint32_t slot = 0; slot < limit; ++slot) {
+        uint64_t ref = acquire_ref(slot);
+        if (ref == 0) {
+            continue;
+        }
+        Posting posting = decode_ref(ref);
+        read_posting(posting, buf);
+        uint32_t live = 0;
+        for (uint32_t i = 0; i < posting.length; ++i) {
+            live += entry_is_live(buf.data() + size_t(i) * _entry_bytes) ? 1 : 0;
+        }
+        fill.emplace_back(posting.length, live);
+    }
+    return fill;
 }
 
 // Scales nprobe by explore_k / k, and reads at least k_entry_factor * explore_k entries so that large targetHits

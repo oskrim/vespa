@@ -705,6 +705,9 @@ struct QueryStats {
     double   entries_scanned = 0;
     double   distances = 0;
     double   centroid_scan_us = 0;
+    double   bytes_read = 0;
+    double   pages_read = 0;
+    double   pages_if_aligned = 0;
     uint64_t mismatches = 0;
     double   p50_ms = 0;
     double   p90_ms = 0;
@@ -762,6 +765,9 @@ QueryStats run_queries(const VectorFile& queries, uint32_t nq, const GroundTruth
         qs.entries_scanned += probe_stats.entries_scanned;
         qs.distances += stats.distances_computed();
         qs.centroid_scan_us += probe_stats.centroid_scan_ns / 1000.0;
+        qs.bytes_read += probe_stats.bytes_read;
+        qs.pages_read += probe_stats.pages_read;
+        qs.pages_if_aligned += probe_stats.pages_if_aligned;
         for (const auto& hit : result) {
             if (df->calc(vectors.cells(hit.docid)) != hit.distance) {
                 ++qs.mismatches;
@@ -776,6 +782,9 @@ QueryStats run_queries(const VectorFile& queries, uint32_t nq, const GroundTruth
     qs.entries_scanned /= nq;
     qs.distances /= nq;
     qs.centroid_scan_us /= nq;
+    qs.bytes_read /= nq;
+    qs.pages_read /= nq;
+    qs.pages_if_aligned /= nq;
     qs.p50_ms = percentile(latencies, 0.50);
     qs.p90_ms = percentile(latencies, 0.90);
     qs.p95_ms = percentile(latencies, 0.95);
@@ -793,6 +802,35 @@ void print_ivf_stats(const char* label, const IvfIndex& index) {
            label, s.postings, s.entries, s.live_entries, s.splits, s.compactions, s.reassign_checks, s.moves,
            s.dropped_steps, s.dropped_entries, s.prepared_retired, s.extents, s.free_extents, s.file_bytes,
            s.bytes_written, mu.allocatedBytes(), mu.usedBytes());
+}
+
+// Prints the posting length histogram (bins of 16 entries) and, with a path, writes "length live" per posting.
+void print_posting_histogram(const char* label, const IvfIndex& index, const std::string& dump_path) {
+    auto                  fill = index.posting_fill();
+    std::vector<uint64_t> bins;
+    uint64_t              entries = 0;
+    uint64_t              live = 0;
+    for (const auto& [length, live_count] : fill) {
+        size_t bin = length / 16;
+        bins.resize(std::max(bins.size(), bin + 1), 0);
+        ++bins[bin];
+        entries += length;
+        live += live_count;
+    }
+    printf("%s posting_lengths: postings=%zu entries=%lu live=%lu bins_of_16=[", label, fill.size(), entries, live);
+    for (size_t i = 0; i < bins.size(); ++i) {
+        printf("%s%lu", (i > 0) ? "," : "", bins[i]);
+    }
+    printf("]\n");
+    if (!dump_path.empty()) {
+        std::ofstream out(dump_path);
+        for (const auto& [length, live_count] : fill) {
+            out << length << ' ' << live_count << '\n';
+        }
+        if (!out) {
+            throw std::runtime_error(dump_path + ": write failed");
+        }
+    }
 }
 
 struct SweepSetup {
@@ -817,7 +855,7 @@ std::vector<QueryStats> sweep_cases(const char* label, const char* param_name, c
     }
     std::vector<QueryStats> index_rows;
     printf("%s:\n| filter | hit_ratio | path | %s | recall@10 | recall@100 | postings | entries | scanned_frac | "
-           "distances | centroid_us | p50_ms | p99_ms | mismatches |\n",
+           "distances | centroid_us | p50_ms | p99_ms | mismatches | bytes_read | pages | pages_if_aligned |\n",
            label, param_name);
     std::vector<std::string> interpolations;
     for (const auto& c : cases) {
@@ -829,9 +867,12 @@ std::vector<QueryStats> sweep_cases(const char* label, const char* param_name, c
                 snprintf(r10, sizeof(r10), "%.4f", qs.recall_10);
                 snprintf(r100, sizeof(r100), "%.4f", qs.recall_100);
             }
-            printf("| %s | %.4f | %s | %s | %s | %s | %.1f | %.0f | %.4f | %.0f | %.1f | %.3f | %.3f | %lu |\n",
+            printf("| %s | %.4f | %s | %s | %s | %s | %.1f | %.0f | %.4f | %.0f | %.1f | %.3f | %.3f | %lu | %.0f | "
+                   "%.1f | "
+                   "%.1f |\n",
                    c.spec.c_str(), c.hit_ratio, path, param.c_str(), r10, r100, qs.postings, qs.entries_scanned,
-                   qs.entries_scanned / live, qs.distances, qs.centroid_scan_us, qs.p50_ms, qs.p99_ms, qs.mismatches);
+                   qs.entries_scanned / live, qs.distances, qs.centroid_scan_us, qs.p50_ms, qs.p99_ms, qs.mismatches,
+                   qs.bytes_read, qs.pages_read, qs.pages_if_aligned);
             fflush(stdout);
         };
         if (c.exact) {
@@ -963,6 +1004,9 @@ std::string search_json(const std::vector<uint32_t>& nprobes, const std::vector<
             .num("scanned_frac", ratio_or_nan(qs.entries_scanned, live))
             .num("distances", qs.distances)
             .num("centroid_scan_us", qs.centroid_scan_us)
+            .num("bytes_read", qs.bytes_read)
+            .num("pages_read", qs.pages_read)
+            .num("pages_if_aligned", qs.pages_if_aligned)
             .num("p50_ms", qs.p50_ms)
             .num("p90_ms", qs.p90_ms)
             .num("p95_ms", qs.p95_ms)
@@ -1137,6 +1181,8 @@ int run(const Args& args) {
                s.split_fallbacks, double(s.file_bytes) / s.live_entries, proc_status_kb("VmRSS:"),
                proc_status_kb("VmHWM:"));
         print_ivf_stats("after_build", index);
+        std::string fill_dump = args.str("posting-fill-out", "");
+        print_posting_histogram("after_build", index, fill_dump.empty() ? "" : fill_dump + ".build");
         {
             vespalib::Slime                slime;
             vespalib::slime::SlimeInserter inserter(slime);
@@ -1242,6 +1288,7 @@ int run(const Args& args) {
                 metrics.write(j);
             }
             print_ivf_stats("after_rounds", index);
+            print_posting_histogram("after_rounds", index, fill_dump.empty() ? "" : fill_dump + ".rounds");
         }
     } else if (index_kind == "hnsw") {
         uint32_t                         m = args.num("hnsw-m", 16);

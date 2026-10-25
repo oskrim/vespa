@@ -132,7 +132,17 @@ struct IvfProbeStats {
     uint32_t postings_examined;
     uint64_t entries_scanned;
     uint64_t centroid_scan_ns;
-    IvfProbeStats() noexcept : postings_probed(0), postings_examined(0), entries_scanned(0), centroid_scan_ns(0) {}
+    uint64_t bytes_read;
+    uint64_t pages_read;       // distinct 4 KiB file pages spanned by the probed postings
+    uint64_t pages_if_aligned; // pages the same postings would span if each started on a page
+    IvfProbeStats() noexcept
+        : postings_probed(0),
+          postings_examined(0),
+          entries_scanned(0),
+          centroid_scan_ns(0),
+          bytes_read(0),
+          pages_read(0),
+          pages_if_aligned(0) {}
 };
 
 namespace ivf {
@@ -438,6 +448,8 @@ public:
     IvfLoadSource load_source() const noexcept { return _load_source.load(std::memory_order_relaxed); }
     // File byte ranges (offset, bytes) of the live postings. Writer only; used by tests.
     std::vector<std::pair<uint64_t, uint64_t>> live_posting_ranges() const;
+    // (length, live entries) of every live posting; reads each posting from the file. Writer only; used by the bench.
+    std::vector<std::pair<uint32_t, uint32_t>> posting_fill() const;
 };
 
 } // namespace search::tensor
