@@ -118,6 +118,36 @@ public class PagedAttributeValidatorTestCase {
                 logger.warnings.get(0));
     }
 
+    @Test
+    void ivf_index_with_paged_setting_gives_no_warning() throws ParseException {
+        var logger = new TestableDeployLogger();
+        createFromString(ivfSd("attribute: paged"), logger);
+        assertEquals(0, logger.warnings.size());
+    }
+
+    @Test
+    void ivf_index_without_paged_setting_triggers_warning() throws ParseException {
+        var logger = new TestableDeployLogger();
+        createFromString(ivfSd(""), logger);
+        assertEquals(1, logger.warnings.size());
+        assertEquals("For schema 'test', field 'pos': The 'ivf' index stores vectors on disk, but the attribute " +
+                     "keeps its own copy in memory unless it is 'paged'; add 'attribute: paged' to keep the vectors " +
+                     "out of memory",
+                     logger.warnings.get(0));
+    }
+
+    private static String ivfSd(String pagedSetting) {
+        return joinLines("schema test {",
+                         "  document test {",
+                         "    field pos type tensor<int8>(chunk{}, x[8]) {",
+                         "      indexing: attribute | index",
+                         "      " + pagedSetting,
+                         "      index { ivf { nprobe: 16 } }",
+                         "    }",
+                         "  }",
+                         "}");
+    }
+
     private void assertPagedSettingNotSupported(String fieldType) throws ParseException {
         assertPagedSettingNotSupported(fieldType, false);
     }

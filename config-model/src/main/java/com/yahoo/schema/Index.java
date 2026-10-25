@@ -3,6 +3,7 @@ package com.yahoo.schema;
 
 import com.yahoo.schema.document.BooleanIndexDefinition;
 import com.yahoo.schema.document.HnswIndexParams;
+import com.yahoo.schema.document.IvfIndexParams;
 import com.yahoo.schema.document.RankType;
 import com.yahoo.schema.document.Stemming;
 
@@ -58,6 +59,8 @@ public class Index implements Cloneable, Serializable {
     private BooleanIndexDefinition boolIndex;
 
     private Optional<HnswIndexParams> hnswIndexParams = Optional.empty();
+
+    private Optional<IvfIndexParams> ivfIndexParams = Optional.empty();
 
     /** Whether the posting lists of this index field should have interleaved features (num occs, field length) in document id stream. */
     private boolean interleavedFeatures = false;
@@ -129,12 +132,13 @@ public class Index implements Cloneable, Serializable {
                stemming == index.stemming &&
                type == index.type &&
                Objects.equals(boolIndex, index.boolIndex) &&
-               Objects.equals(hnswIndexParams, index.hnswIndexParams);
+               Objects.equals(hnswIndexParams, index.hnswIndexParams) &&
+               Objects.equals(ivfIndexParams, index.ivfIndexParams);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(name, rankType, prefix, aliases, stemming, type, boolIndex, hnswIndexParams, interleavedFeatures);
+        return Objects.hash(name, rankType, prefix, aliases, stemming, type, boolIndex, hnswIndexParams, ivfIndexParams, interleavedFeatures);
     }
 
     public String toString() {
@@ -183,6 +187,14 @@ public class Index implements Cloneable, Serializable {
 
     public Optional<HnswIndexParams> getHnswIndexParams() {
         return hnswIndexParams;
+    }
+
+    public Optional<IvfIndexParams> getIvfIndexParams() {
+        return ivfIndexParams;
+    }
+
+    public void setIvfIndexParams(IvfIndexParams params) {
+        ivfIndexParams = Optional.of(params);
     }
 
     public void setHnswIndexParams(HnswIndexParams params) {

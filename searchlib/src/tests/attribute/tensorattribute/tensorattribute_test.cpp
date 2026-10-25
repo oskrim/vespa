@@ -366,7 +366,9 @@ class MockNearestNeighborIndexFactory : public NearestNeighborIndexFactory {
     std::unique_ptr<NearestNeighborIndex>
     make(const DocVectorAccess& vectors, size_t vector_size, bool multi_vector_index, CellType cell_type,
          const search::attribute::HnswIndexParams&                   params,
-         const std::optional<search::attribute::QuantizationParams>& quant_params) const override {
+         const std::optional<search::attribute::QuantizationParams>& quant_params,
+         const std::optional<search::attribute::IvfIndexParams>&     ivf_params) const override {
+        (void)ivf_params;
         (void)vector_size;
         (void)params;
         (void)multi_vector_index;

@@ -471,6 +471,7 @@ public class ConvertParsedFields {
         parsed.getEnableBm25().ifPresent(enableBm25 -> index.setInterleavedFeatures(enableBm25));
         parsed.getHnswIndexParams().ifPresent
                 (hnswIndexParams -> index.setHnswIndexParams(hnswIndexParams));
+        parsed.getIvfIndexParams().ifPresent(index::setIvfIndexParams);
     }
 
     SDField convertDocumentField(Schema schema, SDDocumentType document, ParsedField parsed) {

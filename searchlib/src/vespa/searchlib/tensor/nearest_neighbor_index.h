@@ -18,6 +18,7 @@ class FastOS_FileInterface;
 
 namespace vespalib {
 class Deadline;
+class Executor;
 class GenericHeader;
 struct StateExplorer;
 } // namespace vespalib
@@ -84,6 +85,18 @@ public:
     };
     virtual ~NearestNeighborIndex() = default;
     virtual void add_document(uint32_t docid) = 0;
+
+    /**
+     * Builds the index from scratch for the given documents, whose vectors are already in the attribute.
+     *
+     * Returns false when not supported, and the caller then adds the documents one by one. Called by the attribute
+     * writer thread while loading. The executor, which may be nullptr, can run helper tasks.
+     */
+    virtual bool bulk_build(const std::vector<uint32_t>& lids, vespalib::Executor* executor) {
+        (void)lids;
+        (void)executor;
+        return false;
+    }
 
     /**
      * Performs the prepare step in a two-phase operation to add a document to the index.

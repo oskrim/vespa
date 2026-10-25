@@ -73,6 +73,7 @@ public final class Attribute implements Cloneable, Serializable {
     private Optional<DistanceMetric> distanceMetric = Optional.empty();
 
     private Optional<HnswIndexParams> hnswIndexParams = Optional.empty();
+    private Optional<IvfIndexParams> ivfIndexParams = Optional.empty();
 
     private Optional<QuantizationParams> quantizationParams = Optional.empty();
 
@@ -215,6 +216,7 @@ public final class Attribute implements Cloneable, Serializable {
         return distanceMetric.orElse(DEFAULT_DISTANCE_METRIC);
     }
     public Optional<HnswIndexParams> hnswIndexParams() { return hnswIndexParams; }
+    public Optional<IvfIndexParams> ivfIndexParams() { return ivfIndexParams; }
     public Optional<QuantizationParams> quantizationParams() { return quantizationParams; }
 
     public Sorting getSorting() { return sorting; }
@@ -255,6 +257,7 @@ public final class Attribute implements Cloneable, Serializable {
     public void setTensorType(TensorType tensorType)             { this.tensorType = Optional.of(tensorType); }
     public void setDistanceMetric(DistanceMetric metric)         { this.distanceMetric = Optional.of(metric); }
     public void setHnswIndexParams(HnswIndexParams params)       { this.hnswIndexParams = Optional.of(params); }
+    public void setIvfIndexParams(IvfIndexParams params)         { this.ivfIndexParams = Optional.of(params); }
     public void setDictionary(Dictionary dictionary)             { this.dictionary = dictionary; }
     public void setCase(Case casing)                             { this.casing = casing; }
     public void setQuantizationParams(QuantizationParams params) { this.quantizationParams = Optional.of(params); }
@@ -393,7 +396,7 @@ public final class Attribute implements Cloneable, Serializable {
         return Objects.hash(
                 name, type, collectionType, sorting, dictionary, isPrefetch(), fastAccess, removeIfZero,
                 createIfNonExistent, isPosition, mutable, paged, enableOnlyBitVector,
-                tensorType, referenceDocumentType, distanceMetric, hnswIndexParams, quantizationParams);
+                tensorType, referenceDocumentType, distanceMetric, hnswIndexParams, ivfIndexParams, quantizationParams);
     }
 
     @Override
@@ -421,6 +424,7 @@ public final class Attribute implements Cloneable, Serializable {
         if (! Objects.equals(referenceDocumentType, other.referenceDocumentType)) return false;
         if (! Objects.equals(distanceMetric, other.distanceMetric)) return false;
         if (! Objects.equals(hnswIndexParams, other.hnswIndexParams)) return false;
+        if (! Objects.equals(ivfIndexParams, other.ivfIndexParams)) return false;
         if (! Objects.equals(quantizationParams, other.quantizationParams)) return false;
 
         return true;

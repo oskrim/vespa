@@ -190,6 +190,41 @@ public class AttributeChangeValidatorTest {
     }
 
     @Test
+    void adding_ivf_index_requires_restart() {
+        new Fixture("field f1 type tensor(x[2]) { indexing: attribute }",
+                "field f1 type tensor(x[2]) { indexing: attribute | index \n index { ivf { nprobe: 8 } } }").
+                assertValidation(List.of(newRestartAction(ClusterSpec.Id.from("test"),
+                                                          "Field 'f1' changed: add attribute 'indexing: index'"),
+                                         newRestartAction(ClusterSpec.Id.from("test"),
+                                                          "Field 'f1' changed: change ivf index from 'none' to 'ivf{nprobe=8}'")));
+    }
+
+    @Test
+    void changing_ivf_index_parameters_requires_restart_without_override() {
+        var fixture = new Fixture("field f1 type tensor(x[2]) { indexing: attribute | index \n index { ivf { nprobe: 8 } } }",
+                                  "field f1 type tensor(x[2]) { indexing: attribute | index \n index { ivf { nprobe: 16 } } }");
+        fixture.assertValidation(newRestartAction(ClusterSpec.Id.from("test"),
+                                                  "Field 'f1' changed: change ivf index from 'ivf{nprobe=8}' to 'ivf{nprobe=16}'"));
+        fixture.execution.throwIfFailed();
+    }
+
+    @Test
+    void switching_hnsw_index_to_ivf_requires_restart() {
+        var fixture = new Fixture("field f1 type tensor(x[2]) { indexing: attribute | index \n index { hnsw } }",
+                                  "field f1 type tensor(x[2]) { indexing: attribute | index \n index { ivf } }");
+        fixture.assertValidation(newRestartAction(ClusterSpec.Id.from("test"),
+                                                  "Field 'f1' changed: change ivf index from 'none' to 'ivf{}'"));
+        fixture.execution.throwIfFailed();
+    }
+
+    @Test
+    void unchanged_ivf_index_needs_no_action() {
+        new Fixture("field f1 type tensor(x[2]) { indexing: attribute | index \n index { ivf { nprobe: 8 } } }",
+                    "field f1 type tensor(x[2]) { indexing: attribute | index \n index { ivf { nprobe: 8 } } }").
+                assertValidation();
+    }
+
+    @Test
     void removing_hnsw_index_requres_restart() {
         new Fixture("field f1 type tensor(x[2]) { indexing: attribute | index \n index { hnsw } }",
                 "field f1 type tensor(x[2]) { indexing: attribute }").

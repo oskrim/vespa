@@ -324,6 +324,28 @@ TEST(AttributeManagerTest, require_that_config_can_be_converted) {
         auto out = ConfigConverter::convert(a);
         EXPECT_FALSE(out.hnsw_index_params().has_value());
     }
+    { // ivf index params (enabled), kept as name/value pairs in order
+        CACA a;
+        a.index.hnsw.enabled = true;
+        a.index.ivf.enabled = true;
+        a.index.ivf.param.resize(2);
+        a.index.ivf.param[0].name = "posting-capacity";
+        a.index.ivf.param[0].value = "128";
+        a.index.ivf.param[1].name = "filter-probe-mode";
+        a.index.ivf.param[1].value = "adaptive";
+        auto out = ConfigConverter::convert(a);
+        EXPECT_TRUE(out.hnsw_index_params().has_value());
+        ASSERT_TRUE(out.ivf_index_params().has_value());
+        using Params = search::attribute::IvfIndexParams::Params;
+        EXPECT_EQ((Params{{"posting-capacity", "128"}, {"filter-probe-mode", "adaptive"}}),
+                  out.ivf_index_params()->params());
+    }
+    { // ivf index (disabled)
+        CACA a;
+        a.index.hnsw.enabled = true;
+        auto out = ConfigConverter::convert(a);
+        EXPECT_FALSE(out.ivf_index_params().has_value());
+    }
 }
 
 using CACA = AttributesConfig::Attribute;

@@ -69,6 +69,9 @@ const std::string  tensorTypeTag("tensortype");
 
 bool can_use_index_save_file(const std::string& attrName, const search::attribute::Config& config,
                              const AttributeHeader& header) {
+    if (config.ivf_index_params().has_value()) {
+        return false; // The IVF index is never saved; a file here is from an earlier HNSW index.
+    }
     if (!config.hnsw_index_params().has_value() || !header.get_hnsw_index_params().has_value()) {
         LOG(warning, "Attribute %s cannot use saved HNSW index for ANN (missing parameters)", attrName.c_str());
         return false;
@@ -269,8 +272,32 @@ void TensorAttributeLoader::load_tensor_store(BlobSequenceReader& reader, uint32
     }
 }
 
+bool TensorAttributeLoader::bulk_build_index(vespalib::Executor* executor, uint32_t docid_limit) {
+    std::vector<uint32_t> lids;
+    for (uint32_t lid = 0; lid < docid_limit; ++lid) {
+        if (_ref_vector[lid].load_relaxed().valid()) {
+            lids.push_back(lid);
+        }
+    }
+    auto before = vespalib::steady_clock::now();
+    if (!_index->bulk_build(lids, executor)) {
+        return false;
+    }
+    vespalib::duration elapsed = vespalib::steady_clock::now() - before;
+    Event(_attr)
+        .addKV("execution", "bulk")
+        .addKV("time.elapsed.ms", vespalib::count_ms(elapsed))
+        .log("hnsw.index.rebuild.complete");
+    return true;
+}
+
 void TensorAttributeLoader::build_index(vespalib::Executor* executor, uint32_t docid_limit) {
     _attr.get_initialization_status().start_reprocessing();
+    if (bulk_build_index(executor, docid_limit)) {
+        _attr.commit();
+        _attr.get_initialization_status().end_reprocessing();
+        return;
+    }
     std::unique_ptr<IndexBuilder> builder;
     if (executor != nullptr) {
         builder = std::make_unique<ThreadedIndexBuilder>(_attr, _generation_handler, _store, *_index, *executor);
