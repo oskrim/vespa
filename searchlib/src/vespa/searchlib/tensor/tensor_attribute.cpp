@@ -349,12 +349,18 @@ std::unique_ptr<AttributeSaver> TensorAttribute::onInitSave(std::string_view fil
         IvfIndex::remove_posting_file(std::string(fileName));
     }
     auto header = this->createAttributeHeader(fileName);
-    auto index_saver =
-        (_index ? _index->make_saver(header.get_extra_tags()) : std::unique_ptr<NearestNeighborIndexSaver>());
+    auto index_saver = (_index ? _index->make_saver(header.get_extra_tags(), getStatus().getLastSyncToken())
+                               : std::unique_ptr<NearestNeighborIndexSaver>());
     return std::make_unique<TensorAttributeSaver>(
         std::move(guard), std::move(header),
         attribute::make_entry_ref_vector_snapshot(_refVector, getCommittedDocIdLimit()), _tensorStore,
         std::move(index_saver));
+}
+
+void TensorAttribute::on_snapshot_valid(uint64_t serial_num) {
+    if (_index) {
+        _index->on_snapshot_valid(serial_num);
+    }
 }
 
 void TensorAttribute::setTensor(DocId docId, const Value& tensor) {

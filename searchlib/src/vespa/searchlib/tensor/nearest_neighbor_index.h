@@ -134,8 +134,16 @@ public:
      *
      * This function is always called by the attribute write thread,
      * and the caller ensures that an attribute read guard is held during the lifetime of the saver.
+     * serial_num is the serial number of the attribute snapshot being saved.
      */
-    virtual std::unique_ptr<NearestNeighborIndexSaver> make_saver(vespalib::GenericHeader& header) = 0;
+    virtual std::unique_ptr<NearestNeighborIndexSaver> make_saver(vespalib::GenericHeader& header,
+                                                                  uint64_t                 serial_num) = 0;
+
+    /**
+     * Called by the flush thread after the attribute snapshot with the given serial number was marked valid.
+     * Must not change state that the attribute write thread owns.
+     */
+    virtual void on_snapshot_valid(uint64_t serial_num) noexcept { (void)serial_num; }
 
     /**
      * Creates a loader that is used to load the index from the given file.

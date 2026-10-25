@@ -294,7 +294,7 @@ public:
     void populate_address_space_usage(AddressSpaceUsage&) const override {}
     std::unique_ptr<vespalib::StateExplorer> make_state_explorer() const override { return {}; }
     void shrink_lid_space(uint32_t) override {}
-    std::unique_ptr<NearestNeighborIndexSaver> make_saver(vespalib::GenericHeader& header) override {
+    std::unique_ptr<NearestNeighborIndexSaver> make_saver(vespalib::GenericHeader& header, uint64_t) override {
         (void)header;
         if (_index_value != 0) {
             return std::make_unique<MockIndexSaver>(_index_value);

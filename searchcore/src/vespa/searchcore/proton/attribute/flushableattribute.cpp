@@ -116,6 +116,7 @@ bool FlushableAttribute::Flusher::flush() {
         return false;
     }
     _writer->markValidSnapshot(_syncToken);
+    _fattr._attr->on_snapshot_valid(_syncToken);
     _writer->setLastFlushTime(search::FileKit::getModificationTime(vespalib::dirname(_flushFile)));
     return true;
 }

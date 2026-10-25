@@ -184,9 +184,9 @@ private:
         uint32_t length;
     };
 
-    // Extents freed before the save with this sequence number was captured; reusable once that save is durable.
+    // Extents freed before the snapshot with this serial number was saved; reusable once a newer one is valid.
     struct PinnedExtents {
-        uint64_t              save_seq;
+        uint64_t              serial_num;
         std::vector<uint32_t> extents;
     };
 
@@ -263,8 +263,7 @@ private:
     std::vector<uint32_t>       _free_extents;
     std::vector<uint32_t>       _pending_extents;
     std::vector<PinnedExtents>  _pinned_extents;
-    uint64_t                    _saves_started;
-    std::atomic<uint64_t>       _saves_completed;
+    std::atomic<uint64_t>       _valid_serial; // newest snapshot marked valid, set by the flush thread
     uint32_t                    _extent_limit;
     uint32_t                    _file_extents;
     uint32_t                    _gc_cursor;
@@ -319,7 +318,8 @@ private:
     void grow_file(uint64_t new_file_extents);
     void start_new_file();
     void release_extent(uint32_t extent);
-    void pin_extents_for_save();
+    void pin_extents_for_save(uint64_t serial_num);
+    void release_pinned_extents();
     void update_extent_counters() noexcept;
     ivf::SaveLayout layout() const noexcept;
     ivf::SaveState capture_save_state() const;
@@ -396,7 +396,9 @@ public:
     void populate_address_space_usage(search::AddressSpaceUsage& usage) const override;
     std::unique_ptr<vespalib::StateExplorer> make_state_explorer() const override;
     void shrink_lid_space(uint32_t doc_id_limit) override;
-    std::unique_ptr<NearestNeighborIndexSaver> make_saver(vespalib::GenericHeader& header) override;
+    std::unique_ptr<NearestNeighborIndexSaver> make_saver(vespalib::GenericHeader& header,
+                                                          uint64_t                 serial_num) override;
+    void on_snapshot_valid(uint64_t serial_num) noexcept override;
     std::unique_ptr<NearestNeighborIndexLoader> make_loader(FastOS_FileInterface&          file,
                                                             const vespalib::GenericHeader& header) override;
     bool needs_build_after_load() const noexcept override;

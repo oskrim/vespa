@@ -1166,14 +1166,14 @@ protected:
             break;
         }
     }
-    std::unique_ptr<NearestNeighborIndexSaver> init_save() {
+    std::unique_ptr<NearestNeighborIndexSaver> init_save(uint64_t serial_num) {
         vespalib::GenericHeader header;
-        auto                    saver = index->make_saver(header);
+        auto                    saver = index->make_saver(header, serial_num);
         EXPECT_TRUE(header.hasTag(IvfIndex::save_file_tag()));
         return saver;
     }
-    void save_to(const std::string& save_path) {
-        auto saver = init_save();
+    void save_to(const std::string& save_path, uint64_t serial_num) {
+        auto saver = init_save(serial_num);
         ASSERT_TRUE(saver);
         search::test::VectorBufferWriter writer;
         saver->save(writer);
@@ -1214,7 +1214,7 @@ TEST_F(IvfPersistenceTest, save_and_load_restore_search_results_and_counters) {
         remove(docid);
     }
     commit();
-    save_to(path("s.nnidx"));
+    save_to(path("s.nnidx"), 10);
     std::vector<Bytes> queries;
     for (uint32_t i = 0; i < 50; ++i) {
         queries.push_back(gen.sample());
@@ -1261,7 +1261,7 @@ TEST_F(IvfPersistenceTest, old_save_plus_replay_gives_the_live_index) {
         add(docid, gen.sample());
     }
     commit();
-    save_to(path("s.nnidx"));
+    save_to(path("s.nnidx"), 10);
     std::vector<Bytes> saved_docs;
     for (uint32_t docid = 0; docid < vectors->docid_limit(); ++docid) {
         saved_docs.push_back(vectors->has(docid) ? vectors->raw(docid) : Bytes());
@@ -1304,7 +1304,7 @@ TEST_F(IvfPersistenceTest, old_save_plus_replay_gives_the_live_index) {
     expect_same_counters(live_stats, index->get_stats(), false);
 }
 
-TEST_F(IvfPersistenceTest, freed_extents_are_reused_only_after_a_newer_save_completed) {
+TEST_F(IvfPersistenceTest, freed_extents_are_reused_only_after_a_newer_snapshot_is_valid) {
     constexpr uint32_t dims = 16;
     make_named_index(CellType::FLOAT, dims, DistanceMetric::Euclidean, config(16), path("p.ivfpostings"));
     Generator gen(CellType::FLOAT, dims, 30, 0.5, 43);
@@ -1318,30 +1318,98 @@ TEST_F(IvfPersistenceTest, freed_extents_are_reused_only_after_a_newer_save_comp
     };
     feed(1000);
     auto stats = index->get_stats();
-    EXPECT_GT(stats.pinned_extents, 0u);
+    uint64_t pinned_at_10 = stats.pinned_extents;
+    EXPECT_GT(pinned_at_10, 0u);
     EXPECT_EQ(0u, stats.free_extents);
 
-    save_to(path("s1.nnidx"));
+    save_to(path("s10.nnidx"), 10);
+    index->on_snapshot_valid(10);
     feed(1000);
-    EXPECT_EQ(0u, index->get_stats().free_extents);
-    uint64_t pinned_by_s1 = stats.pinned_extents;
+    EXPECT_EQ(0u, index->get_stats().free_extents) << "snapshot 10 being valid does not free what 10 pinned";
 
-    auto unfinished = init_save();
-    stats = index->get_stats();
-    EXPECT_GE(stats.free_extents, pinned_by_s1) << "save 1 completed, so its extents are free at the next save";
-    uint64_t pinned_by_unfinished = stats.pinned_extents;
-    EXPECT_GT(pinned_by_unfinished, 0u);
-
-    uint64_t free_before = stats.free_extents;
+    save_to(path("s20.nnidx"), 20);
+    uint64_t pinned_after_s20 = index->get_stats().pinned_extents;
     feed(1000);
-    save_to(path("s3.nnidx"));
-    stats = index->get_stats();
-    EXPECT_GE(stats.pinned_extents, pinned_by_unfinished) << "an unfinished save keeps its extents pinned";
-    EXPECT_LE(stats.free_extents, free_before);
+    EXPECT_EQ(0u, index->get_stats().free_extents) << "snapshot 20 is saved but not valid yet";
+    uint64_t pinned_before_valid = index->get_stats().pinned_extents;
 
-    unfinished.reset();
-    save_to(path("s4.nnidx"));
-    EXPECT_EQ(0u, index->get_stats().pinned_extents) << "save 3 completed, so everything pinned before it is free";
+    index->on_snapshot_valid(20);
+    EXPECT_EQ(0u, index->get_stats().free_extents) << "the writer frees pinned extents at its next commit";
+    commit();
+    stats = index->get_stats();
+    EXPECT_EQ(pinned_at_10, stats.free_extents);
+    EXPECT_EQ(pinned_before_valid - pinned_at_10, stats.pinned_extents);
+
+    save_to(path("s30.nnidx"), 30);
+    index->on_snapshot_valid(30);
+    commit();
+    EXPECT_EQ(pinned_before_valid - pinned_after_s20, index->get_stats().pinned_extents)
+        << "what snapshot 30 pinned waits for a snapshot newer than 30";
+}
+
+TEST_F(IvfPersistenceTest, saves_that_never_become_valid_keep_the_old_snapshot_loadable) {
+    constexpr uint32_t dims = 16;
+    constexpr uint32_t initial = 3000;
+    auto               cfg = config(32);
+    cfg.gc_steps = 64;
+    cfg.merge_fraction = 0.25;
+    const std::string posting = path("p.ivfpostings");
+    make_named_index(CellType::FLOAT, dims, DistanceMetric::Euclidean, cfg, posting);
+    Generator gen(CellType::FLOAT, dims, 40, 0.5, 53);
+    for (uint32_t docid = 1; docid <= initial; ++docid) {
+        add(docid, gen.sample());
+    }
+    commit();
+    save_to(path("s10.nnidx"), 10);
+    index->on_snapshot_valid(10);
+    std::vector<Bytes> saved_docs;
+    for (uint32_t docid = 0; docid < vectors->docid_limit(); ++docid) {
+        saved_docs.push_back(vectors->has(docid) ? vectors->raw(docid) : Bytes());
+    }
+    auto saved_ranges = index->live_posting_ranges();
+    auto saved_bytes = read_ranges(posting, saved_ranges);
+
+    // Flushes 20 and 30 write their save files but fail before their snapshots are marked valid.
+    std::vector<Op> ops;
+    uint32_t        next_docid = initial + 1;
+    for (uint64_t serial : {20u, 30u, 40u}) {
+        auto round = heavy_mutations(gen, next_docid, initial, 2000);
+        for (const auto& op : round) {
+            if (op.kind == Op::Kind::ADD) {
+                next_docid = std::max(next_docid, op.docid + 1);
+            }
+            apply(op);
+        }
+        ops.insert(ops.end(), round.begin(), round.end());
+        if (serial < 40) {
+            save_to(path("failed.nnidx"), serial);
+        }
+    }
+    auto live_stats = index->get_stats();
+    EXPECT_GT(live_stats.splits, 0u);
+    EXPECT_GT(live_stats.merges, 0u);
+    EXPECT_EQ(saved_bytes, read_ranges(posting, saved_ranges)) << "a posting of the valid snapshot was overwritten";
+    std::vector<Bytes> queries;
+    for (uint32_t i = 0; i < 50; ++i) {
+        queries.push_back(gen.sample());
+    }
+    auto live_results = run_queries(queries, 16);
+
+    index.reset();
+    vectors = std::make_unique<TestVectors>(CellType::FLOAT, dims);
+    for (uint32_t docid = 0; docid < saved_docs.size(); ++docid) {
+        if (!saved_docs[docid].empty()) {
+            vectors->set(docid, saved_docs[docid]);
+        }
+    }
+    reopen_index(DistanceMetric::Euclidean, cfg, posting);
+    load_from(path("s10.nnidx"));
+    ASSERT_EQ(IvfLoadSource::SAVE_FILE, index->load_source()) << rejected_reason();
+    for (const auto& op : ops) {
+        apply(op);
+    }
+    EXPECT_EQ(live_results, run_queries(queries, 16));
+    expect_same_counters(live_stats, index->get_stats(), false);
 }
 
 TEST_F(IvfPersistenceTest, unusable_save_files_are_rejected_and_leave_the_index_empty) {
@@ -1354,7 +1422,7 @@ TEST_F(IvfPersistenceTest, unusable_save_files_are_rejected_and_leave_the_index_
         add(docid, gen.sample());
     }
     commit();
-    save_to(path("good.nnidx"));
+    save_to(path("good.nnidx"), 10);
     uint64_t postings = index->get_stats().postings;
     Bytes    good = read_file(path("good.nnidx"));
 
