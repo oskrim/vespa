@@ -58,8 +58,7 @@ bool Config::operator==(const Config& b) const noexcept {
            (_basicType.type() != BasicType::Type::TENSOR ||
             (_tensorType == b._tensorType && _unquantized_tensor_type == b._unquantized_tensor_type)) &&
            _distance_metric == b._distance_metric && _hnsw_index_params == b._hnsw_index_params &&
-           _ivf_index_params == b._ivf_index_params &&
-           _quantization_params == b._quantization_params;
+           _ivf_index_params == b._ivf_index_params && _quantization_params == b._quantization_params;
 }
 
 Config& Config::setTensorType(const vespalib::eval::ValueType& tensorType_in) {

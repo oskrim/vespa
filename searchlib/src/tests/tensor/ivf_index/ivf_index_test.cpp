@@ -539,7 +539,7 @@ TEST_F(IvfIndexTest, adaptive_filter_probing_skips_postings_without_matches) {
     for (const auto& q : queries) {
         NearestNeighborIndex::Stats stats;
         IvfProbeStats               probe_stats;
-        auto result = query(q.data(), k, nprobe, filter.get(), stats, probe_stats);
+        auto                        result = query(q.data(), k, nprobe, filter.get(), stats, probe_stats);
         EXPECT_EQ(k, result.size());
         for (const auto& n : result) {
             EXPECT_TRUE(filter->check(n.docid)) << "docid " << n.docid;
@@ -592,7 +592,7 @@ TEST_F(IvfIndexTest, large_k_reads_enough_postings_for_k_hits) {
     commit();
     Bytes q = gen.sample();
     for (uint32_t k : {10u, 1000u, 3000u}) {
-        auto                        df = index->distance_function_factory().for_query_vector(vectors->cells_of(q.data()));
+        auto df = index->distance_function_factory().for_query_vector(vectors->cells_of(q.data()));
         NearestNeighborIndex::Stats stats;
         auto result = index->find_top_k(stats, k, *df, k, 0.0, false, Deadline::never(), max_distance);
         EXPECT_EQ(k, result.size()) << "k " << k;
@@ -1276,7 +1276,8 @@ TEST_F(IvfPersistenceTest, old_save_plus_replay_gives_the_live_index) {
     }
     auto live_stats = index->get_stats();
     EXPECT_GT(live_stats.splits, saved_stats.splits);
-    EXPECT_GT(live_stats.compactions + live_stats.gc_compactions, saved_stats.compactions + saved_stats.gc_compactions);
+    EXPECT_GT(live_stats.compactions + live_stats.gc_compactions,
+              saved_stats.compactions + saved_stats.gc_compactions);
     EXPECT_GT(live_stats.merges, saved_stats.merges);
     EXPECT_GT(live_stats.pinned_extents, 0u);
     EXPECT_EQ(saved_bytes, read_ranges(posting, saved_ranges)) << "a posting of the old save was overwritten";
@@ -1317,7 +1318,7 @@ TEST_F(IvfPersistenceTest, freed_extents_are_reused_only_after_a_newer_snapshot_
         commit();
     };
     feed(1000);
-    auto stats = index->get_stats();
+    auto     stats = index->get_stats();
     uint64_t pinned_at_10 = stats.pinned_extents;
     EXPECT_GT(pinned_at_10, 0u);
     EXPECT_EQ(0u, stats.free_extents);
@@ -1482,7 +1483,7 @@ std::unique_ptr<vespalib::eval::Value> make_tensor(const Bytes& bytes) {
 }
 
 // An attribute with an index; with ivf params (as the schema's 'ivf' block produces) the index is IVF.
-std::shared_ptr<DenseTensorAttribute> make_attr(const NearestNeighborIndexFactory&                  factory,
+std::shared_ptr<DenseTensorAttribute> make_attr(const NearestNeighborIndexFactory&                      factory,
                                                 const std::optional<search::attribute::IvfIndexParams>& ivf) {
     search::attribute::Config cfg(search::attribute::BasicType::TENSOR, search::attribute::CollectionType::SINGLE);
     cfg.setTensorType(ValueType::from_spec(attr_spec));

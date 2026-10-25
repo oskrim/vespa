@@ -823,7 +823,7 @@ int run(const Args& args) {
            prepare_threads, churn_fraction);
     if (index_kind == "ivf") {
         // Index knobs come from flags named like the env knobs: VESPA_IVF_REPLICA_EPS is --replica-eps.
-        auto cfg = IvfIndexConfig::from_lookup([&args](const char* knob) -> const char* {
+        auto        cfg = IvfIndexConfig::from_lookup([&args](const char* knob) -> const char* {
             std::string flag(knob);
             std::transform(flag.begin(), flag.end(), flag.begin(),
                            [](char c) { return c == '_' ? '-' : static_cast<char>(std::tolower(c)); });
@@ -831,10 +831,11 @@ int run(const Args& args) {
             return (value != nullptr) ? value->c_str() : nullptr;
         });
         std::string build_kind = args.str("build", "incremental");
-        // An unlinked posting file in $TMPDIR: the bench never saves, so a named file would keep freed extents pinned.
-        IvfIndex    index(vectors, make_distance_function_factory(metric, base.cell_type), base.cell_type, base.dims,
-                          metric, cfg, "");
-        double      build_s = 0.0;
+        // An unlinked posting file in $TMPDIR: the bench never saves, so a named file would keep freed extents
+        // pinned.
+        IvfIndex index(vectors, make_distance_function_factory(metric, base.cell_type), base.cell_type, base.dims,
+                       metric, cfg, "");
+        double   build_s = 0.0;
         if (build_kind == "bulk") {
             std::vector<uint32_t> lids(base.n);
             for (uint32_t i = 0; i < base.n; ++i) {
@@ -910,16 +911,17 @@ int run(const Args& args) {
                 double   round_s =
                     replace_round(index, vectors, base.n, round_fraction, next_row, pool_limit, rng, replaced);
                 auto after = index.get_stats();
-                printf("round %u: replaced=%u turnover=%.2f seconds=%.1f updates_per_s=%.0f moves_per_update=%.3f "
-                       "bytes_written_per_update=%.0f postings=%lu entries=%lu live=%lu stale_frac=%.3f "
-                       "file_bytes=%lu splits=%lu split_fallbacks=%lu compactions=%lu gc_compactions=%lu merges=%lu\n",
-                       r, replaced, double(next_row - pool_first) / base.n, round_s, replaced / round_s,
-                       double(after.moves - before.moves) / replaced,
-                       double(after.bytes_written - before.bytes_written) / replaced, after.postings, after.entries,
-                       after.live_entries,
-                       after.entries > 0 ? double(after.entries - after.live_entries) / after.entries : 0.0,
-                       after.file_bytes, after.splits, after.split_fallbacks, after.compactions, after.gc_compactions,
-                       after.merges);
+                printf(
+                    "round %u: replaced=%u turnover=%.2f seconds=%.1f updates_per_s=%.0f moves_per_update=%.3f "
+                    "bytes_written_per_update=%.0f postings=%lu entries=%lu live=%lu stale_frac=%.3f "
+                    "file_bytes=%lu splits=%lu split_fallbacks=%lu compactions=%lu gc_compactions=%lu merges=%lu\n",
+                    r, replaced, double(next_row - pool_first) / base.n, round_s, replaced / round_s,
+                    double(after.moves - before.moves) / replaced,
+                    double(after.bytes_written - before.bytes_written) / replaced, after.postings, after.entries,
+                    after.live_entries,
+                    after.entries > 0 ? double(after.entries - after.live_entries) / after.entries : 0.0,
+                    after.file_bytes, after.splits, after.split_fallbacks, after.compactions, after.gc_compactions,
+                    after.merges);
                 FilterCase none_case("none");
                 none_case.gt = compute_gt_live(vectors, base.n, queries, *dff, args.num("gt-threads", 6));
                 std::vector<FilterCase> cases;
