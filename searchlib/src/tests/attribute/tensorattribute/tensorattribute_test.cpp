@@ -294,7 +294,7 @@ public:
     void populate_address_space_usage(AddressSpaceUsage&) const override {}
     std::unique_ptr<vespalib::StateExplorer> make_state_explorer() const override { return {}; }
     void shrink_lid_space(uint32_t) override {}
-    std::unique_ptr<NearestNeighborIndexSaver> make_saver(vespalib::GenericHeader& header) const override {
+    std::unique_ptr<NearestNeighborIndexSaver> make_saver(vespalib::GenericHeader& header) override {
         (void)header;
         if (_index_value != 0) {
             return std::make_unique<MockIndexSaver>(_index_value);
@@ -366,8 +366,10 @@ class MockNearestNeighborIndexFactory : public NearestNeighborIndexFactory {
     make(const DocVectorAccess& vectors, size_t vector_size, bool multi_vector_index, CellType cell_type,
          const search::attribute::HnswIndexParams&                   params,
          const std::optional<search::attribute::QuantizationParams>& quant_params,
-         const std::optional<search::attribute::IvfIndexParams>&     ivf_params) const override {
+         const std::optional<search::attribute::IvfIndexParams>&     ivf_params,
+         const std::string&                                          base_file_name) const override {
         (void)ivf_params;
+        (void)base_file_name;
         (void)vector_size;
         (void)params;
         (void)multi_vector_index;

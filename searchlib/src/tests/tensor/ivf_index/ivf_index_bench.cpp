@@ -823,7 +823,7 @@ int run(const Args& args) {
            prepare_threads, churn_fraction);
     if (index_kind == "ivf") {
         // Index knobs come from flags named like the env knobs: VESPA_IVF_REPLICA_EPS is --replica-eps.
-        auto cfg = IvfIndexConfig::from_lookup(args.required("ivf-dir"), [&args](const char* knob) -> const char* {
+        auto cfg = IvfIndexConfig::from_lookup([&args](const char* knob) -> const char* {
             std::string flag(knob);
             std::transform(flag.begin(), flag.end(), flag.begin(),
                            [](char c) { return c == '_' ? '-' : static_cast<char>(std::tolower(c)); });
@@ -831,8 +831,9 @@ int run(const Args& args) {
             return (value != nullptr) ? value->c_str() : nullptr;
         });
         std::string build_kind = args.str("build", "incremental");
+        // A named posting file (--posting-file) is reused and truncated; without it the file is unlinked in $TMPDIR.
         IvfIndex    index(vectors, make_distance_function_factory(metric, base.cell_type), base.cell_type, base.dims,
-                          metric, cfg);
+                          metric, cfg, args.str("posting-file", ""));
         double      build_s = 0.0;
         if (build_kind == "bulk") {
             std::vector<uint32_t> lids(base.n);

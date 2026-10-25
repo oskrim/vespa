@@ -3,12 +3,15 @@
 #include "ivf_index.h"
 
 #include "bound_distance_function.h"
+#include "mips_distance_transform.h"
 #include "nearest_neighbor_index_loader.h"
 #include "nearest_neighbor_index_saver.h"
 
 #include <vespa/eval/eval/value_type_spec.h>
+#include <vespa/fastos/file.h>
 #include <vespa/searchlib/queryeval/global_filter.h>
 #include <vespa/searchlib/util/state_explorer_utils.h>
+#include <vespa/vespalib/data/fileheader.h>
 #include <vespa/vespalib/data/slime/cursor.h>
 #include <vespa/vespalib/data/slime/inserter.h>
 #include <vespa/vespalib/net/http/state_explorer.h>
@@ -20,7 +23,9 @@
 #include <vespa/vespalib/util/type_stable_vector.hpp>
 
 #include <fcntl.h>
+#include <sys/file.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -31,6 +36,9 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <random>
+#include <sstream>
 #include <stdexcept>
 #include <unordered_set>
 
@@ -40,6 +48,7 @@ LOG_SETUP(".searchlib.tensor.ivf_index");
 using search::attribute::DistanceMetric;
 using vespalib::Generation;
 using vespalib::GenerationGuard;
+using vespalib::GenericHeader;
 using vespalib::IllegalArgumentException;
 using vespalib::IllegalStateException;
 using vespalib::make_string;
@@ -54,6 +63,13 @@ namespace {
 constexpr size_t   entry_header_bytes = 2 * sizeof(uint32_t);
 constexpr size_t   ref_bytes = sizeof(uint64_t);
 constexpr uint32_t max_io_interrupts = 100;
+
+// The posting file starts with a header that holds a random file id, which a save file must match. Extents follow.
+constexpr size_t   file_header_bytes = 4096;
+constexpr uint64_t posting_file_magic = 0x54534f5046564956ULL; // "VIVFPOST" read as little endian
+constexpr uint32_t posting_file_version = 1;
+constexpr size_t   file_id_offset = 16;
+const std::string  posting_file_suffix(".ivfpostings");
 
 size_t align_up_8(size_t value) noexcept {
     return (value + 7) & ~size_t(7);
@@ -141,7 +157,9 @@ public:
         if (value_text == nullptr) {
             return;
         }
-        if (parse_u32(value_text, parsed) && parsed <= 1) {
+        if (std::strcmp(value_text, "true") == 0 || std::strcmp(value_text, "false") == 0) {
+            value = (value_text[0] == 't');
+        } else if (parse_u32(value_text, parsed) && parsed <= 1) {
             value = (parsed == 1);
         } else {
             warn(knob, value_text);
@@ -260,10 +278,92 @@ void pwrite_fully(int fd, const char* buf, size_t len, uint64_t offset) {
     }
 }
 
-void validate_config(const IvfIndexConfig& cfg, size_t vector_size) {
-    if (cfg.dir.empty()) {
-        throw IllegalArgumentException("IVF index: dir must be set", VESPA_STRLOC);
+std::string unlinked_file_dir() {
+    std::error_code ec;
+    const char*     home = std::getenv("VESPA_HOME");
+    if (home != nullptr && *home != '\0') {
+        std::string dir = std::string(home) + "/var/tmp";
+        if (std::filesystem::is_directory(dir, ec)) {
+            return dir;
+        }
     }
+    auto tmp = std::filesystem::temp_directory_path(ec);
+    return ec ? std::string("/tmp") : tmp.string();
+}
+
+void sync_directory(const std::string& dir) {
+    int fd = ::open(dir.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (fd < 0) {
+        throw IllegalStateException(make_string("IVF index: open(%s) failed: %s", dir.c_str(), std::strerror(errno)),
+                                    VESPA_STRLOC);
+    }
+    int rc = ::fsync(fd);
+    int sync_errno = errno;
+    if (::close(fd) != 0 && rc == 0) {
+        rc = -1;
+        sync_errno = errno;
+    }
+    if (rc != 0) {
+        throw IllegalStateException(
+            make_string("IVF index: syncing directory %s failed: %s", dir.c_str(), std::strerror(sync_errno)),
+            VESPA_STRLOC);
+    }
+}
+
+uint64_t file_size_of(int fd) {
+    struct stat st;
+    if (::fstat(fd, &st) != 0) {
+        throw IllegalStateException(make_string("IVF index: fstat() failed: %s", std::strerror(errno)), VESPA_STRLOC);
+    }
+    return uint64_t(st.st_size);
+}
+
+// The file id in the posting file header, or 0 when the file has no valid header.
+uint64_t read_file_id(int fd) {
+    std::vector<char> header(file_id_offset + sizeof(uint64_t));
+    ssize_t           got = -1;
+    for (uint32_t interrupts = 0; interrupts < max_io_interrupts; ++interrupts) {
+        got = ::pread(fd, header.data(), header.size(), 0);
+        if (got >= 0 || errno != EINTR) {
+            break;
+        }
+    }
+    if (got < 0) {
+        throw IllegalStateException(make_string("IVF index: reading the posting file header failed: %s",
+                                                std::strerror(errno)),
+                                    VESPA_STRLOC);
+    }
+    uint64_t magic = 0;
+    uint32_t version = 0;
+    uint64_t file_id = 0;
+    if (size_t(got) < header.size()) {
+        return 0;
+    }
+    std::memcpy(&magic, header.data(), sizeof(magic));
+    std::memcpy(&version, header.data() + sizeof(magic), sizeof(version));
+    std::memcpy(&file_id, header.data() + file_id_offset, sizeof(file_id));
+    return (magic == posting_file_magic && version == posting_file_version) ? file_id : 0;
+}
+
+uint64_t new_file_id() {
+    std::random_device device;
+    uint64_t           id = (uint64_t(device()) << 32) ^ device();
+    return (id != 0) ? id : 1;
+}
+
+const char* load_source_name(IvfLoadSource source) {
+    switch (source) {
+    case IvfLoadSource::SAVE_FILE:
+        return "save_file";
+    case IvfLoadSource::BULK_BUILD:
+        return "bulk_build";
+    case IvfLoadSource::NONE:
+        break;
+    }
+    return "none";
+}
+
+void validate_config(size_t vector_size) {
     if (vector_size == 0) {
         throw IllegalArgumentException("IVF index: vector size must be positive", VESPA_STRLOC);
     }
@@ -314,11 +414,66 @@ public:
     }
 };
 
+// Writes the state captured at init-save time. Lids of the saved postings are read from the live lid table on the
+// flush thread; the extent pinning rule keeps them unchanged until a newer save is durable.
+class IvfIndexSaver : public NearestNeighborIndexSaver {
+    ivf::SaveState         _state;
+    ivf::LidReader         _lid_reader;
+    int                    _fd;
+    std::string            _posting_path;
+    std::atomic<uint64_t>& _saves_completed;
+    uint64_t               _save_seq;
+
+public:
+    IvfIndexSaver(ivf::SaveState state, ivf::LidReader lid_reader, int fd, std::string posting_path,
+                  std::atomic<uint64_t>& saves_completed, uint64_t save_seq)
+        : _state(std::move(state)),
+          _lid_reader(std::move(lid_reader)),
+          _fd(fd),
+          _posting_path(std::move(posting_path)),
+          _saves_completed(saves_completed),
+          _save_seq(save_seq) {}
+    ~IvfIndexSaver() override;
+    void save(BufferWriter& writer) const override {
+        if (::fdatasync(_fd) != 0) {
+            LOG(error, "IVF index: fdatasync(%s) failed: %s; the index save file is written as incomplete",
+                _posting_path.c_str(), std::strerror(errno));
+            ivf::write_incomplete_save_file(writer);
+            return;
+        }
+        ivf::write_save_file(writer, _state, _lid_reader);
+        // Saves of one attribute run one at a time, so this loop only retries after a spurious failure.
+        uint64_t done = _saves_completed.load(std::memory_order_acquire);
+        while (done < _save_seq &&
+               !_saves_completed.compare_exchange_weak(done, _save_seq, std::memory_order_acq_rel)) {
+        }
+    }
+};
+
+IvfIndexSaver::~IvfIndexSaver() = default;
+
+class IvfIndexLoader : public NearestNeighborIndexLoader {
+    std::function<void()> _load;
+    bool                  _done;
+
+public:
+    explicit IvfIndexLoader(std::function<void()> load) : _load(std::move(load)), _done(false) {}
+    ~IvfIndexLoader() override;
+    bool load_next() override {
+        if (!_done) {
+            _done = true;
+            _load();
+        }
+        return false;
+    }
+};
+
+IvfIndexLoader::~IvfIndexLoader() = default;
+
 } // namespace
 
-IvfIndexConfig::IvfIndexConfig(std::string dir_in)
-    : dir(std::move(dir_in)),
-      posting_capacity(256),
+IvfIndexConfig::IvfIndexConfig()
+    : posting_capacity(256),
       nprobe(32),
       reassign_range(0),
       max_postings(1u << 20),
@@ -353,51 +508,25 @@ IvfIndexConfig::IvfIndexConfig(std::string dir_in)
       filter_entry_read_density(0.0),
       filter_adaptive_stop(IvfAdaptiveStop::ENTRIES),
       filter_exact_ratio(0.0),
-      k_entry_factor(4.0) {
+      k_entry_factor(4.0),
+      rebuild_on_load(false) {
 }
 
 const std::vector<std::string>& IvfIndexConfig::knob_names() {
-    static const std::vector<std::string> names = {"POSTING_CAPACITY",
-                                                   "NPROBE",
-                                                   "REASSIGN_RANGE",
-                                                   "MAX_POSTINGS",
-                                                   "MAX_REBALANCE_STEPS",
-                                                   "SPLIT_MODE",
-                                                   "SPLIT_ITERS",
-                                                   "SPLIT_MIN_SIDE",
-                                                   "REPLICAS",
-                                                   "REPLICA_CANDIDATES",
-                                                   "REPLICA_EPS",
-                                                   "RNG_FACTOR",
-                                                   "BULK_BUILD",
-                                                   "BULK_FILL",
-                                                   "BULK_SAMPLE",
-                                                   "BULK_ITERS",
-                                                   "PRUNE_EPS",
-                                                   "FILTER_MIN_RATIO",
-                                                   "FILTER_MAX_SCALE",
-                                                   "BULK_COARSE_PROBES",
-                                                   "GC_STEPS",
-                                                   "GC_STALE_RATIO",
-                                                   "MERGE_FRACTION",
-                                                   "SPLIT_LIVE_FRACTION",
-                                                   "BULK_COARSE_K",
-                                                   "PREFETCH",
-                                                   "FILE_GROW_EXTENTS",
-                                                   "FILE_GROW_FRACTION",
-                                                   "MEDOID_SAMPLE",
-                                                   "MEDOID_ROUNDS",
-                                                   "FILTER_PROBE_MODE",
-                                                   "FILTER_MAX_EXAMINED",
-                                                   "FILTER_ENTRY_READ_DENSITY",
-                                                   "FILTER_ADAPTIVE_STOP",
-                                                   "FILTER_EXACT_RATIO",
-                                                   "K_ENTRY_FACTOR"};
+    static const std::vector<std::string> names = {
+        "POSTING_CAPACITY",  "NPROBE",      "REASSIGN_RANGE",   "MAX_POSTINGS",     "MAX_REBALANCE_STEPS",
+        "SPLIT_MODE",        "SPLIT_ITERS", "SPLIT_MIN_SIDE",   "REPLICAS",         "REPLICA_CANDIDATES",
+        "REPLICA_EPS",       "RNG_FACTOR",  "BULK_BUILD",       "BULK_FILL",        "BULK_SAMPLE",
+        "BULK_ITERS",        "PRUNE_EPS",   "FILTER_MIN_RATIO", "FILTER_MAX_SCALE",
+        "BULK_COARSE_PROBES", "GC_STEPS",    "GC_STALE_RATIO",   "MERGE_FRACTION",   "SPLIT_LIVE_FRACTION",
+        "BULK_COARSE_K",     "PREFETCH",    "FILE_GROW_EXTENTS", "FILE_GROW_FRACTION", "MEDOID_SAMPLE",
+        "MEDOID_ROUNDS",     "FILTER_PROBE_MODE", "FILTER_MAX_EXAMINED", "FILTER_ENTRY_READ_DENSITY",
+        "FILTER_ADAPTIVE_STOP", "FILTER_EXACT_RATIO", "K_ENTRY_FACTOR", "REBUILD_ON_LOAD"};
     return names;
 }
 
-IvfIndexConfig IvfIndexConfig::from_lookup(std::string dir_in, const Lookup& lookup) {
-    IvfIndexConfig cfg(std::move(dir_in));
+IvfIndexConfig IvfIndexConfig::from_lookup(const Lookup& lookup) {
+    IvfIndexConfig cfg;
     KnobReader     reader(lookup);
     reader.read("POSTING_CAPACITY", cfg.posting_capacity);
     reader.read("NPROBE", cfg.nprobe);
@@ -435,6 +564,7 @@ IvfIndexConfig IvfIndexConfig::from_lookup(std::string dir_in, const Lookup& loo
     reader.read("FILTER_ADAPTIVE_STOP", cfg.filter_adaptive_stop);
     reader.read("FILTER_EXACT_RATIO", cfg.filter_exact_ratio);
     reader.read("K_ENTRY_FACTOR", cfg.k_entry_factor);
+    reader.read("REBUILD_ON_LOAD", cfg.rebuild_on_load);
     cfg.sanitize();
     return cfg;
 }
@@ -446,22 +576,13 @@ IvfIndexConfig IvfIndexConfig::from_params(const search::attribute::IvfIndexPara
                        [](char c) { return c == '_' ? '-' : static_cast<char>(std::tolower(c)); });
         return name;
     };
-    std::string dir;
     for (const auto& [name, value] : params.params()) {
-        if (name == "dir") {
-            dir = value;
-            continue;
-        }
         const auto& knobs = knob_names();
         if (std::none_of(knobs.begin(), knobs.end(), [&](const std::string& knob) { return kebab(knob) == name; })) {
             LOG(warning, "IVF index: ignoring unknown parameter '%s'", name.c_str());
         }
     }
-    if (dir.empty()) {
-        const char* home = std::getenv("VESPA_HOME");
-        dir = std::string((home != nullptr && *home != '\0') ? home : "/opt/vespa") + "/var/tmp";
-    }
-    return from_lookup(dir, [&params, &kebab](const char* knob) -> const char* {
+    return from_lookup([&params, &kebab](const char* knob) -> const char* {
         std::string name = kebab(knob);
         for (const auto& [param_name, value] : params.params()) {
             if (param_name == name) {
@@ -473,7 +594,7 @@ IvfIndexConfig IvfIndexConfig::from_params(const search::attribute::IvfIndexPara
 }
 
 void IvfIndexConfig::sanitize() {
-    const IvfIndexConfig def(dir);
+    const IvfIndexConfig def;
     check_range("POSTING_CAPACITY", posting_capacity, def.posting_capacity, 4u, 65536u);
     check_range("NPROBE", nprobe, def.nprobe, 1u, 1u << 20);
     check_range("REASSIGN_RANGE", reassign_range, def.reassign_range, 0u, 1024u);
@@ -527,7 +648,7 @@ PreparedAdd::~PreparedAdd() = default;
 
 IvfIndex::IvfIndex(const DocVectorAccess& vectors, DistanceFunctionFactory::UP distance_ff,
                    vespalib::eval::CellType cell_type, size_t vector_size, DistanceMetric metric,
-                   const IvfIndexConfig& cfg)
+                   const IvfIndexConfig& cfg, const std::string& posting_path)
     : _vectors(vectors),
       _distance_ff(std::move(distance_ff)),
       _cfg(sanitized(cfg)),
@@ -538,7 +659,12 @@ IvfIndex::IvfIndex(const DocVectorAccess& vectors, DistanceFunctionFactory::UP d
       _extent_bytes(_entry_bytes * _cfg.posting_capacity),
       _centroid_bytes(_vector_bytes),
       _space(*_distance_ff, cell_type, vector_size, metric),
+      _posting_path(posting_path),
+      _persistent(false),
       _fd(-1),
+      _file_ready(false),
+      _file_id(0),
+      _disk_file_id(0),
       _slot_table(nullptr),
       _slot_table_bytes(0),
       _slot_refs(nullptr),
@@ -554,6 +680,10 @@ IvfIndex::IvfIndex(const DocVectorAccess& vectors, DistanceFunctionFactory::UP d
       _extent_hold(),
       _free_slots(),
       _free_extents(),
+      _pending_extents(),
+      _pinned_extents(),
+      _saves_started(0),
+      _saves_completed(0),
       _extent_limit(0),
       _file_extents(0),
       _gc_cursor(0),
@@ -561,9 +691,12 @@ IvfIndex::IvfIndex(const DocVectorAccess& vectors, DistanceFunctionFactory::UP d
       _entry_buf(_entry_bytes, 0),
       _rng(0x1f2e3d4c),
       _counters(),
-      _fadvise_warned(false) {
+      _fadvise_warned(false),
+      _load_source(IvfLoadSource::NONE),
+      _load_seconds(0.0),
+      _load_rejected() {
     assert(_distance_ff);
-    validate_config(_cfg, _vector_size);
+    validate_config(_vector_size);
     _slot_table_bytes = size_t(_cfg.max_postings) * (ref_bytes + _centroid_bytes);
     _slot_table = ::mmap(nullptr, _slot_table_bytes, PROT_READ | PROT_WRITE,
                          MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
@@ -575,11 +708,12 @@ IvfIndex::IvfIndex(const DocVectorAccess& vectors, DistanceFunctionFactory::UP d
     }
     _slot_refs = static_cast<uint64_t*>(_slot_table);
     _centroids = static_cast<char*>(_slot_table) + size_t(_cfg.max_postings) * ref_bytes;
-    // Live postings plus extents on hold never exceed two extents per posting slot.
+    // Live postings plus extents on hold never exceed two extents per posting slot. Extents pinned by saves come on
+    // top; they are few compared to max_postings unless saves keep failing.
     _max_extents = 2 * _cfg.max_postings;
     _lid_table_bytes = size_t(_max_extents) * _cfg.posting_capacity * sizeof(uint32_t);
-    void* lids =
-        ::mmap(nullptr, _lid_table_bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+    void* lids = ::mmap(nullptr, _lid_table_bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE,
+                        -1, 0);
     if (lids == MAP_FAILED) {
         int mmap_errno = errno;
         ::munmap(_slot_table, _slot_table_bytes);
@@ -589,8 +723,11 @@ IvfIndex::IvfIndex(const DocVectorAccess& vectors, DistanceFunctionFactory::UP d
     }
     _extent_lids = static_cast<uint32_t*>(lids);
     try {
-        _fd = open_unlinked_file(_cfg.dir);
+        open_posting_file();
     } catch (...) {
+        if (_fd >= 0) {
+            ::close(_fd);
+        }
         ::munmap(_extent_lids, _lid_table_bytes);
         ::munmap(_slot_table, _slot_table_bytes);
         throw;
@@ -685,7 +822,7 @@ IvfIndex::SlotDistances IvfIndex::top_slots(const BoundDistanceFunction& df, uin
 void IvfIndex::read_posting(Posting posting, std::vector<char>& buf) const {
     size_t bytes = size_t(posting.length) * _entry_bytes;
     buf.resize(bytes);
-    pread_fully(_fd, buf.data(), bytes, uint64_t(posting.extent) * _extent_bytes);
+    pread_fully(_fd, buf.data(), bytes, extent_offset(posting.extent));
 }
 
 uint32_t IvfIndex::lid_at(uint32_t extent, uint32_t index) const noexcept {
@@ -706,8 +843,7 @@ IvfIndex::search(Stats& stats, uint32_t k, const BoundDistanceFunction& df, cons
                  const GlobalFilter* filter, uint32_t nprobe, const vespalib::Deadline& doom,
                  double distance_threshold, IvfProbeStats* probe_stats) const {
     if (filter != nullptr && filter->size() > 0 &&
-        double(filter->count()) < _cfg.filter_exact_ratio * double(filter->size()))
-    {
+        double(filter->count()) < _cfg.filter_exact_ratio * double(filter->size())) {
         return search_exact(stats, k, df, *filter, doom, distance_threshold);
     }
     if (filter != nullptr && _cfg.filter_probe_mode == IvfFilterProbeMode::ADAPTIVE) {
@@ -746,7 +882,7 @@ IvfIndex::search(Stats& stats, uint32_t k, const BoundDistanceFunction& df, cons
         if (posting.length == 0) {
             continue;
         }
-        int rc = ::posix_fadvise(_fd, off_t(uint64_t(posting.extent) * _extent_bytes),
+        int rc = ::posix_fadvise(_fd, off_t(extent_offset(posting.extent)),
                                  off_t(size_t(posting.length) * _entry_bytes), POSIX_FADV_WILLNEED);
         if (rc != 0 && !_fadvise_warned.exchange(true, std::memory_order_relaxed)) {
             LOG(warning, "IVF index: posix_fadvise(WILLNEED) failed: %s", std::strerror(rc));
@@ -837,7 +973,7 @@ IvfIndex::search_adaptive(Stats& stats, uint32_t k, const BoundDistanceFunction&
     uint64_t entries_target = std::max<uint64_t>(k, uint64_t(nprobe) * get(_counters.entries) / postings_now);
     for (const auto& probe : order) {
         bool done = (_cfg.filter_adaptive_stop == IvfAdaptiveStop::POSTINGS) ? (selected.size() >= nprobe)
-                                                                             : (matched >= entries_target);
+                                                                              : (matched >= entries_target);
         if (done && matched >= k) {
             break;
         }
@@ -863,7 +999,7 @@ IvfIndex::search_adaptive(Stats& stats, uint32_t k, const BoundDistanceFunction&
     }
     if (_cfg.prefetch) {
         for (const auto& sel : selected) {
-            int rc = ::posix_fadvise(_fd, off_t(uint64_t(sel.posting.extent) * _extent_bytes),
+            int rc = ::posix_fadvise(_fd, off_t(extent_offset(sel.posting.extent)),
                                      off_t(size_t(sel.posting.length) * _entry_bytes), POSIX_FADV_WILLNEED);
             if (rc != 0 && !_fadvise_warned.exchange(true, std::memory_order_relaxed)) {
                 LOG(warning, "IVF index: posix_fadvise(WILLNEED) failed: %s", std::strerror(rc));
@@ -883,7 +1019,7 @@ IvfIndex::search_adaptive(Stats& stats, uint32_t k, const BoundDistanceFunction&
             buf.resize(size_t(sel.posting.length) * _entry_bytes);
             for (uint32_t i : sel.matches) {
                 pread_fully(_fd, buf.data() + size_t(i) * _entry_bytes, _entry_bytes,
-                            uint64_t(sel.posting.extent) * _extent_bytes + uint64_t(i) * _entry_bytes);
+                            extent_offset(sel.posting.extent) + uint64_t(i) * _entry_bytes);
             }
         }
         if (probe_stats != nullptr) {
@@ -931,7 +1067,370 @@ uint32_t IvfIndex::bump_version(uint32_t docid) {
     return version;
 }
 
+std::string IvfIndex::posting_path_for(const std::string& base_file_name) {
+    std::filesystem::path base(base_file_name);
+    std::filesystem::path dir = base.parent_path();
+    if (dir.filename().string().starts_with("snapshot-")) {
+        dir = dir.parent_path();
+    }
+    if (dir.empty() || base.filename().empty()) {
+        return {};
+    }
+    return (dir / (base.filename().string() + posting_file_suffix)).string();
+}
+
+const std::string& IvfIndex::save_file_tag() {
+    static const std::string tag("ivf.save_format");
+    return tag;
+}
+
+const std::vector<IvfIndex::CounterField>& IvfIndex::saved_counters() {
+    static const std::vector<CounterField> fields = {
+        &Counters::postings,         &Counters::entries,         &Counters::live_entries,    &Counters::splits,
+        &Counters::split_fallbacks,  &Counters::compactions,     &Counters::reassign_checks, &Counters::moves,
+        &Counters::dropped_steps,    &Counters::dropped_entries, &Counters::prepared_retired, &Counters::bytes_written,
+        &Counters::bulk_builds,      &Counters::gc_checks,       &Counters::gc_compactions,  &Counters::merges};
+    return fields;
+}
+
+uint64_t IvfIndex::extent_offset(uint32_t extent) const noexcept {
+    return file_header_bytes + uint64_t(extent) * _extent_bytes;
+}
+
+// Takes an exclusive lock on the named posting file, so that two index instances never share it; the second one
+// gets an unlinked file instead.
+void IvfIndex::open_posting_file() {
+    if (!_posting_path.empty()) {
+        std::string     dir = std::filesystem::path(_posting_path).parent_path().string();
+        std::error_code ec;
+        if (std::filesystem::is_directory(dir, ec)) {
+            int fd = ::open(_posting_path.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0644);
+            if (fd < 0) {
+                throw IllegalStateException(
+                    make_string("IVF index: open(%s) failed: %s", _posting_path.c_str(), std::strerror(errno)),
+                    VESPA_STRLOC);
+            }
+            if (::flock(fd, LOCK_EX | LOCK_NB) == 0) {
+                _fd = fd;
+                _persistent = true;
+                sync_directory(dir);
+                _disk_file_id = read_file_id(_fd);
+                return;
+            }
+            int lock_errno = errno;
+            if (::close(fd) != 0) {
+                LOG(warning, "IVF index: close(%s) failed: %s", _posting_path.c_str(), std::strerror(errno));
+            }
+            LOG(warning, "IVF index: cannot lock posting file %s (%s); using an unlinked file, not saved",
+                _posting_path.c_str(),
+                (lock_errno == EWOULDBLOCK) ? "used by another index" : std::strerror(lock_errno));
+        } else {
+            LOG(warning, "IVF index: directory %s does not exist; using an unlinked posting file, not saved",
+                dir.c_str());
+        }
+        _posting_path.clear();
+    } else {
+        LOG(info, "IVF index: the attribute has no directory yet; using an unlinked posting file until a restart");
+    }
+    _fd = open_unlinked_file(unlinked_file_dir());
+}
+
+// Starts an empty posting file with a new file id, which invalidates every save file written for the old content.
+void IvfIndex::start_new_file() {
+    assert(!_file_ready && _extent_limit == 0);
+    uint64_t file_id = new_file_id();
+    if (::ftruncate(_fd, 0) != 0) {
+        throw IllegalStateException(make_string("IVF index: ftruncate() failed: %s", std::strerror(errno)),
+                                    VESPA_STRLOC);
+    }
+    std::vector<char> header(file_header_bytes, 0);
+    std::memcpy(header.data(), &posting_file_magic, sizeof(posting_file_magic));
+    std::memcpy(header.data() + sizeof(posting_file_magic), &posting_file_version, sizeof(posting_file_version));
+    std::memcpy(header.data() + file_id_offset, &file_id, sizeof(file_id));
+    pwrite_fully(_fd, header.data(), header.size(), 0);
+    if (_persistent && ::fdatasync(_fd) != 0) {
+        throw IllegalStateException(make_string("IVF index: fdatasync() failed: %s", std::strerror(errno)),
+                                    VESPA_STRLOC);
+    }
+    _file_id = file_id;
+    _disk_file_id = file_id;
+    _file_extents = 0;
+    _file_ready = true;
+    set_to(_counters.file_bytes, file_header_bytes);
+}
+
+/*
+ * Extent pinning. A save references postings by (extent, length) and is the snapshot loaded after a crash until a
+ * newer save is durable. Appends write at a posting's current length, which only grows while its extent is live,
+ * and every other write (rewrite, split, merge target, GC sweep, bulk build) goes to an extent from the free list.
+ * So saved bytes stay intact as long as no extent that a loadable save references is on the free list: a freed
+ * extent waits in _pending_extents, is pinned by the next save, and is released when a later save starts after the
+ * pinning save completed.
+ */
+void IvfIndex::release_extent(uint32_t extent) {
+    (_persistent ? _pending_extents : _free_extents).push_back(extent);
+}
+
+// The flush of a save ends before the next save of the attribute starts, so a completed save is the durable
+// snapshot here and the extents freed before it was captured can be reused.
+void IvfIndex::pin_extents_for_save() {
+    uint64_t                   completed = _saves_completed.load(std::memory_order_acquire);
+    std::vector<PinnedExtents> still_pinned;
+    for (auto& batch : _pinned_extents) {
+        if (batch.save_seq <= completed) {
+            _free_extents.insert(_free_extents.end(), batch.extents.begin(), batch.extents.end());
+        } else {
+            still_pinned.push_back(std::move(batch));
+        }
+    }
+    _pinned_extents = std::move(still_pinned);
+    ++_saves_started;
+    _pinned_extents.push_back({_saves_started, std::move(_pending_extents)});
+    _pending_extents.clear();
+    if (_pinned_extents.size() > 2) {
+        LOG(warning, "IVF index %s: %zu saves have not completed; their freed extents are not reused",
+            _posting_path.c_str(), _pinned_extents.size() - 1);
+    }
+    update_extent_counters();
+}
+
+void IvfIndex::update_extent_counters() noexcept {
+    uint64_t pinned = _pending_extents.size();
+    for (const auto& batch : _pinned_extents) {
+        pinned += batch.extents.size();
+    }
+    set_to(_counters.free_extents, _free_extents.size());
+    set_to(_counters.pinned_extents, pinned);
+}
+
+ivf::SaveLayout IvfIndex::layout() const noexcept {
+    return {static_cast<uint32_t>(_cell_type),
+            static_cast<uint32_t>(_vector_size),
+            static_cast<uint32_t>(_space.metric),
+            _cfg.posting_capacity,
+            static_cast<uint32_t>(_entry_bytes),
+            static_cast<uint32_t>(_centroid_bytes)};
+}
+
+// Slots on hold come after the free slots, so the load leaves them in the order they get after the next reclaim.
+ivf::SaveState IvfIndex::capture_save_state() const {
+    ivf::SaveState state;
+    uint32_t       slot_limit = _slot_limit.load(std::memory_order_relaxed);
+    state.layout = layout();
+    state.file_id = _file_id;
+    state.slot_limit = slot_limit;
+    state.extent_limit = _extent_limit;
+    state.gc_cursor = _gc_cursor;
+    auto* mips = dynamic_cast<MipsDistanceFunctionFactoryBase*>(_distance_ff.get());
+    state.max_squared_norm = (mips != nullptr) ? mips->get_max_squared_norm_store().get_max() : -1.0;
+    for (CounterField field : saved_counters()) {
+        state.counters.push_back(get(_counters.*field));
+    }
+    std::ostringstream rng;
+    rng << _rng;
+    state.rng_state = rng.str();
+    std::vector<bool> is_free(slot_limit, false);
+    for (uint32_t slot : _free_slots) {
+        assert(slot < slot_limit);
+        is_free[slot] = true;
+    }
+    state.free_slots = _free_slots;
+    state.refs.resize(slot_limit);
+    for (uint32_t slot = 0; slot < slot_limit; ++slot) {
+        uint64_t ref = acquire_ref(slot);
+        state.refs[slot] = ref;
+        if (ref != 0) {
+            const char* src = _centroids + size_t(slot) * _centroid_bytes;
+            state.centroids.insert(state.centroids.end(), src, src + _centroid_bytes);
+        } else if (!is_free[slot]) {
+            state.free_slots.push_back(slot);
+        }
+    }
+    state.versions.resize(_versions.get_size());
+    for (size_t docid = 0; docid < state.versions.size(); ++docid) {
+        state.versions[docid] = _versions.get_elem_ref(docid).load_relaxed();
+    }
+    return state;
+}
+
+// Checks a save file against this index and its posting file. Returns the reason it cannot be used, or "".
+std::string IvfIndex::check_save_state(const ivf::SaveState& state) const {
+    if (state.layout != layout()) {
+        return "cell type, dimensions, distance metric or posting-capacity changed";
+    }
+    if (state.file_id == 0 || state.file_id != _disk_file_id) {
+        return "the posting file was rewritten or replaced after the save";
+    }
+    if (state.slot_limit > _cfg.max_postings || state.extent_limit > _max_extents) {
+        return make_string("%u slots / %u extents exceed max-postings %u", state.slot_limit, state.extent_limit,
+                           _cfg.max_postings);
+    }
+    if (state.counters.size() != saved_counters().size() || state.gc_cursor > state.slot_limit) {
+        return "bad header values";
+    }
+    uint64_t          file_bytes = file_size_of(_fd);
+    uint64_t          free_slots = 0;
+    std::vector<bool> extent_used(state.extent_limit, false);
+    for (uint32_t slot = 0; slot < state.slot_limit; ++slot) {
+        uint64_t ref = state.refs[slot];
+        if (ref == 0) {
+            ++free_slots;
+            continue;
+        }
+        Posting posting = decode_ref(ref);
+        if (posting.extent >= state.extent_limit || posting.length == 0 ||
+            posting.length > _cfg.posting_capacity || extent_used[posting.extent])
+        {
+            return make_string("bad posting reference in slot %u", slot);
+        }
+        extent_used[posting.extent] = true;
+        if (extent_offset(posting.extent) + uint64_t(posting.length) * _entry_bytes > file_bytes) {
+            return "the posting file is shorter than the saved postings";
+        }
+    }
+    std::vector<bool> listed(state.slot_limit, false);
+    for (uint32_t slot : state.free_slots) {
+        if (slot >= state.slot_limit || state.refs[slot] != 0 || listed[slot]) {
+            return "bad free slot list";
+        }
+        listed[slot] = true;
+    }
+    if (state.free_slots.size() != free_slots) {
+        return "bad free slot list";
+    }
+    for (uint32_t lid : state.lids) {
+        if (lid >= state.versions.size()) {
+            return "a posting entry has a docid without a version";
+        }
+    }
+    std::mt19937       rng;
+    std::istringstream rng_state(state.rng_state);
+    rng_state >> rng;
+    if (rng_state.fail()) {
+        return "bad random generator state";
+    }
+    return {};
+}
+
+void IvfIndex::apply_save_state(const ivf::SaveState& state) {
+    assert(!_file_ready && _slot_limit.load(std::memory_order_relaxed) == 0 && _versions.size() == 0);
+    const char*       centroid = state.centroids.data();
+    const uint32_t*   lids = state.lids.data();
+    std::vector<bool> extent_used(state.extent_limit, false);
+    for (uint32_t slot = 0; slot < state.slot_limit; ++slot) {
+        uint64_t ref = state.refs[slot];
+        release_ref(slot, ref);
+        if (ref == 0) {
+            continue;
+        }
+        Posting posting = decode_ref(ref);
+        std::memcpy(_centroids + size_t(slot) * _centroid_bytes, centroid, _centroid_bytes);
+        centroid += _centroid_bytes;
+        for (uint32_t i = 0; i < posting.length; ++i) {
+            std::atomic_ref<uint32_t>(_extent_lids[size_t(posting.extent) * _cfg.posting_capacity + i])
+                .store(lids[i], std::memory_order_relaxed);
+        }
+        lids += posting.length;
+        extent_used[posting.extent] = true;
+    }
+    assert(centroid == state.centroids.data() + state.centroids.size());
+    assert(lids == state.lids.data() + state.lids.size());
+    _slot_limit.store(state.slot_limit, std::memory_order_release);
+    if (!state.versions.empty()) {
+        _versions.ensure_size(state.versions.size(), AtomicVersion());
+        for (size_t docid = 0; docid < state.versions.size(); ++docid) {
+            _versions[docid].store_release(state.versions[docid]);
+        }
+    }
+    _version_limit.store(_versions.size(), std::memory_order_release);
+    _free_slots = state.free_slots;
+    _extent_limit = state.extent_limit;
+    _free_extents.clear();
+    for (uint32_t extent = state.extent_limit; extent-- > 0;) {
+        if (!extent_used[extent]) {
+            _free_extents.push_back(extent);
+        }
+    }
+    _gc_cursor = state.gc_cursor;
+    std::istringstream rng_state(state.rng_state);
+    rng_state >> _rng;
+    const auto& fields = saved_counters();
+    for (size_t i = 0; i < fields.size(); ++i) {
+        set_to(_counters.*fields[i], state.counters[i]);
+    }
+    auto* mips = dynamic_cast<MipsDistanceFunctionFactoryBase*>(_distance_ff.get());
+    if (mips != nullptr && state.max_squared_norm >= 0.0) {
+        (void)mips->get_max_squared_norm_store().get_max(state.max_squared_norm);
+    }
+    _file_id = state.file_id;
+    _file_ready = true;
+    uint64_t file_bytes = file_size_of(_fd);
+    uint64_t extent_bytes_in_file = (file_bytes > file_header_bytes) ? file_bytes - file_header_bytes : 0;
+    _file_extents = static_cast<uint32_t>(
+        std::min<uint64_t>(extent_bytes_in_file / _extent_bytes, std::numeric_limits<uint32_t>::max() - 1));
+    set_to(_counters.file_bytes, extent_offset(_file_extents));
+    if (_file_extents < _extent_limit) {
+        grow_file(_extent_limit);
+    }
+    set_to(_counters.extents, _extent_limit);
+    update_extent_counters();
+}
+
+void IvfIndex::load_save_file(FastOS_FileInterface& file) {
+    auto        start = std::chrono::steady_clock::now();
+    std::string reason;
+    if (_cfg.rebuild_on_load) {
+        reason = "rebuild-on-load is set";
+    } else if (!_persistent) {
+        reason = "the posting file is not available";
+    } else if (_file_ready || _slot_limit.load(std::memory_order_relaxed) != 0) {
+        reason = "the index is not empty";
+    }
+    ivf::SaveState state;
+    if (reason.empty()) {
+        reason = ivf::read_save_file(file, state);
+    }
+    if (reason.empty()) {
+        reason = check_save_state(state);
+    }
+    if (!reason.empty()) {
+        LOG(warning, "IVF index: not using the saved index %s: %s; building the index from the attribute",
+            file.GetFileName(), reason.c_str());
+        _load_rejected = reason;
+        _load_source.store(IvfLoadSource::NONE, std::memory_order_relaxed);
+        return;
+    }
+    apply_save_state(state);
+    std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - start;
+    _load_rejected.clear();
+    _load_source.store(IvfLoadSource::SAVE_FILE, std::memory_order_relaxed);
+    _load_seconds.store(elapsed.count(), std::memory_order_relaxed);
+    LOG(info, "IVF index: loaded %" PRIu64 " postings with %" PRIu64 " entries from %s in %.2f s",
+        get(_counters.postings), get(_counters.entries), file.GetFileName(), elapsed.count());
+}
+
+void IvfIndex::grow_file(uint64_t new_file_extents) {
+    if (new_file_extents <= _file_extents) {
+        throw IllegalStateException("IVF index: extent id space exhausted", VESPA_STRLOC);
+    }
+    off_t offset = off_t(extent_offset(_file_extents));
+    off_t len = off_t((new_file_extents - _file_extents) * _extent_bytes);
+    if (::fallocate(_fd, 0, offset, len) != 0) {
+        int fallocate_errno = errno;
+        if (fallocate_errno != EOPNOTSUPP || ::ftruncate(_fd, offset + len) != 0) {
+            throw IllegalStateException(make_string("IVF index: growing file to %" PRIu64 " bytes failed: %s",
+                                                    uint64_t(offset + len), std::strerror(errno)),
+                                        VESPA_STRLOC);
+        }
+    }
+    _file_extents = new_file_extents;
+    set_to(_counters.file_bytes, extent_offset(_file_extents));
+}
+
 uint32_t IvfIndex::allocate_extent() {
+    if (!_file_ready) {
+        start_new_file();
+    }
     if (!_free_extents.empty()) {
         uint32_t extent = _free_extents.back();
         _free_extents.pop_back();
@@ -940,23 +1439,7 @@ uint32_t IvfIndex::allocate_extent() {
     }
     if (_extent_limit == _file_extents) {
         uint64_t grow = std::max<uint64_t>(_cfg.file_grow_extents, uint64_t(_file_extents * _cfg.file_grow_fraction));
-        uint64_t new_file_extents =
-            std::min<uint64_t>(uint64_t(_file_extents) + grow, std::numeric_limits<uint32_t>::max() - 1);
-        if (new_file_extents <= _file_extents) {
-            throw IllegalStateException("IVF index: extent id space exhausted", VESPA_STRLOC);
-        }
-        off_t offset = off_t(uint64_t(_file_extents) * _extent_bytes);
-        off_t len = off_t((new_file_extents - _file_extents) * _extent_bytes);
-        if (::fallocate(_fd, 0, offset, len) != 0) {
-            int fallocate_errno = errno;
-            if (fallocate_errno != EOPNOTSUPP || ::ftruncate(_fd, offset + len) != 0) {
-                throw IllegalStateException(make_string("IVF index: growing file to %" PRIu64 " bytes failed: %s",
-                                                        uint64_t(offset + len), std::strerror(errno)),
-                                            VESPA_STRLOC);
-            }
-        }
-        _file_extents = new_file_extents;
-        set_to(_counters.file_bytes, uint64_t(_file_extents) * _extent_bytes);
+        grow_file(std::min<uint64_t>(uint64_t(_file_extents) + grow, std::numeric_limits<uint32_t>::max() - 1));
     }
     if (_extent_limit >= _max_extents) {
         throw IllegalStateException(make_string("IVF index: more than %u extents", _max_extents), VESPA_STRLOC);
@@ -977,7 +1460,7 @@ uint32_t IvfIndex::slots_available() const noexcept {
 uint32_t IvfIndex::write_new_extent(const char* entries, uint32_t count) {
     assert(count > 0 && count <= _cfg.posting_capacity);
     uint32_t extent = allocate_extent();
-    pwrite_fully(_fd, entries, size_t(count) * _entry_bytes, uint64_t(extent) * _extent_bytes);
+    pwrite_fully(_fd, entries, size_t(count) * _entry_bytes, extent_offset(extent));
     add_to(_counters.bytes_written, size_t(count) * _entry_bytes);
     set_lids(extent, 0, entries, count);
     return extent;
@@ -1082,7 +1565,7 @@ void IvfIndex::append_entry(uint32_t slot, const char* entry) {
     }
     Posting posting = decode_ref(acquire_ref(slot));
     if (posting.length < _cfg.posting_capacity) {
-        uint64_t offset = uint64_t(posting.extent) * _extent_bytes + uint64_t(posting.length) * _entry_bytes;
+        uint64_t offset = extent_offset(posting.extent) + uint64_t(posting.length) * _entry_bytes;
         pwrite_fully(_fd, entry, _entry_bytes, offset);
         add_to(_counters.bytes_written, _entry_bytes);
         set_lids(posting.extent, posting.length, entry, 1);
@@ -1310,6 +1793,8 @@ bool IvfIndex::bulk_build(const std::vector<uint32_t>& lids, vespalib::Executor*
         }
     }
     std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - start;
+    _load_source.store(IvfLoadSource::BULK_BUILD, std::memory_order_relaxed);
+    _load_seconds.store(elapsed.count(), std::memory_order_relaxed);
     LOG(info,
         "IVF index: bulk built %zu vectors of %zu documents into %" PRIu64 " entries in %" PRIu64
         " postings in %.1f s",
@@ -1406,8 +1891,8 @@ void IvfIndex::assign_generation(Generation current_gen) {
 void IvfIndex::reclaim_memory(Generation oldest_used_gen) {
     _versions.reclaim_memory(oldest_used_gen);
     _slot_hold.reclaim(oldest_used_gen, [this](uint32_t slot) { _free_slots.push_back(slot); });
-    _extent_hold.reclaim(oldest_used_gen, [this](uint32_t extent) { _free_extents.push_back(extent); });
-    set_to(_counters.free_extents, _free_extents.size());
+    _extent_hold.reclaim(oldest_used_gen, [this](uint32_t extent) { release_extent(extent); });
+    update_extent_counters();
 }
 
 GenerationGuard IvfIndex::make_generation_read_guard() const {
@@ -1524,13 +2009,47 @@ void IvfIndex::shrink_lid_space(uint32_t) {
     // Versions are kept for all docids so that stale entries never become live again.
 }
 
-std::unique_ptr<NearestNeighborIndexSaver> IvfIndex::make_saver(vespalib::GenericHeader&) const {
-    return {};
+// Called by the writer between operations, so the reassign queue is empty and the captured state is consistent with
+// the attribute snapshot taken at the same time.
+std::unique_ptr<NearestNeighborIndexSaver> IvfIndex::make_saver(GenericHeader& header) {
+    if (!_persistent) {
+        return {};
+    }
+    assert(_reassign_queue.empty());
+    if (!_file_ready) {
+        start_new_file();
+    }
+    pin_extents_for_save();
+    header.putTag(GenericHeader::Tag(save_file_tag(), ivf::save_format_version));
+    ivf::LidReader lid_reader = [this](uint32_t extent, uint32_t length, uint32_t* lids) noexcept {
+        for (uint32_t i = 0; i < length; ++i) {
+            lids[i] = lid_at(extent, i);
+        }
+    };
+    return std::make_unique<IvfIndexSaver>(capture_save_state(), std::move(lid_reader), _fd, _posting_path,
+                                           _saves_completed, _saves_started);
 }
 
-std::unique_ptr<NearestNeighborIndexLoader> IvfIndex::make_loader(FastOS_FileInterface&,
-                                                                  const vespalib::GenericHeader&) {
-    throw std::runtime_error("IVF index cannot load a saved nearest neighbor index file");
+std::unique_ptr<NearestNeighborIndexLoader> IvfIndex::make_loader(FastOS_FileInterface& file,
+                                                                  const GenericHeader&) {
+    return std::make_unique<IvfIndexLoader>([this, &file]() { load_save_file(file); });
+}
+
+bool IvfIndex::needs_build_after_load() const noexcept {
+    return _load_source.load(std::memory_order_relaxed) != IvfLoadSource::SAVE_FILE;
+}
+
+std::vector<std::pair<uint64_t, uint64_t>> IvfIndex::live_posting_ranges() const {
+    std::vector<std::pair<uint64_t, uint64_t>> ranges;
+    uint32_t                                   limit = _slot_limit.load(std::memory_order_relaxed);
+    for (uint32_t slot = 0; slot < limit; ++slot) {
+        uint64_t ref = acquire_ref(slot);
+        if (ref != 0) {
+            Posting posting = decode_ref(ref);
+            ranges.emplace_back(extent_offset(posting.extent), uint64_t(posting.length) * _entry_bytes);
+        }
+    }
+    return ranges;
 }
 
 // Scales nprobe by explore_k / k, and reads at least k_entry_factor * explore_k entries so that large targetHits
@@ -1539,8 +2058,7 @@ uint32_t IvfIndex::nprobe_for_explore(uint32_t k, uint32_t explore_k) const noex
     double scaled = std::ceil(double(_cfg.nprobe) * explore_k / std::max(k, 1u));
     double mean_entries = double(get(_counters.entries)) / std::max<uint64_t>(1, get(_counters.postings));
     double for_hits = std::ceil(_cfg.k_entry_factor * explore_k / std::max(1.0, mean_entries));
-    return static_cast<uint32_t>(
-        std::clamp(std::max(scaled, for_hits), double(_cfg.nprobe), double(_cfg.max_postings)));
+    return static_cast<uint32_t>(std::clamp(std::max(scaled, for_hits), double(_cfg.nprobe), double(_cfg.max_postings)));
 }
 
 std::vector<NearestNeighborIndex::Neighbor> IvfIndex::find_top_k(Stats& stats, uint32_t k,
@@ -1601,7 +2119,8 @@ IvfIndexStats IvfIndex::get_stats() const noexcept {
             get(_counters.extents),         get(_counters.free_extents),
             get(_counters.file_bytes),      get(_counters.bytes_written),
             get(_counters.bulk_builds),     get(_counters.gc_checks),
-            get(_counters.gc_compactions),  get(_counters.merges)};
+            get(_counters.gc_compactions),  get(_counters.merges),
+            get(_counters.pinned_extents)};
 }
 
 void IvfIndex::populate_state(vespalib::slime::Cursor& object) const {
@@ -1628,8 +2147,15 @@ void IvfIndex::populate_state(vespalib::slime::Cursor& object) const {
     object.setLong("gc_checks", stats.gc_checks);
     object.setLong("gc_compactions", stats.gc_compactions);
     object.setLong("merges", stats.merges);
+    object.setLong("pinned_extents", stats.pinned_extents);
+    object.setBool("persistent", _persistent);
+    object.setString("posting_file", _posting_path);
+    object.setLong("saves_completed", _saves_completed.load(std::memory_order_relaxed));
+    auto& load = object.setObject("load");
+    load.setString("source", load_source_name(_load_source.load(std::memory_order_relaxed)));
+    load.setDouble("seconds", _load_seconds.load(std::memory_order_relaxed));
+    load.setString("rejected_reason", _load_rejected);
     auto& cfg = object.setObject("cfg");
-    cfg.setString("dir", _cfg.dir);
     cfg.setLong("posting_capacity", _cfg.posting_capacity);
     cfg.setLong("nprobe", _cfg.nprobe);
     cfg.setLong("reassign_range", _cfg.reassign_range);
@@ -1666,6 +2192,7 @@ void IvfIndex::populate_state(vespalib::slime::Cursor& object) const {
     cfg.setString("filter_adaptive_stop", adaptive_stop_name(_cfg.filter_adaptive_stop));
     cfg.setDouble("filter_exact_ratio", _cfg.filter_exact_ratio);
     cfg.setDouble("k_entry_factor", _cfg.k_entry_factor);
+    cfg.setBool("rebuild_on_load", _cfg.rebuild_on_load);
     cfg.setLong("entry_bytes", _entry_bytes);
 }
 

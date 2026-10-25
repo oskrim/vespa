@@ -5,13 +5,14 @@
 #include "distance_function_factory.h"
 #include "doc_vector_access.h"
 #include "ivf_kmeans.h"
+#include "ivf_save_file.h"
 #include "nearest_neighbor_index.h"
 #include "prepare_result.h"
 #include "vector_bundle.h"
 
 #include <vespa/eval/eval/cell_type.h>
-#include <vespa/eval/eval/typed_cells.h>
 #include <vespa/searchcommon/attribute/ivf_index_params.h>
+#include <vespa/eval/eval/typed_cells.h>
 #include <vespa/vespalib/datastore/atomic_value_wrapper.h>
 #include <vespa/vespalib/util/generation_hold_list.h>
 #include <vespa/vespalib/util/generationhandler.h>
@@ -44,55 +45,55 @@ enum class IvfAdaptiveStop { POSTINGS, ENTRIES };
 struct IvfIndexConfig {
     using Lookup = std::function<const char*(const char* knob)>;
 
-    std::string        dir;
-    uint32_t           posting_capacity;
-    uint32_t           nprobe;
-    uint32_t           reassign_range;
-    uint32_t           max_postings;
-    uint32_t           max_rebalance_steps;
-    IvfSplitMode       split_mode;
-    uint32_t           split_iters;
-    double             split_min_side;
-    uint32_t           replicas;
-    uint32_t           replica_candidates;
-    double             replica_eps;
-    double             rng_factor;
-    bool               bulk_build;
-    double             bulk_fill;
-    uint32_t           bulk_sample;
-    uint32_t           bulk_iters;
-    double             prune_eps;
-    double             filter_min_ratio;
-    double             filter_max_scale;
-    uint32_t           bulk_coarse_probes;
-    uint32_t           gc_steps;
-    double             gc_stale_ratio;
-    double             merge_fraction;
-    double             split_live_fraction;
-    uint32_t           bulk_coarse_k;
-    bool               prefetch;
-    uint32_t           file_grow_extents;
-    double             file_grow_fraction;
-    uint32_t           medoid_sample;
-    uint32_t           medoid_rounds;
+    uint32_t     posting_capacity;
+    uint32_t     nprobe;
+    uint32_t     reassign_range;
+    uint32_t     max_postings;
+    uint32_t     max_rebalance_steps;
+    IvfSplitMode split_mode;
+    uint32_t     split_iters;
+    double       split_min_side;
+    uint32_t     replicas;
+    uint32_t     replica_candidates;
+    double       replica_eps;
+    double       rng_factor;
+    bool         bulk_build;
+    double       bulk_fill;
+    uint32_t     bulk_sample;
+    uint32_t     bulk_iters;
+    double       prune_eps;
+    double       filter_min_ratio;
+    double       filter_max_scale;
+    uint32_t     bulk_coarse_probes;
+    uint32_t     gc_steps;
+    double       gc_stale_ratio;
+    double       merge_fraction;
+    double       split_live_fraction;
+    uint32_t     bulk_coarse_k;
+    bool         prefetch;
+    uint32_t     file_grow_extents;
+    double       file_grow_fraction;
+    uint32_t     medoid_sample;
+    uint32_t     medoid_rounds;
     IvfFilterProbeMode filter_probe_mode;
-    uint32_t           filter_max_examined;
-    double             filter_entry_read_density;
-    IvfAdaptiveStop    filter_adaptive_stop;
-    double             filter_exact_ratio;
-    double             k_entry_factor;
+    uint32_t     filter_max_examined;
+    double       filter_entry_read_density;
+    IvfAdaptiveStop filter_adaptive_stop;
+    double       filter_exact_ratio;
+    double       k_entry_factor;
+    bool         rebuild_on_load;
 
-    explicit IvfIndexConfig(std::string dir_in);
+    IvfIndexConfig();
 
     // Knob names without the VESPA_IVF_ prefix, e.g. "POSTING_CAPACITY".
     static const std::vector<std::string>& knob_names();
 
     // Reads every knob through lookup (nullptr = default). Bad or out-of-range values log a warning and keep the
     // default.
-    static IvfIndexConfig from_lookup(std::string dir_in, const Lookup& lookup);
+    static IvfIndexConfig from_lookup(const Lookup& lookup);
 
-    // Config from the schema's 'ivf' index block: knob names in kebab case (posting-capacity), plus an optional
-    // "dir" for the posting file (default $VESPA_HOME/var/tmp). Unknown names log a warning.
+    // Config from the schema's 'ivf' index block: knob names in kebab case (posting-capacity). Unknown names log a
+    // warning.
     static IvfIndexConfig from_params(const search::attribute::IvfIndexParams& params);
 
     // Resets out-of-range values to their defaults, with one warning each.
@@ -120,7 +121,10 @@ struct IvfIndexStats {
     uint64_t gc_checks;
     uint64_t gc_compactions;
     uint64_t merges;
+    uint64_t pinned_extents;
 };
+
+enum class IvfLoadSource { NONE, SAVE_FILE, BULK_BUILD };
 
 struct IvfProbeStats {
     uint32_t postings_probed;
@@ -156,7 +160,13 @@ struct PreparedAdd final : public PrepareResult {
  * per posting before reading it.
  *
  * Supports 1 writer thread and multiple reader threads without mutexes. Retired extents and centroid slots are
- * reused only after a generation hold cycle. The index is not persisted; it is rebuilt from the attribute on load.
+ * reused only after a generation hold cycle.
+ *
+ * The posting file is named after the attribute and lives in the attribute's directory. An attribute flush saves the
+ * in-memory state (centroids, posting references, lid tables, versions) to the snapshot's index save file, which
+ * references the posting file by its file id; loading it, then replaying the transaction log, restores the index
+ * without a rebuild. When the file location is unknown or the file is in use, the index uses an unlinked file, is not
+ * saved, and is rebuilt from the attribute on load.
  */
 class IvfIndex : public NearestNeighborIndex {
 public:
@@ -172,6 +182,12 @@ private:
     struct Posting {
         uint32_t extent;
         uint32_t length;
+    };
+
+    // Extents freed before the save with this sequence number was captured; reusable once that save is durable.
+    struct PinnedExtents {
+        uint64_t              save_seq;
+        std::vector<uint32_t> extents;
     };
 
     struct ReassignTask {
@@ -208,6 +224,7 @@ private:
         std::atomic<uint64_t> gc_checks{0};
         std::atomic<uint64_t> gc_compactions{0};
         std::atomic<uint64_t> merges{0};
+        std::atomic<uint64_t> pinned_extents{0};
     };
 
     const DocVectorAccess&                   _vectors;
@@ -220,7 +237,12 @@ private:
     size_t                                   _extent_bytes;
     size_t                                   _centroid_bytes;
     ivf::VectorSpace                         _space;
+    std::string                              _posting_path; // empty for an unlinked file
+    bool                                     _persistent;
     int                                      _fd;
+    bool                                     _file_ready;
+    uint64_t                                 _file_id;
+    uint64_t                                 _disk_file_id; // from the header found when the file was opened
 
     void*                 _slot_table;
     size_t                _slot_table_bytes;
@@ -239,6 +261,10 @@ private:
     IdHoldList                  _extent_hold;
     std::vector<uint32_t>       _free_slots;
     std::vector<uint32_t>       _free_extents;
+    std::vector<uint32_t>       _pending_extents;
+    std::vector<PinnedExtents>  _pinned_extents;
+    uint64_t                    _saves_started;
+    std::atomic<uint64_t>       _saves_completed;
     uint32_t                    _extent_limit;
     uint32_t                    _file_extents;
     uint32_t                    _gc_cursor;
@@ -248,14 +274,18 @@ private:
     std::mt19937              _rng;
     Counters                  _counters;
     mutable std::atomic<bool> _fadvise_warned;
+    std::atomic<IvfLoadSource> _load_source;
+    std::atomic<double>        _load_seconds;
+    std::string                _load_rejected; // reason the last save file was not used; written before readers exist
 
     // Reader safe accessors.
     static uint64_t make_ref(uint32_t extent, uint32_t length) noexcept {
-        return (static_cast<uint64_t>(extent + 1) << 32) | length;
+        return ivf::make_posting_ref(extent, length);
     }
     static Posting decode_ref(uint64_t ref) noexcept {
-        return {static_cast<uint32_t>(ref >> 32) - 1, static_cast<uint32_t>(ref)};
+        return {ivf::posting_ref_extent(ref), ivf::posting_ref_length(ref)};
     }
+    uint64_t extent_offset(uint32_t extent) const noexcept;
     uint64_t acquire_ref(uint32_t slot) const noexcept;
     void release_ref(uint32_t slot, uint64_t ref) noexcept;
     TypedCells centroid(uint32_t slot) const noexcept;
@@ -281,7 +311,21 @@ private:
                                  uint32_t nprobe, const vespalib::Deadline& doom, double distance_threshold,
                                  IvfProbeStats* probe_stats) const;
 
+    using CounterField = std::atomic<uint64_t> Counters::*;
+    static const std::vector<CounterField>& saved_counters();
+
     // Writer only.
+    void open_posting_file();
+    void grow_file(uint64_t new_file_extents);
+    void start_new_file();
+    void release_extent(uint32_t extent);
+    void pin_extents_for_save();
+    void update_extent_counters() noexcept;
+    ivf::SaveLayout layout() const noexcept;
+    ivf::SaveState capture_save_state() const;
+    std::string check_save_state(const ivf::SaveState& state) const;
+    void apply_save_state(const ivf::SaveState& state);
+    void load_save_file(FastOS_FileInterface& file);
     void check_cells(TypedCells cells) const;
     void encode_entry(char* dst, uint32_t docid, uint32_t version, TypedCells cells) const noexcept;
     uint32_t bump_version(uint32_t docid);
@@ -315,14 +359,22 @@ private:
                        uint32_t& budget);
 
 public:
+    // An empty posting_path gives an unlinked posting file and an index that is never saved.
     IvfIndex(const DocVectorAccess& vectors, DistanceFunctionFactory::UP distance_ff,
              vespalib::eval::CellType cell_type, size_t vector_size, search::attribute::DistanceMetric metric,
-             const IvfIndexConfig& cfg);
+             const IvfIndexConfig& cfg, const std::string& posting_path);
     IvfIndex(const IvfIndex&) = delete;
     IvfIndex& operator=(const IvfIndex&) = delete;
     ~IvfIndex() override;
 
     const IvfIndexConfig& config() const noexcept { return _cfg; }
+
+    // The posting file of an attribute with the given base file name: '<attribute name>.ivfpostings' in the
+    // attribute's directory, which is the parent of a 'snapshot-<serial>' directory. Empty when the base file name
+    // has no directory.
+    static std::string posting_path_for(const std::string& base_file_name);
+    // The generic header tag that marks an index save file written by this index.
+    static const std::string& save_file_tag();
 
     // Implements NearestNeighborIndex
     void add_document(uint32_t docid) override;
@@ -342,9 +394,10 @@ public:
     void populate_address_space_usage(search::AddressSpaceUsage& usage) const override;
     std::unique_ptr<vespalib::StateExplorer> make_state_explorer() const override;
     void shrink_lid_space(uint32_t doc_id_limit) override;
-    std::unique_ptr<NearestNeighborIndexSaver> make_saver(vespalib::GenericHeader& header) const override;
+    std::unique_ptr<NearestNeighborIndexSaver> make_saver(vespalib::GenericHeader& header) override;
     std::unique_ptr<NearestNeighborIndexLoader> make_loader(FastOS_FileInterface&          file,
                                                             const vespalib::GenericHeader& header) override;
+    bool needs_build_after_load() const noexcept override;
     std::vector<Neighbor> find_top_k(Stats& stats, uint32_t k, const BoundDistanceFunction& df, uint32_t explore_k,
                                      double exploration_slack, bool prefetch_tensors, const vespalib::Deadline& doom,
                                      double distance_threshold) const override;
@@ -374,6 +427,11 @@ public:
     void drop_file_cache() const;
     IvfIndexStats get_stats() const noexcept;
     void populate_state(vespalib::slime::Cursor& object) const;
+    bool persistent() const noexcept { return _persistent; }
+    const std::string& posting_path() const noexcept { return _posting_path; }
+    IvfLoadSource load_source() const noexcept { return _load_source.load(std::memory_order_relaxed); }
+    // File byte ranges (offset, bytes) of the live postings. Writer only; used by tests.
+    std::vector<std::pair<uint64_t, uint64_t>> live_posting_ranges() const;
 };
 
 } // namespace search::tensor

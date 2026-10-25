@@ -5,6 +5,7 @@
 #include <vespa/eval/eval/value.h>
 #include <vespa/eval/eval/value_codec.h>
 #include <vespa/eval/eval/value_type.h>
+#include <vespa/fastos/file.h>
 #include <vespa/searchcommon/attribute/config.h>
 #include <vespa/searchlib/queryeval/global_filter.h>
 #include <vespa/searchlib/tensor/default_nearest_neighbor_index_factory.h>
@@ -14,9 +15,13 @@
 #include <vespa/searchlib/tensor/empty_subspace.h>
 #include <vespa/searchlib/tensor/ivf_index.h>
 #include <vespa/searchlib/tensor/ivf_kmeans.h>
+#include <vespa/searchlib/tensor/nearest_neighbor_index_loader.h>
+#include <vespa/searchlib/tensor/nearest_neighbor_index_saver.h>
 #include <vespa/searchlib/tensor/subspace_type.h>
 #include <vespa/searchlib/tensor/vector_bundle.h>
 #include <vespa/searchlib/test/directory_handler.h>
+#include <vespa/searchlib/test/vector_buffer_writer.h>
+#include <vespa/vespalib/data/fileheader.h>
 #include <vespa/vespalib/data/slime/slime.h>
 #include <vespa/vespalib/datastore/compaction_strategy.h>
 #include <vespa/vespalib/gtest/gtest.h>
@@ -31,6 +36,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <limits>
 #include <map>
 #include <random>
@@ -198,12 +205,22 @@ protected:
     ~IvfIndexTest() override;
 
     void make_index(CellType cell_type, uint32_t dims, DistanceMetric metric, const IvfIndexConfig& cfg) {
+        make_named_index(cell_type, dims, metric, cfg, "");
+    }
+    void make_named_index(CellType cell_type, uint32_t dims, DistanceMetric metric, const IvfIndexConfig& cfg,
+                          const std::string& posting_path) {
+        index.reset();
         vectors = std::make_unique<TestVectors>(cell_type, dims);
-        index = std::make_unique<IvfIndex>(*vectors, make_distance_function_factory(metric, cell_type), cell_type,
-                                           dims, metric, cfg);
+        reopen_index(metric, cfg, posting_path);
+    }
+    // A new index over the current vectors, as after a restart.
+    void reopen_index(DistanceMetric metric, const IvfIndexConfig& cfg, const std::string& posting_path) {
+        index.reset();
+        index = std::make_unique<IvfIndex>(*vectors, make_distance_function_factory(metric, vectors->cell_type()),
+                                           vectors->cell_type(), vectors->dims(), metric, cfg, posting_path);
     }
     IvfIndexConfig config(uint32_t posting_capacity) const {
-        IvfIndexConfig cfg(ivf_test_dir());
+        IvfIndexConfig cfg;
         cfg.posting_capacity = posting_capacity;
         return cfg;
     }
@@ -322,7 +339,7 @@ void IvfIndexTest::churn_recall_test(const char* label, CellType cell_type, uint
                                      double noise) {
     constexpr uint32_t num_docs = 20000;
     constexpr uint32_t k = 10;
-    make_index(cell_type, dims, metric, IvfIndexConfig(ivf_test_dir()));
+    make_index(cell_type, dims, metric, IvfIndexConfig());
     Generator gen(cell_type, dims, 200, noise, 42);
     for (uint32_t docid = 1; docid <= num_docs; ++docid) {
         add(docid, gen.sample());
@@ -522,7 +539,7 @@ TEST_F(IvfIndexTest, adaptive_filter_probing_skips_postings_without_matches) {
     for (const auto& q : queries) {
         NearestNeighborIndex::Stats stats;
         IvfProbeStats               probe_stats;
-        auto                        result = query(q.data(), k, nprobe, filter.get(), stats, probe_stats);
+        auto result = query(q.data(), k, nprobe, filter.get(), stats, probe_stats);
         EXPECT_EQ(k, result.size());
         for (const auto& n : result) {
             EXPECT_TRUE(filter->check(n.docid)) << "docid " << n.docid;
@@ -575,7 +592,7 @@ TEST_F(IvfIndexTest, large_k_reads_enough_postings_for_k_hits) {
     commit();
     Bytes q = gen.sample();
     for (uint32_t k : {10u, 1000u, 3000u}) {
-        auto df = index->distance_function_factory().for_query_vector(vectors->cells_of(q.data()));
+        auto                        df = index->distance_function_factory().for_query_vector(vectors->cells_of(q.data()));
         NearestNeighborIndex::Stats stats;
         auto result = index->find_top_k(stats, k, *df, k, 0.0, false, Deadline::never(), max_distance);
         EXPECT_EQ(k, result.size()) << "k " << k;
@@ -586,7 +603,7 @@ TEST_F(IvfIndexTest, filter_is_honored) {
     constexpr uint32_t dims = 32;
     constexpr uint32_t num_docs = 5000;
     constexpr uint32_t k = 10;
-    make_index(CellType::FLOAT, dims, DistanceMetric::Euclidean, IvfIndexConfig(ivf_test_dir()));
+    make_index(CellType::FLOAT, dims, DistanceMetric::Euclidean, IvfIndexConfig());
     Generator gen(CellType::FLOAT, dims, 100, 0.6, 11);
     for (uint32_t docid = 1; docid <= num_docs; ++docid) {
         add(docid, gen.sample());
@@ -909,13 +926,15 @@ TEST(IvfConfigTest, knobs_are_parsed_and_bad_values_fall_back_to_defaults) {
                                               {"RNG_FACTOR", "abc"},
                                               {"BULK_FILL", "2.0"},
                                               {"FILTER_MIN_RATIO", "0.2"},
-                                              {"REPLICA_CANDIDATES", "2"}};
+                                              {"REPLICA_CANDIDATES", "2"},
+                                              {"REBUILD_ON_LOAD", "true"},
+                                              {"PREFETCH", "0"}};
     auto                               lookup = [&env](const char* knob) -> const char* {
         auto it = env.find(knob);
         return (it == env.end()) ? nullptr : it->second.c_str();
     };
-    auto                 cfg = IvfIndexConfig::from_lookup("dir", lookup);
-    const IvfIndexConfig def("dir");
+    auto                 cfg = IvfIndexConfig::from_lookup(lookup);
+    const IvfIndexConfig def;
     EXPECT_EQ(128u, cfg.posting_capacity);
     EXPECT_EQ(4u, cfg.replicas);
     EXPECT_DOUBLE_EQ(0.25, cfg.replica_eps);
@@ -927,7 +946,10 @@ TEST(IvfConfigTest, knobs_are_parsed_and_bad_values_fall_back_to_defaults) {
     EXPECT_DOUBLE_EQ(def.rng_factor, cfg.rng_factor);
     EXPECT_DOUBLE_EQ(def.bulk_fill, cfg.bulk_fill);
     EXPECT_EQ(def.replica_candidates, cfg.replica_candidates);
-    EXPECT_EQ(36u, IvfIndexConfig::knob_names().size());
+    EXPECT_FALSE(def.rebuild_on_load);
+    EXPECT_TRUE(cfg.rebuild_on_load);
+    EXPECT_FALSE(cfg.prefetch);
+    EXPECT_EQ(37u, IvfIndexConfig::knob_names().size());
 }
 
 TEST_F(IvfIndexTest, two_phase_add_with_prepare_on_other_thread) {
@@ -1032,6 +1054,351 @@ TEST_F(IvfIndexTest, concurrent_readers_during_feed) {
 
 namespace {
 
+struct Op {
+    enum class Kind { ADD, REMOVE, COMMIT, SWEEP };
+    Kind     kind;
+    uint32_t docid;
+    Bytes    vector;
+};
+
+// A deterministic mix of inserts that split postings, removes, updates, GC sweeps and merges.
+std::vector<Op> heavy_mutations(Generator& gen, uint32_t first_new_docid, uint32_t old_docs, uint32_t count) {
+    std::vector<Op> ops;
+    uint32_t        next = first_new_docid;
+    for (uint32_t i = 1; i <= count; ++i) {
+        uint32_t pick = gen.uniform(0, 9);
+        if (pick < 4) {
+            ops.push_back({Op::Kind::ADD, next++, gen.sample()});
+        } else if (pick < 7) {
+            ops.push_back({Op::Kind::REMOVE, gen.uniform(1, old_docs), {}});
+        } else {
+            uint32_t docid = gen.uniform(1, old_docs);
+            ops.push_back({Op::Kind::REMOVE, docid, {}});
+            ops.push_back({Op::Kind::ADD, docid, gen.sample()});
+        }
+        if ((i % 50) == 0) {
+            ops.push_back({Op::Kind::COMMIT, 0, {}});
+        }
+        if ((i % 400) == 0) {
+            ops.push_back({Op::Kind::SWEEP, 0, {}});
+        }
+    }
+    ops.push_back({Op::Kind::COMMIT, 0, {}});
+    return ops;
+}
+
+Bytes read_file(const std::string& path) {
+    std::ifstream in(path, std::ios::binary);
+    return Bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+}
+
+void write_file(const std::string& path, const Bytes& data) {
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    out.write(data.data(), data.size());
+    ASSERT_TRUE(out.good()) << path;
+}
+
+Bytes read_ranges(const std::string& path, const std::vector<std::pair<uint64_t, uint64_t>>& ranges) {
+    std::ifstream in(path, std::ios::binary);
+    Bytes         result;
+    for (const auto& [offset, bytes] : ranges) {
+        Bytes part(bytes);
+        in.seekg(offset);
+        in.read(part.data(), bytes);
+        EXPECT_TRUE(in.good()) << "offset " << offset;
+        result.insert(result.end(), part.begin(), part.end());
+    }
+    return result;
+}
+
+void expect_same_counters(const IvfIndexStats& a, const IvfIndexStats& b, bool same_extents) {
+    EXPECT_EQ(a.postings, b.postings);
+    EXPECT_EQ(a.slot_limit, b.slot_limit);
+    EXPECT_EQ(a.entries, b.entries);
+    EXPECT_EQ(a.live_entries, b.live_entries);
+    EXPECT_EQ(a.splits, b.splits);
+    EXPECT_EQ(a.split_fallbacks, b.split_fallbacks);
+    EXPECT_EQ(a.compactions, b.compactions);
+    EXPECT_EQ(a.reassign_checks, b.reassign_checks);
+    EXPECT_EQ(a.moves, b.moves);
+    EXPECT_EQ(a.dropped_steps, b.dropped_steps);
+    EXPECT_EQ(a.dropped_entries, b.dropped_entries);
+    EXPECT_EQ(a.prepared_retired, b.prepared_retired);
+    EXPECT_EQ(a.bytes_written, b.bytes_written);
+    EXPECT_EQ(a.bulk_builds, b.bulk_builds);
+    EXPECT_EQ(a.gc_checks, b.gc_checks);
+    EXPECT_EQ(a.gc_compactions, b.gc_compactions);
+    EXPECT_EQ(a.merges, b.merges);
+    if (same_extents) {
+        EXPECT_EQ(a.extents, b.extents);
+        EXPECT_EQ(a.file_bytes, b.file_bytes);
+    }
+}
+
+} // namespace
+
+class IvfPersistenceTest : public IvfIndexTest {
+protected:
+    std::string dir;
+
+    IvfPersistenceTest() : IvfIndexTest(), dir(ivf_test_dir() + "/persistence") {
+        std::filesystem::remove_all(dir);
+        std::filesystem::create_directories(dir);
+    }
+    ~IvfPersistenceTest() override;
+    std::string path(const char* name) const { return dir + "/" + name; }
+    void apply(const Op& op) {
+        switch (op.kind) {
+        case Op::Kind::ADD:
+            vectors->set(op.docid, op.vector);
+            index->add_document(op.docid);
+            break;
+        case Op::Kind::REMOVE:
+            remove(op.docid);
+            break;
+        case Op::Kind::COMMIT:
+            commit();
+            break;
+        case Op::Kind::SWEEP:
+            index->inc_generation();
+            index->consider_compact(vespalib::datastore::CompactionStrategy());
+            commit();
+            break;
+        }
+    }
+    std::unique_ptr<NearestNeighborIndexSaver> init_save() {
+        vespalib::GenericHeader header;
+        auto                    saver = index->make_saver(header);
+        EXPECT_TRUE(header.hasTag(IvfIndex::save_file_tag()));
+        return saver;
+    }
+    void save_to(const std::string& save_path) {
+        auto saver = init_save();
+        ASSERT_TRUE(saver);
+        search::test::VectorBufferWriter writer;
+        saver->save(writer);
+        write_file(save_path, writer.output);
+    }
+    void load_from(const std::string& save_path) {
+        FastOS_File file(save_path.c_str());
+        ASSERT_TRUE(file.OpenReadOnly());
+        vespalib::GenericHeader header;
+        auto                    loader = index->make_loader(file, header);
+        while (loader->load_next()) {
+        }
+    }
+    std::vector<std::vector<Neighbor>> run_queries(const std::vector<Bytes>& queries, uint32_t nprobe) const {
+        std::vector<std::vector<Neighbor>> results;
+        for (const auto& q : queries) {
+            NearestNeighborIndex::Stats stats;
+            IvfProbeStats               probe_stats;
+            results.push_back(query(q.data(), 10, nprobe, nullptr, stats, probe_stats));
+        }
+        return results;
+    }
+    std::string rejected_reason() const { return state().get()["load"]["rejected_reason"].asString().make_string(); }
+};
+
+IvfPersistenceTest::~IvfPersistenceTest() = default;
+
+TEST_F(IvfPersistenceTest, save_and_load_restore_search_results_and_counters) {
+    constexpr uint32_t dims = 16;
+    auto               cfg = config(32);
+    make_named_index(CellType::FLOAT, dims, DistanceMetric::Euclidean, cfg, path("p.ivfpostings"));
+    ASSERT_TRUE(index->persistent());
+    Generator gen(CellType::FLOAT, dims, 40, 0.5, 37);
+    for (uint32_t docid = 1; docid <= 3000; ++docid) {
+        add(docid, gen.sample());
+    }
+    for (uint32_t docid = 1; docid <= 3000; docid += 7) {
+        remove(docid);
+    }
+    commit();
+    save_to(path("s.nnidx"));
+    std::vector<Bytes> queries;
+    for (uint32_t i = 0; i < 50; ++i) {
+        queries.push_back(gen.sample());
+    }
+    auto expected = run_queries(queries, 8);
+    auto expected_stats = index->get_stats();
+    EXPECT_GT(expected_stats.splits, 0u);
+
+    reopen_index(DistanceMetric::Euclidean, cfg, path("p.ivfpostings"));
+    EXPECT_EQ(0u, index->get_stats().postings);
+    load_from(path("s.nnidx"));
+    EXPECT_EQ(IvfLoadSource::SAVE_FILE, index->load_source());
+    EXPECT_FALSE(index->needs_build_after_load());
+    EXPECT_EQ("save_file", state().get()["load"]["source"].asString().make_string());
+    EXPECT_EQ(expected, run_queries(queries, 8));
+    expect_same_counters(expected_stats, index->get_stats(), true);
+
+    for (uint32_t docid = 3001; docid <= 3500; ++docid) {
+        add(docid, gen.sample());
+    }
+    commit();
+    for (uint32_t docid = 3001; docid <= 3500; docid += 50) {
+        EXPECT_TRUE(contains(query(vectors->raw(docid), 1), docid)) << docid;
+    }
+}
+
+TEST_F(IvfPersistenceTest, old_save_plus_replay_gives_the_live_index) {
+    constexpr uint32_t dims = 16;
+    constexpr uint32_t initial = 3000;
+    auto               cfg = config(32);
+    cfg.gc_steps = 64;
+    cfg.merge_fraction = 0.25;
+    const std::string posting = path("p.ivfpostings");
+    make_named_index(CellType::FLOAT, dims, DistanceMetric::Euclidean, cfg, posting);
+    Generator             gen(CellType::FLOAT, dims, 40, 0.5, 41);
+    std::vector<uint32_t> lids;
+    for (uint32_t docid = 1; docid <= initial; ++docid) {
+        vectors->set(docid, gen.sample());
+        lids.push_back(docid);
+    }
+    ASSERT_TRUE(index->bulk_build(lids, nullptr));
+    commit();
+    for (uint32_t docid = initial + 1; docid <= initial + 500; ++docid) {
+        add(docid, gen.sample());
+    }
+    commit();
+    save_to(path("s.nnidx"));
+    std::vector<Bytes> saved_docs;
+    for (uint32_t docid = 0; docid < vectors->docid_limit(); ++docid) {
+        saved_docs.push_back(vectors->has(docid) ? vectors->raw(docid) : Bytes());
+    }
+    auto saved_ranges = index->live_posting_ranges();
+    auto saved_bytes = read_ranges(posting, saved_ranges);
+    auto saved_stats = index->get_stats();
+
+    auto ops = heavy_mutations(gen, initial + 501, initial + 500, 6000);
+    for (const auto& op : ops) {
+        apply(op);
+    }
+    auto live_stats = index->get_stats();
+    EXPECT_GT(live_stats.splits, saved_stats.splits);
+    EXPECT_GT(live_stats.compactions + live_stats.gc_compactions, saved_stats.compactions + saved_stats.gc_compactions);
+    EXPECT_GT(live_stats.merges, saved_stats.merges);
+    EXPECT_GT(live_stats.pinned_extents, 0u);
+    EXPECT_EQ(saved_bytes, read_ranges(posting, saved_ranges)) << "a posting of the old save was overwritten";
+    std::vector<Bytes> queries;
+    for (uint32_t i = 0; i < 50; ++i) {
+        queries.push_back(gen.sample());
+    }
+    auto live_results = run_queries(queries, 16);
+
+    // A crash: the old save is the newest durable one, and the transaction log replays the same operations.
+    index.reset();
+    vectors = std::make_unique<TestVectors>(CellType::FLOAT, dims);
+    for (uint32_t docid = 0; docid < saved_docs.size(); ++docid) {
+        if (!saved_docs[docid].empty()) {
+            vectors->set(docid, saved_docs[docid]);
+        }
+    }
+    reopen_index(DistanceMetric::Euclidean, cfg, posting);
+    load_from(path("s.nnidx"));
+    ASSERT_EQ(IvfLoadSource::SAVE_FILE, index->load_source()) << rejected_reason();
+    for (const auto& op : ops) {
+        apply(op);
+    }
+    EXPECT_EQ(live_results, run_queries(queries, 16));
+    expect_same_counters(live_stats, index->get_stats(), false);
+}
+
+TEST_F(IvfPersistenceTest, freed_extents_are_reused_only_after_a_newer_save_completed) {
+    constexpr uint32_t dims = 16;
+    make_named_index(CellType::FLOAT, dims, DistanceMetric::Euclidean, config(16), path("p.ivfpostings"));
+    Generator gen(CellType::FLOAT, dims, 30, 0.5, 43);
+    uint32_t  docid = 0;
+    auto      feed = [&](uint32_t count) {
+        for (uint32_t i = 0; i < count; ++i) {
+            ++docid;
+            add(docid, gen.sample());
+        }
+        commit();
+    };
+    feed(1000);
+    auto stats = index->get_stats();
+    EXPECT_GT(stats.pinned_extents, 0u);
+    EXPECT_EQ(0u, stats.free_extents);
+
+    save_to(path("s1.nnidx"));
+    feed(1000);
+    EXPECT_EQ(0u, index->get_stats().free_extents);
+    uint64_t pinned_by_s1 = stats.pinned_extents;
+
+    auto unfinished = init_save();
+    stats = index->get_stats();
+    EXPECT_GE(stats.free_extents, pinned_by_s1) << "save 1 completed, so its extents are free at the next save";
+    uint64_t pinned_by_unfinished = stats.pinned_extents;
+    EXPECT_GT(pinned_by_unfinished, 0u);
+
+    uint64_t free_before = stats.free_extents;
+    feed(1000);
+    save_to(path("s3.nnidx"));
+    stats = index->get_stats();
+    EXPECT_GE(stats.pinned_extents, pinned_by_unfinished) << "an unfinished save keeps its extents pinned";
+    EXPECT_LE(stats.free_extents, free_before);
+
+    unfinished.reset();
+    save_to(path("s4.nnidx"));
+    EXPECT_EQ(0u, index->get_stats().pinned_extents) << "save 3 completed, so everything pinned before it is free";
+}
+
+TEST_F(IvfPersistenceTest, unusable_save_files_are_rejected_and_leave_the_index_empty) {
+    constexpr uint32_t dims = 16;
+    auto               cfg = config(32);
+    const std::string  posting = path("p.ivfpostings");
+    make_named_index(CellType::FLOAT, dims, DistanceMetric::Euclidean, cfg, posting);
+    Generator gen(CellType::FLOAT, dims, 40, 0.5, 47);
+    for (uint32_t docid = 1; docid <= 1500; ++docid) {
+        add(docid, gen.sample());
+    }
+    commit();
+    save_to(path("good.nnidx"));
+    uint64_t postings = index->get_stats().postings;
+    Bytes    good = read_file(path("good.nnidx"));
+
+    auto expect_rejected = [&](const IvfIndexConfig& load_cfg, const Bytes& data, const char* label,
+                               const char* reason_part) {
+        SCOPED_TRACE(label);
+        write_file(path("case.nnidx"), data);
+        reopen_index(DistanceMetric::Euclidean, load_cfg, posting);
+        load_from(path("case.nnidx"));
+        EXPECT_TRUE(index->needs_build_after_load());
+        EXPECT_EQ(IvfLoadSource::NONE, index->load_source());
+        EXPECT_EQ(0u, index->get_stats().postings);
+        EXPECT_NE(std::string::npos, rejected_reason().find(reason_part)) << rejected_reason();
+    };
+    Bytes truncated(good.begin(), good.begin() + good.size() / 2);
+    expect_rejected(cfg, truncated, "truncated", "");
+    Bytes flipped = good;
+    flipped[flipped.size() / 2] ^= 0x10;
+    expect_rejected(cfg, flipped, "bad checksum", "checksum");
+    expect_rejected(config(64), good, "other posting-capacity", "posting-capacity");
+    auto rebuild = cfg;
+    rebuild.rebuild_on_load = true;
+    expect_rejected(rebuild, good, "rebuild-on-load", "rebuild-on-load");
+
+    reopen_index(DistanceMetric::Euclidean, cfg, posting);
+    load_from(path("good.nnidx"));
+    EXPECT_EQ(IvfLoadSource::SAVE_FILE, index->load_source()) << rejected_reason();
+    EXPECT_EQ(postings, index->get_stats().postings);
+
+    index.reset();
+    std::filesystem::resize_file(posting, 4096 + 1);
+    expect_rejected(cfg, good, "short posting file", "shorter");
+    std::vector<uint32_t> lids;
+    for (uint32_t docid = 1; docid <= 1500; ++docid) {
+        lids.push_back(docid);
+    }
+    ASSERT_TRUE(index->bulk_build(lids, nullptr));
+    commit();
+    EXPECT_GT(index->get_stats().postings, 0u);
+    expect_rejected(cfg, good, "posting file rewritten", "rewritten");
+}
+
+namespace {
+
 const std::string attr_spec("tensor<float>(x[8])");
 const std::string attr_dir("ivf_attr_test");
 const std::string attr_name(attr_dir + "/my_attr");
@@ -1047,7 +1414,7 @@ std::unique_ptr<vespalib::eval::Value> make_tensor(const Bytes& bytes) {
 }
 
 // An attribute with an index; with ivf params (as the schema's 'ivf' block produces) the index is IVF.
-std::shared_ptr<DenseTensorAttribute> make_attr(const NearestNeighborIndexFactory&                      factory,
+std::shared_ptr<DenseTensorAttribute> make_attr(const NearestNeighborIndexFactory&                  factory,
                                                 const std::optional<search::attribute::IvfIndexParams>& ivf) {
     search::attribute::Config cfg(search::attribute::BasicType::TENSOR, search::attribute::CollectionType::SINGLE);
     cfg.setTensorType(ValueType::from_spec(attr_spec));
@@ -1088,92 +1455,161 @@ TEST(IvfAttributeTest, ivf_params_in_attribute_config_select_the_ivf_index) {
     auto                               hnsw_attr = make_attr(factory, std::nullopt);
     EXPECT_EQ(nullptr, ivf_of(*hnsw_attr));
     EXPECT_NE(nullptr, hnsw_attr->nearest_neighbor_index());
-    search::attribute::IvfIndexParams params({{"dir", ivf_test_dir()},
-                                              {"posting-capacity", "32"},
-                                              {"filter-probe-mode", "adaptive"},
-                                              {"no-such-knob", "1"}});
-    auto                              ivf_attr = make_attr(factory, params);
+    hnsw_attr.reset();
+    search::attribute::IvfIndexParams params(
+        {{"posting-capacity", "32"}, {"filter-probe-mode", "adaptive"}, {"no-such-knob", "1"}});
+    auto ivf_attr = make_attr(factory, params);
     ASSERT_NE(nullptr, ivf_of(*ivf_attr));
     EXPECT_EQ(32u, ivf_of(*ivf_attr)->config().posting_capacity);
     EXPECT_EQ(IvfFilterProbeMode::ADAPTIVE, ivf_of(*ivf_attr)->config().filter_probe_mode);
-    EXPECT_EQ(ivf_test_dir(), ivf_of(*ivf_attr)->config().dir);
+    EXPECT_TRUE(ivf_of(*ivf_attr)->persistent());
+    EXPECT_EQ(attr_name + ".ivfpostings", ivf_of(*ivf_attr)->posting_path());
 }
 
-TEST(IvfAttributeTest, dense_tensor_attribute_with_ivf_params_rebuilds_on_load) {
-    search::attribute::IvfIndexParams ivf(
-        {{"dir", ivf_test_dir()}, {"posting-capacity", "16"}, {"nprobe", "100000"}});
-    search::test::DirectoryHandler     dir_handler(attr_dir);
+TEST(IvfAttributeTest, posting_file_lives_in_the_attribute_directory) {
+    EXPECT_EQ("/var/db/attribute/emb/emb.ivfpostings",
+              IvfIndex::posting_path_for("/var/db/attribute/emb/snapshot-1234/emb"));
+    EXPECT_EQ("dir/emb.ivfpostings", IvfIndex::posting_path_for("dir/emb"));
+    EXPECT_EQ("", IvfIndex::posting_path_for("emb"));
+}
+
+namespace {
+
+struct AttrFixture {
+    search::attribute::IvfIndexParams  ivf;
+    search::test::DirectoryHandler     dir_handler;
     DefaultNearestNeighborIndexFactory factory;
-    Generator                          gen(CellType::FLOAT, 8, 20, 0.5, 13);
-    std::vector<Bytes>                 current(401);
-    auto                               attr = make_attr(factory, ivf);
-    attr->addReservedDoc();
-    ASSERT_NE(nullptr, ivf_of(*attr));
-    EXPECT_EQ(16u, ivf_of(*attr)->config().posting_capacity);
-    for (uint32_t docid = 1; docid <= 400; ++docid) {
-        current[docid] = gen.sample();
-        set_tensor(*attr, docid, current[docid]);
-    }
-    std::vector<Bytes> old_vectors(401);
-    for (uint32_t docid = 1; docid <= 40; ++docid) {
-        old_vectors[docid] = current[docid];
-        current[docid] = gen.sample();
-        auto tensor = make_tensor(current[docid]);
-        auto prepared = attr->prepare_set_tensor(docid, *tensor);
-        EXPECT_TRUE(prepared);
-        attr->complete_set_tensor(docid, *tensor, std::move(prepared));
-        attr->commit();
-    }
-    for (uint32_t docid = 41; docid <= 80; ++docid) {
-        old_vectors[docid] = current[docid];
-        current[docid].clear();
-        attr->clearDoc(docid);
-        attr->commit();
-    }
-    for (uint32_t docid = 1; docid <= 40; ++docid) {
-        auto by_new = attr_query(*attr, current[docid], 1);
-        ASSERT_EQ(1u, by_new.size());
-        EXPECT_EQ(docid, by_new[0].docid);
-        EXPECT_EQ(0.0, by_new[0].distance);
-        for (const auto& n : attr_query(*attr, old_vectors[docid], 5)) {
-            EXPECT_TRUE(n.docid != docid || n.distance > 0.0);
-        }
-    }
-    for (uint32_t docid = 41; docid <= 80; ++docid) {
-        for (const auto& n : attr_query(*attr, old_vectors[docid], 5)) {
-            EXPECT_NE(docid, n.docid);
-        }
-    }
-    EXPECT_GT(ivf_of(*attr)->get_stats().splits, 0u);
+    Generator                          gen;
+    std::vector<Bytes>                 current;
+    std::vector<Bytes>                 old_vectors;
     std::vector<Bytes>                 queries;
     std::vector<std::vector<Neighbor>> expected;
-    for (uint32_t i = 0; i < 20; ++i) {
-        queries.push_back(gen.sample());
-        expected.push_back(attr_query(*attr, queries.back(), 10));
-        EXPECT_EQ(10u, expected.back().size());
-    }
+    IvfIndexStats                      saved_stats;
 
-    ASSERT_TRUE(attr->save());
-    EXPECT_FALSE(std::filesystem::exists(attr_name + ".nnidx"));
-    for (bool with_executor : {false, true}) {
-        SCOPED_TRACE(with_executor ? "load with executor" : "load in foreground");
-        vespalib::ThreadStackExecutor executor(2);
-        auto                          loaded = make_attr(factory, ivf);
-        ASSERT_TRUE(with_executor ? loaded->load(&executor) : loaded->load());
-        const IvfIndex* index = ivf_of(*loaded);
-        ASSERT_NE(nullptr, index);
-        EXPECT_EQ(360u, index->get_stats().live_entries);
-        EXPECT_EQ(1u, index->get_stats().bulk_builds);
-        EXPECT_EQ(0u, index->get_stats().dropped_entries);
-        for (size_t i = 0; i < queries.size(); ++i) {
-            EXPECT_EQ(expected[i], attr_query(*loaded, queries[i], 10));
+    explicit AttrFixture(search::attribute::IvfIndexParams ivf_in)
+        : ivf(std::move(ivf_in)),
+          dir_handler(attr_dir),
+          factory(),
+          gen(CellType::FLOAT, 8, 20, 0.5, 13),
+          current(401),
+          old_vectors(401),
+          queries(),
+          expected(),
+          saved_stats() {}
+    ~AttrFixture();
+
+    // Feeds 400 docs, updates 40 and removes 40, records query results, saves and drops the attribute.
+    void feed_and_save() {
+        auto attr = make_attr(factory, ivf);
+        attr->addReservedDoc();
+        ASSERT_NE(nullptr, ivf_of(*attr));
+        EXPECT_EQ(16u, ivf_of(*attr)->config().posting_capacity);
+        for (uint32_t docid = 1; docid <= 400; ++docid) {
+            current[docid] = gen.sample();
+            set_tensor(*attr, docid, current[docid]);
+        }
+        for (uint32_t docid = 1; docid <= 40; ++docid) {
+            old_vectors[docid] = current[docid];
+            current[docid] = gen.sample();
+            auto tensor = make_tensor(current[docid]);
+            auto prepared = attr->prepare_set_tensor(docid, *tensor);
+            EXPECT_TRUE(prepared);
+            attr->complete_set_tensor(docid, *tensor, std::move(prepared));
+            attr->commit();
         }
         for (uint32_t docid = 41; docid <= 80; ++docid) {
-            for (const auto& n : attr_query(*loaded, old_vectors[docid], 5)) {
+            old_vectors[docid] = current[docid];
+            current[docid].clear();
+            attr->clearDoc(docid);
+            attr->commit();
+        }
+        check_updates_and_removes(*attr);
+        EXPECT_GT(ivf_of(*attr)->get_stats().splits, 0u);
+        for (uint32_t i = 0; i < 20; ++i) {
+            queries.push_back(gen.sample());
+            expected.push_back(attr_query(*attr, queries.back(), 10));
+            EXPECT_EQ(10u, expected.back().size());
+        }
+        ASSERT_TRUE(attr->save());
+        saved_stats = ivf_of(*attr)->get_stats();
+        EXPECT_TRUE(std::filesystem::exists(attr_name + ".nnidx"));
+    }
+    void check_updates_and_removes(const DenseTensorAttribute& attr) const {
+        for (uint32_t docid = 1; docid <= 40; ++docid) {
+            auto by_new = attr_query(attr, current[docid], 1);
+            ASSERT_EQ(1u, by_new.size());
+            EXPECT_EQ(docid, by_new[0].docid);
+            EXPECT_EQ(0.0, by_new[0].distance);
+            for (const auto& n : attr_query(attr, old_vectors[docid], 5)) {
+                EXPECT_TRUE(n.docid != docid || n.distance > 0.0);
+            }
+        }
+        for (uint32_t docid = 41; docid <= 80; ++docid) {
+            for (const auto& n : attr_query(attr, old_vectors[docid], 5)) {
                 EXPECT_NE(docid, n.docid);
             }
         }
     }
+    void check_loaded(const DenseTensorAttribute& loaded) const {
+        const IvfIndex* index = ivf_of(loaded);
+        ASSERT_NE(nullptr, index);
+        EXPECT_EQ(360u, index->get_stats().live_entries);
+        EXPECT_EQ(0u, index->get_stats().dropped_entries);
+        for (size_t i = 0; i < queries.size(); ++i) {
+            EXPECT_EQ(expected[i], attr_query(loaded, queries[i], 10));
+        }
+        check_updates_and_removes(loaded);
+    }
+};
+
+AttrFixture::~AttrFixture() = default;
+
+} // namespace
+
+TEST(IvfAttributeTest, dense_tensor_attribute_with_ivf_params_reloads_from_the_save_file) {
+    AttrFixture f(search::attribute::IvfIndexParams({{"posting-capacity", "16"}, {"nprobe", "100000"}}));
+    ASSERT_NO_FATAL_FAILURE(f.feed_and_save());
+    for (bool with_executor : {false, true}) {
+        SCOPED_TRACE(with_executor ? "load with executor" : "load in foreground");
+        vespalib::ThreadStackExecutor executor(2);
+        auto                          loaded = make_attr(f.factory, f.ivf);
+        ASSERT_TRUE(with_executor ? loaded->load(&executor) : loaded->load());
+        ASSERT_NO_FATAL_FAILURE(f.check_loaded(*loaded));
+        const IvfIndex* index = ivf_of(*loaded);
+        EXPECT_EQ(IvfLoadSource::SAVE_FILE, index->load_source());
+        EXPECT_EQ(0u, index->get_stats().bulk_builds);
+        EXPECT_EQ(f.saved_stats.postings, index->get_stats().postings);
+        EXPECT_EQ(f.saved_stats.entries, index->get_stats().entries);
+        EXPECT_EQ(f.saved_stats.splits, index->get_stats().splits);
+    }
+}
+
+TEST(IvfAttributeTest, dense_tensor_attribute_rebuilds_without_a_usable_save_file) {
+    AttrFixture f(search::attribute::IvfIndexParams({{"posting-capacity", "16"}, {"nprobe", "100000"}}));
+    ASSERT_NO_FATAL_FAILURE(f.feed_and_save());
+    auto check_bulk_built = [&f](const search::attribute::IvfIndexParams& params, const char* label) {
+        SCOPED_TRACE(label);
+        auto loaded = make_attr(f.factory, params);
+        ASSERT_TRUE(loaded->load());
+        ASSERT_NO_FATAL_FAILURE(f.check_loaded(*loaded));
+        EXPECT_EQ(IvfLoadSource::BULK_BUILD, ivf_of(*loaded)->load_source());
+        EXPECT_EQ(1u, ivf_of(*loaded)->get_stats().bulk_builds);
+    };
+    auto rebuild = f.ivf.params();
+    rebuild.emplace_back("rebuild-on-load", "1");
+    check_bulk_built(search::attribute::IvfIndexParams(rebuild), "rebuild-on-load");
+    // The bulk build above started a new posting file, so the save no longer matches it.
+    check_bulk_built(f.ivf, "posting file rewritten");
+    {
+        auto holder = make_attr(f.factory, f.ivf);
+        EXPECT_TRUE(ivf_of(*holder)->persistent());
+        auto second = make_attr(f.factory, f.ivf);
+        EXPECT_FALSE(ivf_of(*second)->persistent());
+        ASSERT_TRUE(second->load());
+        EXPECT_EQ(IvfLoadSource::BULK_BUILD, ivf_of(*second)->load_source());
+    }
+    std::filesystem::remove(attr_name + ".nnidx");
+    check_bulk_built(f.ivf, "missing save file");
 }
 
 GTEST_MAIN_RUN_ALL_TESTS()

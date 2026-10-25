@@ -1021,7 +1021,7 @@ template <HnswIndexType type> void HnswIndex<type>::shrink_lid_space(uint32_t do
 }
 
 template <HnswIndexType type>
-std::unique_ptr<NearestNeighborIndexSaver> HnswIndex<type>::make_saver(GenericHeader& header) const {
+std::unique_ptr<NearestNeighborIndexSaver> HnswIndex<type>::make_saver(GenericHeader& header) {
     save_mips_max_distance(header, distance_function_factory());
     return std::make_unique<HnswIndexSaver<type>>(_graph);
 }
