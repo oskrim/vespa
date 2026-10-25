@@ -33,7 +33,8 @@ struct HashState {
 
     HashState() : state(XXH3_createState()) {
         if (!state || XXH3_64bits_reset(state.get()) != XXH_OK) {
-            throw vespalib::IllegalStateException("IVF index: cannot initialize the save file checksum", VESPA_STRLOC);
+            throw vespalib::IllegalStateException("IVF index: cannot initialize the save file checksum",
+                                                  VESPA_STRLOC);
         }
     }
     void update(const void* data, size_t len) {

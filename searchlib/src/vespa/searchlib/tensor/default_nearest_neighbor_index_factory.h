@@ -11,12 +11,12 @@ namespace search::tensor {
  */
 class DefaultNearestNeighborIndexFactory : public NearestNeighborIndexFactory {
 public:
-    std::unique_ptr<NearestNeighborIndex>
-    make(const DocVectorAccess& vectors, size_t vector_size, bool multi_vector_index,
-         vespalib::eval::CellType cell_type, const search::attribute::HnswIndexParams& params,
-         const std::optional<attribute::QuantizationParams>& quant_params,
-         const std::optional<attribute::IvfIndexParams>&     ivf_params,
-         const std::string&                                  base_file_name) const override;
+    std::unique_ptr<NearestNeighborIndex> make(const DocVectorAccess& vectors, size_t vector_size,
+                                               bool multi_vector_index, vespalib::eval::CellType cell_type,
+                                               const search::attribute::HnswIndexParams&           params,
+                                               const std::optional<attribute::QuantizationParams>& quant_params,
+                                               const std::optional<attribute::IvfIndexParams>&     ivf_params,
+                                               const std::string& base_file_name) const override;
 };
 
 } // namespace search::tensor
