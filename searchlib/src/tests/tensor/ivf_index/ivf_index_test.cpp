@@ -1648,7 +1648,9 @@ TEST(IvfAttributeTest, dense_tensor_attribute_with_ivf_params_reloads_from_the_s
         EXPECT_EQ(IvfLoadSource::SAVE_FILE, index->load_source());
         EXPECT_EQ(0u, index->get_stats().bulk_builds);
         EXPECT_EQ(f.saved_stats.postings, index->get_stats().postings);
-        EXPECT_EQ(f.saved_stats.entries, index->get_stats().entries);
+        // The commit that ends the load may run a GC sweep step, which drops stale entries.
+        EXPECT_LE(index->get_stats().entries, f.saved_stats.entries);
+        EXPECT_EQ(f.saved_stats.live_entries, index->get_stats().live_entries);
         EXPECT_EQ(f.saved_stats.splits, index->get_stats().splits);
     }
 }
