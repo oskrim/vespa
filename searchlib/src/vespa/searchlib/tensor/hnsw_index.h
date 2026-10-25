@@ -303,7 +303,7 @@ public:
     std::unique_ptr<vespalib::StateExplorer> make_state_explorer() const override;
     void shrink_lid_space(uint32_t doc_id_limit) override;
 
-    std::unique_ptr<NearestNeighborIndexSaver> make_saver(vespalib::GenericHeader& header) override;
+    std::unique_ptr<NearestNeighborIndexSaver> make_saver(vespalib::GenericHeader& header, uint64_t serial_num) override;
     std::unique_ptr<NearestNeighborIndexLoader> make_loader(FastOS_FileInterface&          file,
                                                             const vespalib::GenericHeader& header) override;
 

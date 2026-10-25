@@ -415,24 +415,19 @@ public:
 };
 
 // Writes the state captured at init-save time. Lids of the saved postings are read from the live lid table on the
-// flush thread; the extent pinning rule keeps them unchanged until a newer save is durable.
+// flush thread; the extent pinning rule keeps them unchanged until a newer snapshot is valid.
 class IvfIndexSaver : public NearestNeighborIndexSaver {
-    ivf::SaveState         _state;
-    ivf::LidReader         _lid_reader;
-    int                    _fd;
-    std::string            _posting_path;
-    std::atomic<uint64_t>& _saves_completed;
-    uint64_t               _save_seq;
+    ivf::SaveState _state;
+    ivf::LidReader _lid_reader;
+    int            _fd;
+    std::string    _posting_path;
 
 public:
-    IvfIndexSaver(ivf::SaveState state, ivf::LidReader lid_reader, int fd, std::string posting_path,
-                  std::atomic<uint64_t>& saves_completed, uint64_t save_seq)
+    IvfIndexSaver(ivf::SaveState state, ivf::LidReader lid_reader, int fd, std::string posting_path)
         : _state(std::move(state)),
           _lid_reader(std::move(lid_reader)),
           _fd(fd),
-          _posting_path(std::move(posting_path)),
-          _saves_completed(saves_completed),
-          _save_seq(save_seq) {}
+          _posting_path(std::move(posting_path)) {}
     ~IvfIndexSaver() override;
     void save(BufferWriter& writer) const override {
         if (::fdatasync(_fd) != 0) {
@@ -442,11 +437,6 @@ public:
             return;
         }
         ivf::write_save_file(writer, _state, _lid_reader);
-        // Saves of one attribute run one at a time, so this loop only retries after a spurious failure.
-        uint64_t done = _saves_completed.load(std::memory_order_acquire);
-        while (done < _save_seq &&
-               !_saves_completed.compare_exchange_weak(done, _save_seq, std::memory_order_acq_rel)) {
-        }
     }
 };
 
@@ -682,8 +672,7 @@ IvfIndex::IvfIndex(const DocVectorAccess& vectors, DistanceFunctionFactory::UP d
       _free_extents(),
       _pending_extents(),
       _pinned_extents(),
-      _saves_started(0),
-      _saves_completed(0),
+      _valid_serial(0),
       _extent_limit(0),
       _file_extents(0),
       _gc_cursor(0),
@@ -1173,35 +1162,39 @@ void IvfIndex::start_new_file() {
 }
 
 /*
- * Extent pinning. A save references postings by (extent, length) and is the snapshot loaded after a crash until a
- * newer save is durable. Appends write at a posting's current length, which only grows while its extent is live,
- * and every other write (rewrite, split, merge target, GC sweep, bulk build) goes to an extent from the free list.
- * So saved bytes stay intact as long as no extent that a loadable save references is on the free list: a freed
- * extent waits in _pending_extents, is pinned by the next save, and is released when a later save starts after the
- * pinning save completed.
+ * Extent pinning. A save references postings by (extent, length), and its snapshot is the one loaded after a crash
+ * until a newer snapshot is marked valid. Appends write at a posting's current length, which only grows while its
+ * extent is live, and every other write (rewrite, split, merge target, GC sweep, bulk build) goes to an extent from
+ * the free list. So saved bytes stay intact as long as no extent that the valid snapshot references is on the free
+ * list: a freed extent waits in _pending_extents, the next init-save pins it with that snapshot's serial number, and
+ * the writer frees it once a snapshot with a newer serial number is valid.
  */
 void IvfIndex::release_extent(uint32_t extent) {
     (_persistent ? _pending_extents : _free_extents).push_back(extent);
 }
 
-// The flush of a save ends before the next save of the attribute starts, so a completed save is the durable
-// snapshot here and the extents freed before it was captured can be reused.
-void IvfIndex::pin_extents_for_save() {
-    uint64_t                   completed = _saves_completed.load(std::memory_order_acquire);
-    std::vector<PinnedExtents> still_pinned;
-    for (auto& batch : _pinned_extents) {
-        if (batch.save_seq <= completed) {
-            _free_extents.insert(_free_extents.end(), batch.extents.begin(), batch.extents.end());
-        } else {
-            still_pinned.push_back(std::move(batch));
-        }
+// Batches are pinned in serial number order, since init-saves see a non-decreasing last sync token.
+void IvfIndex::release_pinned_extents() {
+    uint64_t valid = _valid_serial.load(std::memory_order_acquire);
+    size_t   released = 0;
+    while (released < _pinned_extents.size() && _pinned_extents[released].serial_num < valid) {
+        const auto& extents = _pinned_extents[released].extents;
+        _free_extents.insert(_free_extents.end(), extents.begin(), extents.end());
+        ++released;
     }
-    _pinned_extents = std::move(still_pinned);
-    ++_saves_started;
-    _pinned_extents.push_back({_saves_started, std::move(_pending_extents)});
+    if (released > 0) {
+        _pinned_extents.erase(_pinned_extents.begin(), _pinned_extents.begin() + released);
+        update_extent_counters();
+    }
+}
+
+void IvfIndex::pin_extents_for_save(uint64_t serial_num) {
+    release_pinned_extents();
+    assert(_pinned_extents.empty() || _pinned_extents.back().serial_num <= serial_num);
+    _pinned_extents.push_back({serial_num, std::move(_pending_extents)});
     _pending_extents.clear();
     if (_pinned_extents.size() > 2) {
-        LOG(warning, "IVF index %s: %zu saves have not completed; their freed extents are not reused",
+        LOG(warning, "IVF index %s: %zu saved snapshots are not valid yet; their freed extents are not reused",
             _posting_path.c_str(), _pinned_extents.size() - 1);
     }
     update_extent_counters();
@@ -1905,6 +1898,7 @@ void IvfIndex::reclaim_memory(Generation oldest_used_gen) {
     _versions.reclaim_memory(oldest_used_gen);
     _slot_hold.reclaim(oldest_used_gen, [this](uint32_t slot) { _free_slots.push_back(slot); });
     _extent_hold.reclaim(oldest_used_gen, [this](uint32_t extent) { release_extent(extent); });
+    release_pinned_extents();
     update_extent_counters();
 }
 
@@ -2024,7 +2018,7 @@ void IvfIndex::shrink_lid_space(uint32_t) {
 
 // Called by the writer between operations, so the reassign queue is empty and the captured state is consistent with
 // the attribute snapshot taken at the same time.
-std::unique_ptr<NearestNeighborIndexSaver> IvfIndex::make_saver(GenericHeader& header) {
+std::unique_ptr<NearestNeighborIndexSaver> IvfIndex::make_saver(GenericHeader& header, uint64_t serial_num) {
     if (!_persistent) {
         return {};
     }
@@ -2032,15 +2026,23 @@ std::unique_ptr<NearestNeighborIndexSaver> IvfIndex::make_saver(GenericHeader& h
     if (!_file_ready) {
         start_new_file();
     }
-    pin_extents_for_save();
+    pin_extents_for_save(serial_num);
     header.putTag(GenericHeader::Tag(save_file_tag(), ivf::save_format_version));
     ivf::LidReader lid_reader = [this](uint32_t extent, uint32_t length, uint32_t* lids) noexcept {
         for (uint32_t i = 0; i < length; ++i) {
             lids[i] = lid_at(extent, i);
         }
     };
-    return std::make_unique<IvfIndexSaver>(capture_save_state(), std::move(lid_reader), _fd, _posting_path,
-                                           _saves_completed, _saves_started);
+    return std::make_unique<IvfIndexSaver>(capture_save_state(), std::move(lid_reader), _fd, _posting_path);
+}
+
+// The flush thread only records the serial number; the writer frees the pinned extents at its next commit.
+void IvfIndex::on_snapshot_valid(uint64_t serial_num) noexcept {
+    uint64_t valid = _valid_serial.load(std::memory_order_relaxed);
+    while (valid < serial_num &&
+           !_valid_serial.compare_exchange_weak(valid, serial_num, std::memory_order_release,
+                                                std::memory_order_relaxed)) {
+    }
 }
 
 std::unique_ptr<NearestNeighborIndexLoader> IvfIndex::make_loader(FastOS_FileInterface& file,
@@ -2163,7 +2165,7 @@ void IvfIndex::populate_state(vespalib::slime::Cursor& object) const {
     object.setLong("pinned_extents", stats.pinned_extents);
     object.setBool("persistent", _persistent);
     object.setString("posting_file", _posting_path);
-    object.setLong("saves_completed", _saves_completed.load(std::memory_order_relaxed));
+    object.setLong("valid_snapshot_serial", _valid_serial.load(std::memory_order_relaxed));
     auto& load = object.setObject("load");
     load.setString("source", load_source_name(_load_source.load(std::memory_order_relaxed)));
     load.setDouble("seconds", _load_seconds.load(std::memory_order_relaxed));

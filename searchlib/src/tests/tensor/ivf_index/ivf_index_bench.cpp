@@ -831,9 +831,9 @@ int run(const Args& args) {
             return (value != nullptr) ? value->c_str() : nullptr;
         });
         std::string build_kind = args.str("build", "incremental");
-        // A named posting file (--posting-file) is reused and truncated; without it the file is unlinked in $TMPDIR.
+        // An unlinked posting file in $TMPDIR: the bench never saves, so a named file would keep freed extents pinned.
         IvfIndex    index(vectors, make_distance_function_factory(metric, base.cell_type), base.cell_type, base.dims,
-                          metric, cfg, args.str("posting-file", ""));
+                          metric, cfg, "");
         double      build_s = 0.0;
         if (build_kind == "bulk") {
             std::vector<uint32_t> lids(base.n);
