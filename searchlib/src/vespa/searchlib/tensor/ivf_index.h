@@ -122,6 +122,7 @@ struct IvfIndexStats {
     uint64_t gc_compactions;
     uint64_t merges;
     uint64_t pinned_extents;
+    uint64_t reassign_evaluated;
 };
 
 enum class IvfLoadSource { NONE, SAVE_FILE, BULK_BUILD };
@@ -225,6 +226,7 @@ private:
         std::atomic<uint64_t> gc_compactions{0};
         std::atomic<uint64_t> merges{0};
         std::atomic<uint64_t> pinned_extents{0};
+        std::atomic<uint64_t> reassign_evaluated{0}; // live entries checked by reassign; not saved
     };
 
     const DocVectorAccess&                   _vectors;

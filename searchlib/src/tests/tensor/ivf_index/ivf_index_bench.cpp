@@ -20,6 +20,8 @@
 #include <vespa/vespalib/util/threadstackexecutor.h>
 
 #include <fcntl.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -27,10 +29,12 @@
 #include <cctype>
 #include <cerrno>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
 #include <map>
+#include <memory>
 #include <random>
 #include <stdexcept>
 #include <string>
@@ -125,61 +129,82 @@ void read_fully(int fd, char* buf, size_t len, const std::string& path) {
     }
 }
 
-struct VectorFile {
-    CellType          cell_type;
-    uint32_t          n;
-    uint32_t          dims;
-    size_t            vector_bytes;
-    std::vector<char> data;
-    const char* vec(uint32_t i) const noexcept { return data.data() + size_t(i) * vector_bytes; }
+// Rows [skip, skip + n) of a vector file, memory mapped read-only so that large files stay in the page cache.
+class VectorFile {
+    void*       _map;
+    size_t      _map_bytes;
+    const char* _rows;
+
+public:
+    CellType cell_type;
+    uint32_t n;
+    uint32_t dims;
+    size_t   vector_bytes;
+
+    VectorFile(const std::string& path, uint32_t max_n, uint32_t skip);
+    VectorFile(const VectorFile&) = delete;
+    VectorFile& operator=(const VectorFile&) = delete;
+    ~VectorFile();
+    const char* vec(uint32_t i) const noexcept { return _rows + size_t(i) * vector_bytes; }
+    size_t bytes() const noexcept { return size_t(n) * vector_bytes; }
 };
 
-VectorFile load_vectors(const std::string& path, uint32_t max_n) {
-    VectorFile file{CellType::FLOAT, 0, 0, 0, {}};
-    bool       is_float = path.size() > 5 && path.substr(path.size() - 5) == ".fbin";
-    file.cell_type = is_float ? CellType::FLOAT : CellType::INT8;
+VectorFile::VectorFile(const std::string& path, uint32_t max_n, uint32_t skip)
+    : _map(MAP_FAILED), _map_bytes(0), _rows(nullptr), cell_type(CellType::INT8), n(0), dims(0), vector_bytes(0) {
+    bool is_float = path.size() > 5 && path.substr(path.size() - 5) == ".fbin";
+    cell_type = is_float ? CellType::FLOAT : CellType::INT8;
     int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
     if (fd < 0) {
         throw std::runtime_error(path + ": open failed: " + std::strerror(errno));
     }
-    uint32_t header[2];
+    uint32_t    header[2];
+    struct stat st;
     read_fully(fd, reinterpret_cast<char*>(header), sizeof(header), path);
-    file.n = std::min(header[0], max_n);
-    file.dims = header[1];
-    file.vector_bytes = size_t(file.dims) * (is_float ? sizeof(float) : 1);
-    file.data.resize(size_t(file.n) * file.vector_bytes);
-    read_fully(fd, file.data.data(), file.data.size(), path);
-    if (::close(fd) != 0) {
-        throw std::runtime_error(path + ": close failed: " + std::strerror(errno));
+    if (::fstat(fd, &st) != 0) {
+        ::close(fd);
+        throw std::runtime_error(path + ": fstat failed: " + std::strerror(errno));
     }
-    fprintf(stderr, "loaded %s: n=%u dims=%u (file has %u)\n", path.c_str(), file.n, file.dims, header[0]);
-    return file;
+    if (skip > header[0]) {
+        ::close(fd);
+        throw std::invalid_argument(path + ": skip beyond the file's rows");
+    }
+    n = std::min(header[0] - skip, max_n);
+    dims = header[1];
+    vector_bytes = size_t(dims) * (is_float ? sizeof(float) : 1);
+    _map_bytes = sizeof(header) + (size_t(skip) + n) * vector_bytes;
+    if (size_t(st.st_size) < _map_bytes) {
+        ::close(fd);
+        throw std::runtime_error(path + ": file is shorter than its header says");
+    }
+    _map = ::mmap(nullptr, _map_bytes, PROT_READ, MAP_SHARED, fd, 0);
+    int map_errno = errno;
+    if (::close(fd) != 0 || _map == MAP_FAILED) {
+        throw std::runtime_error(path + ": mmap failed: " + std::strerror(map_errno));
+    }
+    _rows = static_cast<const char*>(_map) + sizeof(header) + size_t(skip) * vector_bytes;
+    fprintf(stderr, "mapped %s: rows %u..%u dims=%u (file has %u)\n", path.c_str(), skip, skip + n, dims, header[0]);
 }
 
-// Appends the rows of a pool file after the rows of base; returns the first pool row. base.n stays the doc count.
-uint32_t append_pool(VectorFile& base, const std::string& path) {
-    auto pool = load_vectors(path, std::numeric_limits<uint32_t>::max());
-    if (pool.dims != base.dims || pool.cell_type != base.cell_type) {
-        throw std::invalid_argument(path + ": pool vectors differ in type from base");
+VectorFile::~VectorFile() {
+    if (_map != MAP_FAILED) {
+        ::munmap(_map, _map_bytes);
     }
-    size_t first_row = base.data.size() / base.vector_bytes;
-    if (first_row + pool.n > std::numeric_limits<uint32_t>::max()) {
-        throw std::invalid_argument(path + ": too many rows");
-    }
-    base.data.insert(base.data.end(), pool.data.begin(), pool.data.end());
-    return static_cast<uint32_t>(first_row);
 }
 
-// Docid d (1-based) maps to vector doc_to_vec[d] of the base file.
+// Docid d (1-based) maps to row doc_to_vec[d]: rows below base.n are base rows, the rest are pool rows.
 class BenchVectors : public DocVectorAccess {
     const VectorFile&     _base;
+    const VectorFile*     _pool; // nullptr without a pool
     SubspaceType          _type;
     EmptySubspace         _empty;
     std::vector<uint32_t> _doc_to_vec;
 
+    const char* row(uint32_t r) const noexcept { return (r < _base.n) ? _base.vec(r) : _pool->vec(r - _base.n); }
+
 public:
-    explicit BenchVectors(const VectorFile& base)
+    BenchVectors(const VectorFile& base, const VectorFile* pool)
         : _base(base),
+          _pool(pool),
           _type(ValueType::make_type(base.cell_type, {{"x", base.dims}})),
           _empty(_type),
           _doc_to_vec(base.n + 1) {
@@ -190,10 +215,8 @@ public:
     ~BenchVectors() override;
     uint32_t vec_of(uint32_t docid) const noexcept { return _doc_to_vec[docid]; }
     void swap_vectors(uint32_t a, uint32_t b) noexcept { std::swap(_doc_to_vec[a], _doc_to_vec[b]); }
-    void set_vector(uint32_t docid, uint32_t row) noexcept { _doc_to_vec[docid] = row; }
-    TypedCells cells(uint32_t docid) const noexcept {
-        return {_base.vec(_doc_to_vec[docid]), _base.cell_type, _base.dims};
-    }
+    void set_vector(uint32_t docid, uint32_t r) noexcept { _doc_to_vec[docid] = r; }
+    TypedCells cells(uint32_t docid) const noexcept { return {row(_doc_to_vec[docid]), _base.cell_type, _base.dims}; }
     TypedCells get_vector(uint32_t docid, uint32_t subspace) const noexcept override {
         return (subspace == 0 && docid >= 1 && docid <= _base.n) ? cells(docid) : _empty.cells();
     }
@@ -201,7 +224,7 @@ public:
         if (docid < 1 || docid > _base.n) {
             return {};
         }
-        return {_base.vec(_doc_to_vec[docid]), 1, _type};
+        return {row(_doc_to_vec[docid]), 1, _type};
     }
 };
 
@@ -568,11 +591,59 @@ double churn(NearestNeighborIndex& index, BenchVectors& vectors, uint32_t n, dou
     return seconds_since(start);
 }
 
-// Replaces round(fraction * n) random docs with the next pool rows (remove, then add the new vector).
-double replace_round(NearestNeighborIndex& index, BenchVectors& vectors, uint32_t n, double fraction,
-                     uint32_t& next_row, uint32_t row_limit, std::mt19937& rng, uint32_t& replaced) {
-    uint32_t count = static_cast<uint32_t>(fraction * n);
-    if (uint64_t(next_row) + count > row_limit) {
+// Pool rows for churn rounds, in file order or as a uniform random sample without replacement.
+class PoolRows {
+    uint32_t              _first;
+    uint32_t              _count;
+    uint32_t              _next;
+    std::vector<uint32_t> _order; // empty in file order
+    std::mt19937          _rng;
+
+public:
+    PoolRows(uint32_t first, uint32_t count, bool random)
+        : _first(first), _count(count), _next(0), _order(), _rng(1931) {
+        if (random) {
+            _order.resize(count);
+            for (uint32_t i = 0; i < count; ++i) {
+                _order[i] = i;
+            }
+        }
+    }
+    uint32_t remaining() const noexcept { return _count - _next; }
+    uint32_t taken() const noexcept { return _next; }
+    uint32_t take() {
+        if (_next >= _count) {
+            throw std::invalid_argument("churn pool exhausted");
+        }
+        if (_order.empty()) {
+            return _first + _next++;
+        }
+        std::uniform_int_distribution<uint32_t> pick(_next, _count - 1);
+        std::swap(_order[_next], _order[pick(_rng)]);
+        return _first + _order[_next++];
+    }
+};
+
+struct RoundResult {
+    uint32_t            replaced = 0;
+    double              seconds = 0;
+    double              insert_s = 0;
+    double              delete_s = 0;
+    double              commit_s = 0;
+    std::vector<double> insert_us;
+    // Inserts that split at least one posting (SPFresh: inserts that trigger rebalancing), and what they did.
+    uint64_t rebalancing_inserts = 0;
+    uint64_t rebalance_splits = 0;
+    uint64_t rebalance_evaluated = 0;
+    uint64_t rebalance_moves = 0;
+};
+
+// Replaces round(fraction * n) random docs with pool rows: remove the doc, then add it with the new vector.
+RoundResult replace_round(IvfIndex& index, BenchVectors& vectors, uint32_t n, double fraction, PoolRows& pool,
+                          std::mt19937& rng) {
+    RoundResult result;
+    uint32_t    count = static_cast<uint32_t>(fraction * n);
+    if (count > pool.remaining()) {
         throw std::invalid_argument("churn pool exhausted");
     }
     std::vector<uint32_t> docids(n);
@@ -580,19 +651,39 @@ double replace_round(NearestNeighborIndex& index, BenchVectors& vectors, uint32_
         docids[i] = i + 1;
     }
     std::shuffle(docids.begin(), docids.end(), rng);
+    result.insert_us.reserve(count);
     auto start = Clock::now();
     for (uint32_t i = 0; i < count; ++i) {
         uint32_t docid = docids[i];
+        auto     t0 = Clock::now();
         index.remove_document(docid);
-        vectors.set_vector(docid, next_row++);
+        result.delete_s += seconds_since(t0);
+        vectors.set_vector(docid, pool.take());
+        auto before = index.get_stats();
+        auto t1 = Clock::now();
         index.add_document(docid);
+        double insert_s = seconds_since(t1);
+        auto   after = index.get_stats();
+        result.insert_s += insert_s;
+        result.insert_us.push_back(insert_s * 1e6);
+        if (after.splits > before.splits) {
+            ++result.rebalancing_inserts;
+            result.rebalance_splits += after.splits - before.splits;
+            result.rebalance_evaluated += after.reassign_evaluated - before.reassign_evaluated;
+            result.rebalance_moves += after.moves - before.moves;
+        }
         if ((i % commit_interval) == 0) {
+            auto t2 = Clock::now();
             commit(index);
+            result.commit_s += seconds_since(t2);
         }
     }
+    auto t3 = Clock::now();
     commit(index);
-    replaced = count;
-    return seconds_since(start);
+    result.commit_s += seconds_since(t3);
+    result.replaced = count;
+    result.seconds = seconds_since(start);
+    return result;
 }
 
 uint64_t proc_status_kb(const char* key) {
@@ -607,6 +698,7 @@ uint64_t proc_status_kb(const char* key) {
 }
 
 struct QueryStats {
+    bool     has_recall = false;
     double   recall_10 = 0;
     double   recall_100 = 0;
     double   postings = 0;
@@ -615,7 +707,10 @@ struct QueryStats {
     double   centroid_scan_us = 0;
     uint64_t mismatches = 0;
     double   p50_ms = 0;
+    double   p90_ms = 0;
+    double   p95_ms = 0;
     double   p99_ms = 0;
+    double   p999_ms = 0;
     uint32_t queries = 0;
 };
 
@@ -643,7 +738,7 @@ double percentile(std::vector<double> values, double p) {
 }
 
 template <typename QueryFn>
-QueryStats run_queries(const VectorFile& queries, uint32_t nq, const GroundTruth& gt, const BenchVectors& vectors,
+QueryStats run_queries(const VectorFile& queries, uint32_t nq, const GroundTruth* gt, const BenchVectors& vectors,
                        const DistanceFunctionFactory& dff, QueryFn&& query_fn, const IvfIndex* drop_cache_of) {
     QueryStats          qs;
     std::vector<double> latencies;
@@ -659,8 +754,10 @@ QueryStats run_queries(const VectorFile& queries, uint32_t nq, const GroundTruth
         auto                        start = Clock::now();
         auto                        result = query_fn(stats, *df, query, probe_stats);
         latencies.push_back(seconds_since(start) * 1000.0);
-        qs.recall_10 += tie_aware_recall(result, gt, q, 10);
-        qs.recall_100 += tie_aware_recall(result, gt, q, gt_k);
+        if (gt != nullptr) {
+            qs.recall_10 += tie_aware_recall(result, *gt, q, 10);
+            qs.recall_100 += tie_aware_recall(result, *gt, q, gt_k);
+        }
         qs.postings += probe_stats.postings_probed;
         qs.entries_scanned += probe_stats.entries_scanned;
         qs.distances += stats.distances_computed();
@@ -672,6 +769,7 @@ QueryStats run_queries(const VectorFile& queries, uint32_t nq, const GroundTruth
         }
     }
     qs.queries = nq;
+    qs.has_recall = (gt != nullptr);
     qs.recall_10 /= nq;
     qs.recall_100 /= nq;
     qs.postings /= nq;
@@ -679,7 +777,10 @@ QueryStats run_queries(const VectorFile& queries, uint32_t nq, const GroundTruth
     qs.distances /= nq;
     qs.centroid_scan_us /= nq;
     qs.p50_ms = percentile(latencies, 0.50);
+    qs.p90_ms = percentile(latencies, 0.90);
+    qs.p95_ms = percentile(latencies, 0.95);
     qs.p99_ms = percentile(latencies, 0.99);
+    qs.p999_ms = percentile(latencies, 0.999);
     return qs;
 }
 
@@ -704,37 +805,51 @@ struct SweepSetup {
 
 // Runs every case: exact search once for cases below the approximate threshold, else the index at every param.
 // make_query(param, case) returns the query function for the index path.
+// A case whose ground truth is empty (gt.nq == 0) measures latency and scan work only. Returns the index-path rows.
 template <typename MakeQuery>
-void sweep_cases(const char* label, const char* param_name, const std::vector<FilterCase>& cases,
-                 const std::vector<uint32_t>& params, const SweepSetup& setup, double live, MakeQuery&& make_query) {
+std::vector<QueryStats> sweep_cases(const char* label, const char* param_name, const std::vector<FilterCase>& cases,
+                                    const std::vector<uint32_t>& params, const SweepSetup& setup, double live,
+                                    MakeQuery&& make_query) {
+    auto gt_of = [](const FilterCase& c) { return (c.gt.nq > 0) ? &c.gt : nullptr; };
     if (!cases.empty() && !cases.front().exact) {
-        run_queries(setup.queries, std::min(setup.nq, 1000u), cases.front().gt, setup.vectors, setup.dff,
+        run_queries(setup.queries, std::min(setup.nq, 1000u), gt_of(cases.front()), setup.vectors, setup.dff,
                     make_query(params.back(), cases.front()), nullptr);
     }
+    std::vector<QueryStats> index_rows;
     printf("%s:\n| filter | hit_ratio | path | %s | recall@10 | recall@100 | postings | entries | scanned_frac | "
            "distances | centroid_us | p50_ms | p99_ms | mismatches |\n",
            label, param_name);
     std::vector<std::string> interpolations;
     for (const auto& c : cases) {
-        uint32_t nq = std::min(setup.nq, c.gt.nq);
+        uint32_t nq = (c.gt.nq > 0) ? std::min(setup.nq, c.gt.nq) : setup.nq;
         auto     row = [&](const char* path, const std::string& param, const QueryStats& qs) {
-            printf("| %s | %.4f | %s | %s | %.4f | %.4f | %.1f | %.0f | %.4f | %.0f | %.1f | %.3f | %.3f | %lu |\n",
-                   c.spec.c_str(), c.hit_ratio, path, param.c_str(), qs.recall_10, qs.recall_100, qs.postings,
-                   qs.entries_scanned, qs.entries_scanned / live, qs.distances, qs.centroid_scan_us, qs.p50_ms,
-                   qs.p99_ms, qs.mismatches);
+            char r10[16] = "-";
+            char r100[16] = "-";
+            if (qs.has_recall) {
+                snprintf(r10, sizeof(r10), "%.4f", qs.recall_10);
+                snprintf(r100, sizeof(r100), "%.4f", qs.recall_100);
+            }
+            printf("| %s | %.4f | %s | %s | %s | %s | %.1f | %.0f | %.4f | %.0f | %.1f | %.3f | %.3f | %lu |\n",
+                   c.spec.c_str(), c.hit_ratio, path, param.c_str(), r10, r100, qs.postings, qs.entries_scanned,
+                   qs.entries_scanned / live, qs.distances, qs.centroid_scan_us, qs.p50_ms, qs.p99_ms, qs.mismatches);
             fflush(stdout);
         };
         if (c.exact) {
             auto exact = [&](NearestNeighborIndex::Stats& stats, const BoundDistanceFunction& df, TypedCells,
                              IvfProbeStats&) { return exact_top_k(setup.vectors, c.matching, setup.k, stats, df); };
-            row("exact", "-", run_queries(setup.queries, nq, c.gt, setup.vectors, setup.dff, exact, nullptr));
+            row("exact", "-", run_queries(setup.queries, nq, gt_of(c), setup.vectors, setup.dff, exact, nullptr));
             continue;
         }
         std::vector<std::array<double, 3>> curve; // param, recall@10, scanned fraction
         for (uint32_t param : params) {
-            auto qs = run_queries(setup.queries, nq, c.gt, setup.vectors, setup.dff, make_query(param, c), nullptr);
+            auto qs =
+                run_queries(setup.queries, nq, gt_of(c), setup.vectors, setup.dff, make_query(param, c), nullptr);
             row("index", std::to_string(param), qs);
+            index_rows.push_back(qs);
             curve.push_back({double(param), qs.recall_10, qs.entries_scanned / live});
+        }
+        if (c.gt.nq == 0) {
+            continue;
         }
         for (double target : {0.80, 0.85, 0.90}) {
             std::string text = "| " + c.spec + " | " + std::to_string(target).substr(0, 4) + " | ";
@@ -759,14 +874,167 @@ void sweep_cases(const char* label, const char* param_name, const std::vector<Fi
     for (const auto& line : interpolations) {
         printf("%s\n", line.c_str());
     }
+    return index_rows;
+}
+
+// One JSON object, built field by field.
+class JsonLine {
+    std::string _s;
+    void key(const char* name) {
+        _s += _s.empty() ? "{\"" : ",\"";
+        _s += name;
+        _s += "\":";
+    }
+
+public:
+    JsonLine() : _s() {}
+    JsonLine& num(const char* name, double value) {
+        key(name);
+        if (std::isfinite(value)) {
+            char buf[40];
+            snprintf(buf, sizeof(buf), "%.6g", value);
+            _s += buf;
+        } else {
+            _s += "null";
+        }
+        return *this;
+    }
+    JsonLine& count(const char* name, uint64_t value) {
+        key(name);
+        _s += std::to_string(value);
+        return *this;
+    }
+    JsonLine& raw(const char* name, const std::string& json) {
+        key(name);
+        _s += json;
+        return *this;
+    }
+    std::string str() const { return _s.empty() ? std::string("{}") : _s + "}"; }
+};
+
+// JSON lines, flushed and synced per line so that a run that dies keeps every finished round.
+class MetricsFile {
+    FILE* _file;
+
+public:
+    explicit MetricsFile(const std::string& path) : _file(path.empty() ? nullptr : std::fopen(path.c_str(), "w")) {
+        if (!path.empty() && _file == nullptr) {
+            throw std::runtime_error(path + ": open failed: " + std::strerror(errno));
+        }
+    }
+    MetricsFile(const MetricsFile&) = delete;
+    MetricsFile& operator=(const MetricsFile&) = delete;
+    ~MetricsFile() {
+        if (_file != nullptr) {
+            std::fclose(_file);
+        }
+    }
+    void write(const JsonLine& line) {
+        if (_file == nullptr) {
+            return;
+        }
+        std::string text = line.str() + "\n";
+        if (std::fwrite(text.data(), 1, text.size(), _file) != text.size() || std::fflush(_file) != 0 ||
+            ::fsync(fileno(_file)) != 0)
+        {
+            throw std::runtime_error("metrics write failed: " + std::string(std::strerror(errno)));
+        }
+    }
+};
+
+double ratio_or_nan(double num, double den) {
+    return (den > 0) ? num / den : std::numeric_limits<double>::quiet_NaN();
+}
+
+std::string search_json(const std::vector<uint32_t>& nprobes, const std::vector<QueryStats>& rows, double live) {
+    std::string out = "[";
+    for (size_t i = 0; i < rows.size() && i < nprobes.size(); ++i) {
+        const auto& qs = rows[i];
+        JsonLine    j;
+        j.count("nprobe", nprobes[i]);
+        if (qs.has_recall) {
+            j.num("recall10_at_10", qs.recall_10).num("recall100_at_100", qs.recall_100);
+        } else {
+            j.raw("recall10_at_10", "null").raw("recall100_at_100", "null");
+        }
+        j.count("queries", qs.queries)
+            .num("postings", qs.postings)
+            .num("entries_scanned", qs.entries_scanned)
+            .num("scanned_frac", ratio_or_nan(qs.entries_scanned, live))
+            .num("distances", qs.distances)
+            .num("centroid_scan_us", qs.centroid_scan_us)
+            .num("p50_ms", qs.p50_ms)
+            .num("p90_ms", qs.p90_ms)
+            .num("p95_ms", qs.p95_ms)
+            .num("p99_ms", qs.p99_ms)
+            .num("p999_ms", qs.p999_ms)
+            .count("mismatches", qs.mismatches);
+        out += (i > 0 ? "," : "") + j.str();
+    }
+    return out + "]";
+}
+
+void add_index_fields(JsonLine& j, const IvfIndex& index) {
+    auto     s = index.get_stats();
+    auto     mu = index.memory_usage();
+    uint64_t stale = (s.entries > s.live_entries) ? s.entries - s.live_entries : 0;
+    j.count("postings", s.postings)
+        .count("entries", s.entries)
+        .count("live_entries", s.live_entries)
+        .count("stale_entries", stale)
+        .num("stale_frac", ratio_or_nan(stale, s.entries))
+        .count("file_bytes", s.file_bytes)
+        .count("extents", s.extents)
+        .count("free_extents", s.free_extents)
+        .count("bytes_written", s.bytes_written)
+        .count("index_ram_bytes", mu.usedBytes())
+        .count("splits", s.splits)
+        .count("split_fallbacks", s.split_fallbacks)
+        .count("merges", s.merges)
+        .count("compactions", s.compactions)
+        .count("gc_checks", s.gc_checks)
+        .count("gc_compactions", s.gc_compactions)
+        .count("reassign_checks", s.reassign_checks)
+        .count("reassign_evaluated", s.reassign_evaluated)
+        .count("moves", s.moves)
+        .count("dropped_steps", s.dropped_steps)
+        .count("dropped_entries", s.dropped_entries)
+        .count("rss_kb", proc_status_kb("VmRSS:"))
+        .count("rss_anon_kb", proc_status_kb("RssAnon:"))
+        .count("rss_file_kb", proc_status_kb("RssFile:"))
+        .count("hwm_kb", proc_status_kb("VmHWM:"));
+}
+
+void add_update_fields(JsonLine& j, const RoundResult& rr, const IvfIndexStats& before, const IvfIndexStats& after) {
+    j.count("deletes", rr.replaced)
+        .count("inserts", rr.replaced)
+        .num("update_seconds", rr.seconds)
+        .num("insert_seconds", rr.insert_s)
+        .num("delete_seconds", rr.delete_s)
+        .num("commit_seconds", rr.commit_s)
+        .num("updates_per_s", ratio_or_nan(rr.replaced, rr.seconds))
+        .num("inserts_per_s", ratio_or_nan(rr.replaced, rr.insert_s))
+        .num("deletes_per_s", ratio_or_nan(rr.replaced, rr.delete_s))
+        .num("insert_avg_us", ratio_or_nan(rr.insert_s * 1e6, rr.replaced))
+        .num("insert_p50_us", percentile(rr.insert_us, 0.50))
+        .num("insert_p99_us", percentile(rr.insert_us, 0.99))
+        .num("insert_p999_us", percentile(rr.insert_us, 0.999))
+        .num("insert_max_us", percentile(rr.insert_us, 1.0))
+        .count("rebalancing_inserts", rr.rebalancing_inserts)
+        .num("rebalance_frac", ratio_or_nan(rr.rebalancing_inserts, rr.replaced))
+        .num("splits_per_rebalance", ratio_or_nan(rr.rebalance_splits, rr.rebalancing_inserts))
+        .num("evaluated_per_rebalance", ratio_or_nan(rr.rebalance_evaluated, rr.rebalancing_inserts))
+        .num("moved_per_rebalance", ratio_or_nan(rr.rebalance_moves, rr.rebalancing_inserts))
+        .num("moves_per_update", ratio_or_nan(after.moves - before.moves, rr.replaced))
+        .num("bytes_written_per_update", ratio_or_nan(after.bytes_written - before.bytes_written, rr.replaced));
 }
 
 int run(const Args& args) {
-    auto     metric = parse_metric(args.required("metric"));
-    uint32_t max_n = args.num("n", 1000000);
-    uint32_t nq = args.num("nq", 10000);
-    auto     base = load_vectors(args.required("base"), max_n);
-    auto     queries = load_vectors(args.required("query"), nq);
+    auto       metric = parse_metric(args.required("metric"));
+    uint32_t   max_n = args.num("n", 1000000);
+    uint32_t   nq = args.num("nq", 10000);
+    VectorFile base(args.required("base"), max_n, 0);
+    VectorFile queries(args.required("query"), nq, 0);
     nq = queries.n;
     if (queries.dims != base.dims || queries.cell_type != base.cell_type) {
         throw std::invalid_argument("query and base vectors differ in type");
@@ -774,22 +1042,29 @@ int run(const Args& args) {
     auto        dff = make_distance_function_factory(metric, base.cell_type);
     GroundTruth gt;
     std::string gt_path = args.required("gt");
+    auto        gt_start = Clock::now();
     if (!load_gt(gt_path, nq, base.n, gt)) {
         gt = compute_gt(base, queries, *dff, args.num("gt-threads", 6));
         save_gt(gt, gt_path);
     }
+    double      initial_gt_s = seconds_since(gt_start);
     std::string index_kind = args.str("index", "ivf");
     if (index_kind == "none") {
         return 0;
     }
-    std::string pool_path = args.str("pool", "");
-    uint32_t    pool_first = 0;
-    uint32_t    pool_limit = 0;
+    std::string                 pool_path = args.str("pool", "");
+    std::unique_ptr<VectorFile> pool;
     if (!pool_path.empty()) {
-        pool_first = append_pool(base, pool_path);
-        pool_limit = static_cast<uint32_t>(base.data.size() / base.vector_bytes);
+        pool = std::make_unique<VectorFile>(pool_path, args.num("pool-n", std::numeric_limits<uint32_t>::max()),
+                                            args.num("pool-offset", 0));
+        if (pool->dims != base.dims || pool->cell_type != base.cell_type) {
+            throw std::invalid_argument(pool_path + ": pool vectors differ in type from base");
+        }
+        if (uint64_t(base.n) + pool->n > std::numeric_limits<uint32_t>::max()) {
+            throw std::invalid_argument(pool_path + ": too many rows");
+        }
     }
-    BenchVectors             vectors(base);
+    BenchVectors             vectors(base, pool.get());
     uint32_t                 prepare_threads = args.num("prepare-threads", 6);
     double                   churn_fraction = args.real("churn", 0.1);
     uint32_t                 k = args.num("target-hits", gt_k);
@@ -878,11 +1153,23 @@ int run(const Args& args) {
         };
         auto nprobes = args.list("nprobes", "8,16,32,64,128");
         auto sweep = [&](const char* phase) {
-            sweep_cases((build_kind + " " + phase).c_str(), "nprobe", make_cases(), nprobes, setup,
-                        index.get_stats().live_entries, ivf_query);
+            return sweep_cases((build_kind + " " + phase).c_str(), "nprobe", make_cases(), nprobes, setup,
+                               index.get_stats().live_entries, ivf_query);
         };
+        MetricsFile metrics(args.str("metrics-out", ""));
         if (args.num("sweep-before-churn", 1) != 0) {
-            sweep("before_churn");
+            auto     rows = sweep("before_churn");
+            JsonLine j;
+            j.count("round", 0)
+                .num("turnover", 0)
+                .count("docs", base.n)
+                .count("search_threads", 1)
+                .count("target_hits", k)
+                .num("build_seconds", build_s)
+                .num("gt_seconds", initial_gt_s);
+            add_index_fields(j, index);
+            j.raw("search", search_json(nprobes, rows, index.get_stats().live_entries));
+            metrics.write(j);
         }
         if (churn_fraction > 0) {
             uint32_t updated = 0;
@@ -901,34 +1188,58 @@ int run(const Args& args) {
             if (pool_path.empty()) {
                 throw std::invalid_argument("--churn-rounds needs --pool");
             }
-            double       round_fraction = args.real("round-fraction", 0.1);
-            uint32_t     next_row = pool_first;
+            double      round_fraction = args.real("round-fraction", 0.1);
+            std::string pool_order = args.str("pool-order", "sequential");
+            if (pool_order != "sequential" && pool_order != "random") {
+                throw std::invalid_argument("--pool-order must be sequential or random");
+            }
+            // Pool rows follow the base rows in BenchVectors.
+            PoolRows     pool_rows(base.n, pool->n, pool_order == "random");
             std::mt19937 rng(8191);
             auto         round_nprobes = args.list("round-nprobes", "16,32,64,128");
+            uint32_t     gt_every = static_cast<uint32_t>(std::max<uint64_t>(1, args.num("gt-every", 10)));
             for (uint32_t r = 1; r <= rounds; ++r) {
-                uint32_t replaced = 0;
-                auto     before = index.get_stats();
-                double   round_s =
-                    replace_round(index, vectors, base.n, round_fraction, next_row, pool_limit, rng, replaced);
+                auto round_start = Clock::now();
+                auto before = index.get_stats();
+                auto rr = replace_round(index, vectors, base.n, round_fraction, pool_rows, rng);
                 auto after = index.get_stats();
-                printf(
-                    "round %u: replaced=%u turnover=%.2f seconds=%.1f updates_per_s=%.0f moves_per_update=%.3f "
-                    "bytes_written_per_update=%.0f postings=%lu entries=%lu live=%lu stale_frac=%.3f "
-                    "file_bytes=%lu splits=%lu split_fallbacks=%lu compactions=%lu gc_compactions=%lu merges=%lu\n",
-                    r, replaced, double(next_row - pool_first) / base.n, round_s, replaced / round_s,
-                    double(after.moves - before.moves) / replaced,
-                    double(after.bytes_written - before.bytes_written) / replaced, after.postings, after.entries,
-                    after.live_entries,
-                    after.entries > 0 ? double(after.entries - after.live_entries) / after.entries : 0.0,
-                    after.file_bytes, after.splits, after.split_fallbacks, after.compactions, after.gc_compactions,
-                    after.merges);
+                printf("round %u: replaced=%u turnover=%.2f seconds=%.1f updates_per_s=%.0f moves_per_update=%.3f "
+                       "bytes_written_per_update=%.0f postings=%lu entries=%lu live=%lu stale_frac=%.3f "
+                       "file_bytes=%lu splits=%lu split_fallbacks=%lu compactions=%lu gc_compactions=%lu merges=%lu "
+                       "insert_avg_us=%.1f rebalancing_inserts=%lu\n",
+                       r, rr.replaced, double(pool_rows.taken()) / base.n, rr.seconds, rr.replaced / rr.seconds,
+                       double(after.moves - before.moves) / rr.replaced,
+                       double(after.bytes_written - before.bytes_written) / rr.replaced, after.postings,
+                       after.entries, after.live_entries,
+                       after.entries > 0 ? double(after.entries - after.live_entries) / after.entries : 0.0,
+                       after.file_bytes, after.splits, after.split_fallbacks, after.compactions, after.gc_compactions,
+                       after.merges, rr.insert_s * 1e6 / rr.replaced, rr.rebalancing_inserts);
+                fflush(stdout);
+                bool       gt_round = (r % gt_every == 0) || (r == rounds);
+                double     gt_s = std::numeric_limits<double>::quiet_NaN();
                 FilterCase none_case("none");
-                none_case.gt = compute_gt_live(vectors, base.n, queries, *dff, args.num("gt-threads", 6));
+                if (gt_round) {
+                    auto gt_start_r = Clock::now();
+                    none_case.gt = compute_gt_live(vectors, base.n, queries, *dff, args.num("gt-threads", 6));
+                    gt_s = seconds_since(gt_start_r);
+                }
                 std::vector<FilterCase> cases;
                 cases.push_back(std::move(none_case));
                 char label[64];
                 snprintf(label, sizeof(label), "round %u", r);
-                sweep_cases(label, "nprobe", cases, round_nprobes, setup, after.live_entries, ivf_query);
+                auto rows = sweep_cases(label, "nprobe", cases, round_nprobes, setup, after.live_entries, ivf_query);
+                JsonLine j;
+                j.count("round", r)
+                    .num("turnover", double(pool_rows.taken()) / base.n)
+                    .count("docs", base.n)
+                    .count("search_threads", 1)
+                    .count("target_hits", k);
+                add_update_fields(j, rr, before, after);
+                add_index_fields(j, index);
+                j.num("gt_seconds", gt_s)
+                    .raw("search", search_json(round_nprobes, rows, after.live_entries))
+                    .num("round_seconds", seconds_since(round_start));
+                metrics.write(j);
             }
             print_ivf_stats("after_rounds", index);
         }
@@ -942,7 +1253,7 @@ int run(const Args& args) {
         auto                             mu = index.memory_usage();
         printf("build: m=%u ef_construction=%u seconds=%.1f inserts_per_s=%.0f graph_allocated=%zu graph_used=%zu "
                "vectors_bytes=%zu rss_kb=%lu hwm_kb=%lu\n",
-               m, ef, build_s, base.n / build_s, mu.allocatedBytes(), mu.usedBytes(), base.data.size(),
+               m, ef, build_s, base.n / build_s, mu.allocatedBytes(), mu.usedBytes(), base.bytes(),
                proc_status_kb("VmRSS:"), proc_status_kb("VmHWM:"));
         if (churn_fraction > 0) {
             uint32_t updated = 0;

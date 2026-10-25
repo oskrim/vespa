@@ -1740,6 +1740,7 @@ void IvfIndex::reassign_from(uint32_t slot, const ReassignContext& ctx, std::uno
         if (!entry_is_live(entry) || reassigned.contains(docid)) {
             continue;
         }
+        add_to(_counters.reassign_evaluated, 1);
         TypedCells cells = entry_cells(entry);
         double     d_old = ctx.df_old.calc(cells);
         double     d_1 = ctx.df_1.calc(cells);
@@ -2160,7 +2161,7 @@ IvfIndexStats IvfIndex::get_stats() const noexcept {
             get(_counters.file_bytes),      get(_counters.bytes_written),
             get(_counters.bulk_builds),     get(_counters.gc_checks),
             get(_counters.gc_compactions),  get(_counters.merges),
-            get(_counters.pinned_extents)};
+            get(_counters.pinned_extents),  get(_counters.reassign_evaluated)};
 }
 
 void IvfIndex::populate_state(vespalib::slime::Cursor& object) const {
@@ -2188,6 +2189,7 @@ void IvfIndex::populate_state(vespalib::slime::Cursor& object) const {
     object.setLong("gc_compactions", stats.gc_compactions);
     object.setLong("merges", stats.merges);
     object.setLong("pinned_extents", stats.pinned_extents);
+    object.setLong("reassign_evaluated", stats.reassign_evaluated);
     object.setBool("persistent", _persistent);
     object.setString("posting_file", _posting_path);
     object.setLong("valid_snapshot_serial", _valid_serial.load(std::memory_order_relaxed));
