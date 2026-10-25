@@ -11,8 +11,8 @@
 #include "vector_bundle.h"
 
 #include <vespa/eval/eval/cell_type.h>
-#include <vespa/searchcommon/attribute/ivf_index_params.h>
 #include <vespa/eval/eval/typed_cells.h>
+#include <vespa/searchcommon/attribute/ivf_index_params.h>
 #include <vespa/vespalib/datastore/atomic_value_wrapper.h>
 #include <vespa/vespalib/util/generation_hold_list.h>
 #include <vespa/vespalib/util/generationhandler.h>
@@ -45,43 +45,43 @@ enum class IvfAdaptiveStop { POSTINGS, ENTRIES };
 struct IvfIndexConfig {
     using Lookup = std::function<const char*(const char* knob)>;
 
-    uint32_t     posting_capacity;
-    uint32_t     nprobe;
-    uint32_t     reassign_range;
-    uint32_t     max_postings;
-    uint32_t     max_rebalance_steps;
-    IvfSplitMode split_mode;
-    uint32_t     split_iters;
-    double       split_min_side;
-    uint32_t     replicas;
-    uint32_t     replica_candidates;
-    double       replica_eps;
-    double       rng_factor;
-    bool         bulk_build;
-    double       bulk_fill;
-    uint32_t     bulk_sample;
-    uint32_t     bulk_iters;
-    double       prune_eps;
-    double       filter_min_ratio;
-    double       filter_max_scale;
-    uint32_t     bulk_coarse_probes;
-    uint32_t     gc_steps;
-    double       gc_stale_ratio;
-    double       merge_fraction;
-    double       split_live_fraction;
-    uint32_t     bulk_coarse_k;
-    bool         prefetch;
-    uint32_t     file_grow_extents;
-    double       file_grow_fraction;
-    uint32_t     medoid_sample;
-    uint32_t     medoid_rounds;
+    uint32_t           posting_capacity;
+    uint32_t           nprobe;
+    uint32_t           reassign_range;
+    uint32_t           max_postings;
+    uint32_t           max_rebalance_steps;
+    IvfSplitMode       split_mode;
+    uint32_t           split_iters;
+    double             split_min_side;
+    uint32_t           replicas;
+    uint32_t           replica_candidates;
+    double             replica_eps;
+    double             rng_factor;
+    bool               bulk_build;
+    double             bulk_fill;
+    uint32_t           bulk_sample;
+    uint32_t           bulk_iters;
+    double             prune_eps;
+    double             filter_min_ratio;
+    double             filter_max_scale;
+    uint32_t           bulk_coarse_probes;
+    uint32_t           gc_steps;
+    double             gc_stale_ratio;
+    double             merge_fraction;
+    double             split_live_fraction;
+    uint32_t           bulk_coarse_k;
+    bool               prefetch;
+    uint32_t           file_grow_extents;
+    double             file_grow_fraction;
+    uint32_t           medoid_sample;
+    uint32_t           medoid_rounds;
     IvfFilterProbeMode filter_probe_mode;
-    uint32_t     filter_max_examined;
-    double       filter_entry_read_density;
-    IvfAdaptiveStop filter_adaptive_stop;
-    double       filter_exact_ratio;
-    double       k_entry_factor;
-    bool         rebuild_on_load;
+    uint32_t           filter_max_examined;
+    double             filter_entry_read_density;
+    IvfAdaptiveStop    filter_adaptive_stop;
+    double             filter_exact_ratio;
+    double             k_entry_factor;
+    bool               rebuild_on_load;
 
     IvfIndexConfig();
 
@@ -268,11 +268,11 @@ private:
     uint32_t                    _file_extents;
     uint32_t                    _gc_cursor;
 
-    std::deque<ReassignTask>  _reassign_queue;
-    std::vector<char>         _entry_buf;
-    std::mt19937              _rng;
-    Counters                  _counters;
-    mutable std::atomic<bool> _fadvise_warned;
+    std::deque<ReassignTask>   _reassign_queue;
+    std::vector<char>          _entry_buf;
+    std::mt19937               _rng;
+    Counters                   _counters;
+    mutable std::atomic<bool>  _fadvise_warned;
     std::atomic<IvfLoadSource> _load_source;
     std::atomic<double>        _load_seconds;
     std::string                _load_rejected; // reason the last save file was not used; written before readers exist

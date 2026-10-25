@@ -51,9 +51,7 @@ public:
     [[nodiscard]] const std::optional<HnswIndexParams>& hnsw_index_params() const noexcept {
         return _hnsw_index_params;
     }
-    [[nodiscard]] const std::optional<IvfIndexParams>& ivf_index_params() const noexcept {
-        return _ivf_index_params;
-    }
+    [[nodiscard]] const std::optional<IvfIndexParams>& ivf_index_params() const noexcept { return _ivf_index_params; }
     [[nodiscard]] const std::optional<QuantizationParams>& quantization_params() const noexcept {
         return _quantization_params;
     }
@@ -167,7 +165,7 @@ private:
     vespalib::eval::ValueType         _tensorType;
     vespalib::eval::ValueType         _unquantized_tensor_type;
     std::optional<HnswIndexParams>    _hnsw_index_params;
-    std::optional<IvfIndexParams> _ivf_index_params;
+    std::optional<IvfIndexParams>     _ivf_index_params;
     std::optional<QuantizationParams> _quantization_params;
 };
 

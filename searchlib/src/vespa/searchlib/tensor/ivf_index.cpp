@@ -329,9 +329,8 @@ uint64_t read_file_id(int fd) {
         }
     }
     if (got < 0) {
-        throw IllegalStateException(make_string("IVF index: reading the posting file header failed: %s",
-                                                std::strerror(errno)),
-                                    VESPA_STRLOC);
+        throw IllegalStateException(
+            make_string("IVF index: reading the posting file header failed: %s", std::strerror(errno)), VESPA_STRLOC);
     }
     uint64_t magic = 0;
     uint32_t version = 0;
@@ -503,15 +502,43 @@ IvfIndexConfig::IvfIndexConfig()
 }
 
 const std::vector<std::string>& IvfIndexConfig::knob_names() {
-    static const std::vector<std::string> names = {
-        "POSTING_CAPACITY",  "NPROBE",      "REASSIGN_RANGE",   "MAX_POSTINGS",     "MAX_REBALANCE_STEPS",
-        "SPLIT_MODE",        "SPLIT_ITERS", "SPLIT_MIN_SIDE",   "REPLICAS",         "REPLICA_CANDIDATES",
-        "REPLICA_EPS",       "RNG_FACTOR",  "BULK_BUILD",       "BULK_FILL",        "BULK_SAMPLE",
-        "BULK_ITERS",        "PRUNE_EPS",   "FILTER_MIN_RATIO", "FILTER_MAX_SCALE",
-        "BULK_COARSE_PROBES", "GC_STEPS",    "GC_STALE_RATIO",   "MERGE_FRACTION",   "SPLIT_LIVE_FRACTION",
-        "BULK_COARSE_K",     "PREFETCH",    "FILE_GROW_EXTENTS", "FILE_GROW_FRACTION", "MEDOID_SAMPLE",
-        "MEDOID_ROUNDS",     "FILTER_PROBE_MODE", "FILTER_MAX_EXAMINED", "FILTER_ENTRY_READ_DENSITY",
-        "FILTER_ADAPTIVE_STOP", "FILTER_EXACT_RATIO", "K_ENTRY_FACTOR", "REBUILD_ON_LOAD"};
+    static const std::vector<std::string> names = {"POSTING_CAPACITY",
+                                                   "NPROBE",
+                                                   "REASSIGN_RANGE",
+                                                   "MAX_POSTINGS",
+                                                   "MAX_REBALANCE_STEPS",
+                                                   "SPLIT_MODE",
+                                                   "SPLIT_ITERS",
+                                                   "SPLIT_MIN_SIDE",
+                                                   "REPLICAS",
+                                                   "REPLICA_CANDIDATES",
+                                                   "REPLICA_EPS",
+                                                   "RNG_FACTOR",
+                                                   "BULK_BUILD",
+                                                   "BULK_FILL",
+                                                   "BULK_SAMPLE",
+                                                   "BULK_ITERS",
+                                                   "PRUNE_EPS",
+                                                   "FILTER_MIN_RATIO",
+                                                   "FILTER_MAX_SCALE",
+                                                   "BULK_COARSE_PROBES",
+                                                   "GC_STEPS",
+                                                   "GC_STALE_RATIO",
+                                                   "MERGE_FRACTION",
+                                                   "SPLIT_LIVE_FRACTION",
+                                                   "BULK_COARSE_K",
+                                                   "PREFETCH",
+                                                   "FILE_GROW_EXTENTS",
+                                                   "FILE_GROW_FRACTION",
+                                                   "MEDOID_SAMPLE",
+                                                   "MEDOID_ROUNDS",
+                                                   "FILTER_PROBE_MODE",
+                                                   "FILTER_MAX_EXAMINED",
+                                                   "FILTER_ENTRY_READ_DENSITY",
+                                                   "FILTER_ADAPTIVE_STOP",
+                                                   "FILTER_EXACT_RATIO",
+                                                   "K_ENTRY_FACTOR",
+                                                   "REBUILD_ON_LOAD"};
     return names;
 }
 
@@ -701,8 +728,8 @@ IvfIndex::IvfIndex(const DocVectorAccess& vectors, DistanceFunctionFactory::UP d
     // top; they are few compared to max_postings unless saves keep failing.
     _max_extents = 2 * _cfg.max_postings;
     _lid_table_bytes = size_t(_max_extents) * _cfg.posting_capacity * sizeof(uint32_t);
-    void* lids = ::mmap(nullptr, _lid_table_bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE,
-                        -1, 0);
+    void* lids =
+        ::mmap(nullptr, _lid_table_bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
     if (lids == MAP_FAILED) {
         int mmap_errno = errno;
         ::munmap(_slot_table, _slot_table_bytes);
@@ -832,7 +859,8 @@ IvfIndex::search(Stats& stats, uint32_t k, const BoundDistanceFunction& df, cons
                  const GlobalFilter* filter, uint32_t nprobe, const vespalib::Deadline& doom,
                  double distance_threshold, IvfProbeStats* probe_stats) const {
     if (filter != nullptr && filter->size() > 0 &&
-        double(filter->count()) < _cfg.filter_exact_ratio * double(filter->size())) {
+        double(filter->count()) < _cfg.filter_exact_ratio * double(filter->size()))
+    {
         return search_exact(stats, k, df, *filter, doom, distance_threshold);
     }
     if (filter != nullptr && _cfg.filter_probe_mode == IvfFilterProbeMode::ADAPTIVE) {
@@ -962,7 +990,7 @@ IvfIndex::search_adaptive(Stats& stats, uint32_t k, const BoundDistanceFunction&
     uint64_t entries_target = std::max<uint64_t>(k, uint64_t(nprobe) * get(_counters.entries) / postings_now);
     for (const auto& probe : order) {
         bool done = (_cfg.filter_adaptive_stop == IvfAdaptiveStop::POSTINGS) ? (selected.size() >= nprobe)
-                                                                              : (matched >= entries_target);
+                                                                             : (matched >= entries_target);
         if (done && matched >= k) {
             break;
         }
@@ -1088,10 +1116,10 @@ const std::string& IvfIndex::save_file_tag() {
 
 const std::vector<IvfIndex::CounterField>& IvfIndex::saved_counters() {
     static const std::vector<CounterField> fields = {
-        &Counters::postings,         &Counters::entries,         &Counters::live_entries,    &Counters::splits,
-        &Counters::split_fallbacks,  &Counters::compactions,     &Counters::reassign_checks, &Counters::moves,
-        &Counters::dropped_steps,    &Counters::dropped_entries, &Counters::prepared_retired, &Counters::bytes_written,
-        &Counters::bulk_builds,      &Counters::gc_checks,       &Counters::gc_compactions,  &Counters::merges};
+        &Counters::postings,        &Counters::entries,         &Counters::live_entries,     &Counters::splits,
+        &Counters::split_fallbacks, &Counters::compactions,     &Counters::reassign_checks,  &Counters::moves,
+        &Counters::dropped_steps,   &Counters::dropped_entries, &Counters::prepared_retired, &Counters::bytes_written,
+        &Counters::bulk_builds,     &Counters::gc_checks,       &Counters::gc_compactions,   &Counters::merges};
     return fields;
 }
 
@@ -1210,12 +1238,9 @@ void IvfIndex::update_extent_counters() noexcept {
 }
 
 ivf::SaveLayout IvfIndex::layout() const noexcept {
-    return {static_cast<uint32_t>(_cell_type),
-            static_cast<uint32_t>(_vector_size),
-            static_cast<uint32_t>(_space.metric),
-            _cfg.posting_capacity,
-            static_cast<uint32_t>(_entry_bytes),
-            static_cast<uint32_t>(_centroid_bytes)};
+    return {static_cast<uint32_t>(_cell_type),    static_cast<uint32_t>(_vector_size),
+            static_cast<uint32_t>(_space.metric), _cfg.posting_capacity,
+            static_cast<uint32_t>(_entry_bytes),  static_cast<uint32_t>(_centroid_bytes)};
 }
 
 // Slots on hold come after the free slots, so the load leaves them in the order they get after the next reclaim.
@@ -1284,8 +1309,8 @@ std::string IvfIndex::check_save_state(const ivf::SaveState& state) const {
             continue;
         }
         Posting posting = decode_ref(ref);
-        if (posting.extent >= state.extent_limit || posting.length == 0 ||
-            posting.length > _cfg.posting_capacity || extent_used[posting.extent])
+        if (posting.extent >= state.extent_limit || posting.length == 0 || posting.length > _cfg.posting_capacity ||
+            extent_used[posting.extent])
         {
             return make_string("bad posting reference in slot %u", slot);
         }
@@ -2039,14 +2064,13 @@ std::unique_ptr<NearestNeighborIndexSaver> IvfIndex::make_saver(GenericHeader& h
 // The flush thread only records the serial number; the writer frees the pinned extents at its next commit.
 void IvfIndex::on_snapshot_valid(uint64_t serial_num) noexcept {
     uint64_t valid = _valid_serial.load(std::memory_order_relaxed);
-    while (valid < serial_num &&
-           !_valid_serial.compare_exchange_weak(valid, serial_num, std::memory_order_release,
-                                                std::memory_order_relaxed)) {
+    while (valid < serial_num && !_valid_serial.compare_exchange_weak(valid, serial_num, std::memory_order_release,
+                                                                      std::memory_order_relaxed))
+    {
     }
 }
 
-std::unique_ptr<NearestNeighborIndexLoader> IvfIndex::make_loader(FastOS_FileInterface& file,
-                                                                  const GenericHeader&) {
+std::unique_ptr<NearestNeighborIndexLoader> IvfIndex::make_loader(FastOS_FileInterface& file, const GenericHeader&) {
     return std::make_unique<IvfIndexLoader>([this, &file]() { load_save_file(file); });
 }
 
@@ -2073,7 +2097,8 @@ uint32_t IvfIndex::nprobe_for_explore(uint32_t k, uint32_t explore_k) const noex
     double scaled = std::ceil(double(_cfg.nprobe) * explore_k / std::max(k, 1u));
     double mean_entries = double(get(_counters.entries)) / std::max<uint64_t>(1, get(_counters.postings));
     double for_hits = std::ceil(_cfg.k_entry_factor * explore_k / std::max(1.0, mean_entries));
-    return static_cast<uint32_t>(std::clamp(std::max(scaled, for_hits), double(_cfg.nprobe), double(_cfg.max_postings)));
+    return static_cast<uint32_t>(
+        std::clamp(std::max(scaled, for_hits), double(_cfg.nprobe), double(_cfg.max_postings)));
 }
 
 std::vector<NearestNeighborIndex::Neighbor> IvfIndex::find_top_k(Stats& stats, uint32_t k,

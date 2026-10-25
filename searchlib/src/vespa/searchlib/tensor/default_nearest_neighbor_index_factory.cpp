@@ -10,7 +10,6 @@
 
 #include <vespa/searchcommon/attribute/config.h>
 
-
 #include <vespa/log/log.h>
 LOG_SETUP(".searchlib.tensor.default_nearest_neighbor_index_factory");
 
@@ -30,13 +29,11 @@ RandomLevelGenerator::UP make_random_level_generator(uint32_t m) {
 
 } // namespace
 
-std::unique_ptr<NearestNeighborIndex>
-DefaultNearestNeighborIndexFactory::make(const DocVectorAccess& vectors, size_t vector_size, bool multi_vector_index,
-                                         vespalib::eval::CellType                            cell_type,
-                                         const search::attribute::HnswIndexParams&           params,
-                                         const std::optional<attribute::QuantizationParams>& quant_params,
-                                         const std::optional<attribute::IvfIndexParams>&     ivf_params,
-                                         const std::string&                                  base_file_name) const {
+std::unique_ptr<NearestNeighborIndex> DefaultNearestNeighborIndexFactory::make(
+    const DocVectorAccess& vectors, size_t vector_size, bool multi_vector_index, vespalib::eval::CellType cell_type,
+    const search::attribute::HnswIndexParams&           params,
+    const std::optional<attribute::QuantizationParams>& quant_params,
+    const std::optional<attribute::IvfIndexParams>& ivf_params, const std::string& base_file_name) const {
     uint32_t        m = params.max_links_per_node();
     HnswIndexConfig cfg(m * 2, m, params.neighbors_to_explore_at_insert(), 10000, true);
     auto dist_ff = make_distance_function_factory(params.distance_metric(), cell_type, vector_size, quant_params);
