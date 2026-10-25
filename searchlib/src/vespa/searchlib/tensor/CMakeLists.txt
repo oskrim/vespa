@@ -31,6 +31,7 @@ vespa_add_library(searchlib_tensor OBJECT
     inv_log_level_generator.cpp
     ivf_index.cpp
     ivf_kmeans.cpp
+    ivf_save_file.cpp
     large_subspaces_buffer_type.cpp
     nearest_neighbor_index.cpp
     nearest_neighbor_index_saver.cpp

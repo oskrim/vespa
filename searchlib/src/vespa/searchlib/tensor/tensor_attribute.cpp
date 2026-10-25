@@ -124,9 +124,9 @@ TensorAttribute::TensorAttribute(std::string_view name, const Config& cfg, Tenso
     if (cfg.hnsw_index_params().has_value()) {
         // Note that we always pass the dimensionality of the unquantized (original) tensor type
         size_t vector_size = cfg.unquantized_tensor_type().dense_subspace_size();
-        _index =
-            index_factory.make(*this, vector_size, !_is_dense, cfg.tensorType().cell_type(),
-                               cfg.hnsw_index_params().value(), cfg.quantization_params(), cfg.ivf_index_params());
+        _index = index_factory.make(*this, vector_size, !_is_dense, cfg.tensorType().cell_type(),
+                                    cfg.hnsw_index_params().value(), cfg.quantization_params(),
+                                    cfg.ivf_index_params(), getBaseFileName());
     }
 }
 

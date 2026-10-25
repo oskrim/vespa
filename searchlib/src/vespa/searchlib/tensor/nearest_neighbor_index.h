@@ -135,7 +135,7 @@ public:
      * This function is always called by the attribute write thread,
      * and the caller ensures that an attribute read guard is held during the lifetime of the saver.
      */
-    virtual std::unique_ptr<NearestNeighborIndexSaver> make_saver(vespalib::GenericHeader& header) const = 0;
+    virtual std::unique_ptr<NearestNeighborIndexSaver> make_saver(vespalib::GenericHeader& header) = 0;
 
     /**
      * Creates a loader that is used to load the index from the given file.
@@ -144,6 +144,12 @@ public:
      */
     virtual std::unique_ptr<NearestNeighborIndexLoader> make_loader(FastOS_FileInterface&          file,
                                                                     const vespalib::GenericHeader& header) = 0;
+
+    /**
+     * Whether the index is still empty after loading from the index file, because it rejected the file, and must be
+     * built from the attribute.
+     */
+    virtual bool needs_build_after_load() const noexcept { return false; }
 
     virtual std::vector<Neighbor> find_top_k(Stats& stats, uint32_t k, const BoundDistanceFunction& df,
                                              uint32_t explore_k, double exploration_slack, bool prefetch_tensors,

@@ -3,6 +3,7 @@
 #include "tensor_attribute_loader.h"
 
 #include "dense_tensor_store.h"
+#include "ivf_index.h"
 #include "nearest_neighbor_index.h"
 #include "nearest_neighbor_index_loader.h"
 #include "tensor_attribute_constants.h"
@@ -67,9 +68,15 @@ constexpr uint32_t LOAD_COMMIT_INTERVAL = 256;
 const std::string  tensorTypeTag("tensortype");
 
 bool can_use_index_save_file(const std::string& attrName, const search::attribute::Config& config,
-                             const AttributeHeader& header) {
-    if (config.ivf_index_params().has_value()) {
-        return false; // The IVF index is never saved; a file here is from an earlier HNSW index.
+                             const AttributeHeader& header, const vespalib::GenericHeader& dat_header) {
+    bool saved_by_ivf = dat_header.hasTag(IvfIndex::save_file_tag());
+    if (config.ivf_index_params().has_value() || saved_by_ivf) {
+        if (config.ivf_index_params().has_value() != saved_by_ivf) {
+            LOG(warning, "Attribute %s cannot use saved nearest neighbor index, it was saved by another index type",
+                attrName.c_str());
+            return false;
+        }
+        return true;
     }
     if (!config.hnsw_index_params().has_value() || !header.get_hnsw_index_params().has_value()) {
         LOG(warning, "Attribute %s cannot use saved HNSW index for ANN (missing parameters)", attrName.c_str());
@@ -377,13 +384,16 @@ bool TensorAttributeLoader::on_load(vespalib::Executor* executor) {
         bool use_index_file = false;
         if (has_index_file(_attr)) {
             auto header = AttributeHeader::extractTags(reader.getDatHeader(), _attr.getBaseFileName());
-            use_index_file = can_use_index_save_file(_attr.getName(), _attr.getConfig(), header);
+            use_index_file =
+                can_use_index_save_file(_attr.getName(), _attr.getConfig(), header, reader.getDatHeader());
         }
         if (use_index_file) {
             if (!load_index()) {
                 return false;
             }
-            if (dense_store == nullptr) {
+            if (_index->needs_build_after_load()) {
+                build_index(executor, docid_limit);
+            } else if (dense_store == nullptr) {
                 check_consistency(docid_limit);
             }
         } else {
