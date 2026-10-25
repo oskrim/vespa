@@ -1079,6 +1079,19 @@ std::string IvfIndex::posting_path_for(const std::string& base_file_name) {
     return (dir / (base.filename().string() + posting_file_suffix)).string();
 }
 
+void IvfIndex::remove_posting_file(const std::string& base_file_name) {
+    std::string path = posting_path_for(base_file_name);
+    if (path.empty()) {
+        return;
+    }
+    std::error_code ec;
+    if (std::filesystem::remove(path, ec)) {
+        LOG(info, "IVF index: removed posting file %s, the attribute has no IVF index", path.c_str());
+    } else if (ec) {
+        LOG(warning, "IVF index: removing posting file %s failed: %s", path.c_str(), ec.message().c_str());
+    }
+}
+
 const std::string& IvfIndex::save_file_tag() {
     static const std::string tag("ivf.save_format");
     return tag;

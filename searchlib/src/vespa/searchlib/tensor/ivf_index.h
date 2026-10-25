@@ -373,6 +373,8 @@ public:
     // attribute's directory, which is the parent of a 'snapshot-<serial>' directory. Empty when the base file name
     // has no directory.
     static std::string posting_path_for(const std::string& base_file_name);
+    // Removes the posting file that an earlier IVF index of the attribute left behind, if any.
+    static void remove_posting_file(const std::string& base_file_name);
     // The generic header tag that marks an index save file written by this index.
     static const std::string& save_file_tag();
 

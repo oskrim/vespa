@@ -1612,4 +1612,16 @@ TEST(IvfAttributeTest, dense_tensor_attribute_rebuilds_without_a_usable_save_fil
     check_bulk_built(f.ivf, "missing save file");
 }
 
+TEST(IvfAttributeTest, saving_without_ivf_removes_the_old_posting_file) {
+    AttrFixture f(search::attribute::IvfIndexParams({{"posting-capacity", "16"}}));
+    ASSERT_NO_FATAL_FAILURE(f.feed_and_save());
+    ASSERT_TRUE(std::filesystem::exists(attr_name + ".ivfpostings"));
+    auto hnsw_attr = make_attr(f.factory, std::nullopt);
+    ASSERT_TRUE(hnsw_attr->load());
+    EXPECT_EQ(nullptr, ivf_of(*hnsw_attr));
+    EXPECT_TRUE(std::filesystem::exists(attr_name + ".ivfpostings"));
+    ASSERT_TRUE(hnsw_attr->save());
+    EXPECT_FALSE(std::filesystem::exists(attr_name + ".ivfpostings"));
+}
+
 GTEST_MAIN_RUN_ALL_TESTS()

@@ -2,6 +2,7 @@
 
 #include "tensor_attribute.h"
 
+#include "ivf_index.h"
 #include "nearest_neighbor_index.h"
 #include "nearest_neighbor_index_factory.h"
 #include "nearest_neighbor_index_saver.h"
@@ -344,6 +345,9 @@ bool TensorAttribute::onLoad(vespalib::Executor* executor) {
 std::unique_ptr<AttributeSaver> TensorAttribute::onInitSave(std::string_view fileName) {
     set_memory_usage_at_save_start(getStatus().get_used_minus_dead_and_onhold());
     auto guard(getGenerationHandler().takeGuard());
+    if (dynamic_cast<const IvfIndex*>(_index.get()) == nullptr) {
+        IvfIndex::remove_posting_file(std::string(fileName));
+    }
     auto header = this->createAttributeHeader(fileName);
     auto index_saver =
         (_index ? _index->make_saver(header.get_extra_tags()) : std::unique_ptr<NearestNeighborIndexSaver>());
