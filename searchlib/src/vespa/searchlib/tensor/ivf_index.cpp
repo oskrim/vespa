@@ -485,7 +485,7 @@ IvfIndexConfig::IvfIndexConfig()
       gc_steps(16),
       gc_stale_ratio(0.25),
       merge_fraction(0.125),
-      split_live_fraction(0.5),
+      split_live_fraction(0.9),
       bulk_coarse_k(0),
       prefetch(true),
       file_grow_extents(16),
