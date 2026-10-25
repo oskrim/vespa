@@ -687,11 +687,11 @@ void print_ivf_stats(const char* label, const IvfIndex& index) {
     auto s = index.get_stats();
     auto mu = index.memory_usage();
     printf("%s: postings=%lu entries=%lu live=%lu splits=%lu compactions=%lu reassign_checks=%lu moves=%lu "
-           "dropped_steps=%lu dropped_entries=%lu prepared_retired=%lu file_bytes=%lu bytes_written=%lu "
-           "ram_allocated=%zu ram_used=%zu\n",
+           "dropped_steps=%lu dropped_entries=%lu prepared_retired=%lu extents=%lu free_extents=%lu file_bytes=%lu "
+           "bytes_written=%lu ram_allocated=%zu ram_used=%zu\n",
            label, s.postings, s.entries, s.live_entries, s.splits, s.compactions, s.reassign_checks, s.moves,
-           s.dropped_steps, s.dropped_entries, s.prepared_retired, s.file_bytes, s.bytes_written, mu.allocatedBytes(),
-           mu.usedBytes());
+           s.dropped_steps, s.dropped_entries, s.prepared_retired, s.extents, s.free_extents, s.file_bytes,
+           s.bytes_written, mu.allocatedBytes(), mu.usedBytes());
 }
 
 struct SweepSetup {
@@ -911,13 +911,14 @@ int run(const Args& args) {
                 auto after = index.get_stats();
                 printf("round %u: replaced=%u turnover=%.2f seconds=%.1f updates_per_s=%.0f moves_per_update=%.3f "
                        "bytes_written_per_update=%.0f postings=%lu entries=%lu live=%lu stale_frac=%.3f "
-                       "file_bytes=%lu split_fallbacks=%lu gc_compactions=%lu merges=%lu\n",
+                       "file_bytes=%lu splits=%lu split_fallbacks=%lu compactions=%lu gc_compactions=%lu merges=%lu\n",
                        r, replaced, double(next_row - pool_first) / base.n, round_s, replaced / round_s,
                        double(after.moves - before.moves) / replaced,
                        double(after.bytes_written - before.bytes_written) / replaced, after.postings, after.entries,
                        after.live_entries,
                        after.entries > 0 ? double(after.entries - after.live_entries) / after.entries : 0.0,
-                       after.file_bytes, after.split_fallbacks, after.gc_compactions, after.merges);
+                       after.file_bytes, after.splits, after.split_fallbacks, after.compactions, after.gc_compactions,
+                       after.merges);
                 FilterCase none_case("none");
                 none_case.gt = compute_gt_live(vectors, base.n, queries, *dff, args.num("gt-threads", 6));
                 std::vector<FilterCase> cases;
@@ -926,6 +927,7 @@ int run(const Args& args) {
                 snprintf(label, sizeof(label), "round %u", r);
                 sweep_cases(label, "nprobe", cases, round_nprobes, setup, after.live_entries, ivf_query);
             }
+            print_ivf_stats("after_rounds", index);
         }
     } else if (index_kind == "hnsw") {
         uint32_t                         m = args.num("hnsw-m", 16);
