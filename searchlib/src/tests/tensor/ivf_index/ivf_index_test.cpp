@@ -1305,7 +1305,7 @@ TEST_F(IvfPersistenceTest, old_save_plus_replay_gives_the_live_index) {
     expect_same_counters(live_stats, index->get_stats(), false);
 }
 
-TEST_F(IvfPersistenceTest, freed_extents_are_reused_only_after_a_newer_snapshot_is_valid) {
+TEST_F(IvfPersistenceTest, a_valid_snapshot_frees_the_extents_it_pinned) {
     constexpr uint32_t dims = 16;
     make_named_index(CellType::FLOAT, dims, DistanceMetric::Euclidean, config(16), path("p.ivfpostings"));
     Generator gen(CellType::FLOAT, dims, 30, 0.5, 43);
@@ -1324,28 +1324,98 @@ TEST_F(IvfPersistenceTest, freed_extents_are_reused_only_after_a_newer_snapshot_
     EXPECT_EQ(0u, stats.free_extents);
 
     save_to(path("s10.nnidx"), 10);
-    index->on_snapshot_valid(10);
     feed(1000);
-    EXPECT_EQ(0u, index->get_stats().free_extents) << "snapshot 10 being valid does not free what 10 pinned";
-
-    save_to(path("s20.nnidx"), 20);
-    uint64_t pinned_after_s20 = index->get_stats().pinned_extents;
-    feed(1000);
-    EXPECT_EQ(0u, index->get_stats().free_extents) << "snapshot 20 is saved but not valid yet";
+    EXPECT_EQ(0u, index->get_stats().free_extents) << "snapshot 10 is saved but not valid yet";
     uint64_t pinned_before_valid = index->get_stats().pinned_extents;
 
-    index->on_snapshot_valid(20);
+    index->on_snapshot_valid(10);
     EXPECT_EQ(0u, index->get_stats().free_extents) << "the writer frees pinned extents at its next commit";
     commit();
     stats = index->get_stats();
-    EXPECT_EQ(pinned_at_10, stats.free_extents);
+    EXPECT_EQ(pinned_at_10, stats.free_extents) << "snapshot 10 never references what it pinned";
     EXPECT_EQ(pinned_before_valid - pinned_at_10, stats.pinned_extents);
 
+    save_to(path("s20.nnidx"), 20);
+    uint64_t pinned_at_20 = index->get_stats().pinned_extents;
+    EXPECT_GT(pinned_at_20, 0u);
     save_to(path("s30.nnidx"), 30);
-    index->on_snapshot_valid(30);
+    index->on_snapshot_valid(20);
     commit();
-    EXPECT_EQ(pinned_before_valid - pinned_after_s20, index->get_stats().pinned_extents)
-        << "what snapshot 30 pinned waits for a snapshot newer than 30";
+    stats = index->get_stats();
+    EXPECT_EQ(pinned_at_10 + pinned_at_20, stats.free_extents);
+    EXPECT_EQ(0u, stats.pinned_extents) << "snapshot 30 pinned nothing, since nothing was freed after 20";
+}
+
+TEST_F(IvfPersistenceTest, reusing_extents_released_at_a_valid_snapshot_keeps_it_loadable) {
+    constexpr uint32_t dims = 16;
+    constexpr uint32_t initial = 3000;
+    auto               cfg = config(32);
+    cfg.gc_steps = 64;
+    cfg.merge_fraction = 0.25;
+    const std::string posting = path("p.ivfpostings");
+    make_named_index(CellType::FLOAT, dims, DistanceMetric::Euclidean, cfg, posting);
+    Generator gen(CellType::FLOAT, dims, 40, 0.5, 59);
+    for (uint32_t docid = 1; docid <= initial; ++docid) {
+        add(docid, gen.sample());
+    }
+    commit();
+    save_to(path("s10.nnidx"), 10);
+    index->on_snapshot_valid(10);
+    uint32_t next_docid = initial + 1;
+    auto     run = [&](uint32_t count) {
+        auto ops = heavy_mutations(gen, next_docid, initial, count);
+        for (const auto& op : ops) {
+            if (op.kind == Op::Kind::ADD) {
+                next_docid = std::max(next_docid, op.docid + 1);
+            }
+            apply(op);
+        }
+        return ops;
+    };
+    run(2000);
+
+    // Snapshot 20 becomes valid, so what it pinned (referenced only by snapshot 10) is reused below.
+    save_to(path("s20.nnidx"), 20);
+    std::vector<Bytes> saved_docs;
+    for (uint32_t docid = 0; docid < vectors->docid_limit(); ++docid) {
+        saved_docs.push_back(vectors->has(docid) ? vectors->raw(docid) : Bytes());
+    }
+    auto saved_ranges = index->live_posting_ranges();
+    auto saved_bytes = read_ranges(posting, saved_ranges);
+    index->on_snapshot_valid(20);
+    commit();
+    uint64_t released = index->get_stats().free_extents;
+    EXPECT_GT(released, 0u);
+
+    // Snapshot 30 is saved but never valid: what it pins is still referenced by snapshot 20.
+    auto ops = run(2000);
+    save_to(path("s30.nnidx"), 30);
+    auto more = run(2000);
+    ops.insert(ops.end(), more.begin(), more.end());
+    auto live_stats = index->get_stats();
+    EXPECT_LT(live_stats.free_extents, released) << "the released extents were reused";
+    EXPECT_EQ(saved_bytes, read_ranges(posting, saved_ranges)) << "a posting of the valid snapshot was overwritten";
+    std::vector<Bytes> queries;
+    for (uint32_t i = 0; i < 50; ++i) {
+        queries.push_back(gen.sample());
+    }
+    auto live_results = run_queries(queries, 16);
+
+    index.reset();
+    vectors = std::make_unique<TestVectors>(CellType::FLOAT, dims);
+    for (uint32_t docid = 0; docid < saved_docs.size(); ++docid) {
+        if (!saved_docs[docid].empty()) {
+            vectors->set(docid, saved_docs[docid]);
+        }
+    }
+    reopen_index(DistanceMetric::Euclidean, cfg, posting);
+    load_from(path("s20.nnidx"));
+    ASSERT_EQ(IvfLoadSource::SAVE_FILE, index->load_source()) << rejected_reason();
+    for (const auto& op : ops) {
+        apply(op);
+    }
+    EXPECT_EQ(live_results, run_queries(queries, 16));
+    expect_same_counters(live_stats, index->get_stats(), false);
 }
 
 TEST_F(IvfPersistenceTest, saves_that_never_become_valid_keep_the_old_snapshot_loadable) {
