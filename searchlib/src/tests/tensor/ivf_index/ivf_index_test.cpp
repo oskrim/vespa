@@ -928,6 +928,7 @@ TEST(IvfConfigTest, knobs_are_parsed_and_bad_values_fall_back_to_defaults) {
                                               {"FILTER_MIN_RATIO", "0.2"},
                                               {"REPLICA_CANDIDATES", "2"},
                                               {"REBUILD_ON_LOAD", "true"},
+                                              {"FLUSH_PINNED_RATIO", "0.5"},
                                               {"PREFETCH", "0"}};
     auto                               lookup = [&env](const char* knob) -> const char* {
         auto it = env.find(knob);
@@ -949,7 +950,9 @@ TEST(IvfConfigTest, knobs_are_parsed_and_bad_values_fall_back_to_defaults) {
     EXPECT_FALSE(def.rebuild_on_load);
     EXPECT_TRUE(cfg.rebuild_on_load);
     EXPECT_FALSE(cfg.prefetch);
-    EXPECT_EQ(37u, IvfIndexConfig::knob_names().size());
+    EXPECT_DOUBLE_EQ(1.0, def.flush_pinned_ratio);
+    EXPECT_DOUBLE_EQ(0.5, cfg.flush_pinned_ratio);
+    EXPECT_EQ(38u, IvfIndexConfig::knob_names().size());
 }
 
 TEST_F(IvfIndexTest, two_phase_add_with_prepare_on_other_thread) {
@@ -1418,6 +1421,71 @@ TEST_F(IvfPersistenceTest, reusing_extents_released_at_a_valid_snapshot_keeps_it
     expect_same_counters(live_stats, index->get_stats(), false);
 }
 
+TEST_F(IvfPersistenceTest, flush_disk_gain_appears_only_past_the_pinned_ratio) {
+    constexpr uint32_t dims = 16;
+    constexpr uint32_t initial = 2000;
+    auto               cfg = config(16);
+    cfg.flush_pinned_ratio = 1.0;
+    make_named_index(CellType::FLOAT, dims, DistanceMetric::Euclidean, cfg, path("p.ivfpostings"));
+    Generator             gen(CellType::FLOAT, dims, 30, 0.5, 61);
+    std::vector<uint32_t> lids;
+    for (uint32_t docid = 1; docid <= initial; ++docid) {
+        vectors->set(docid, gen.sample());
+        lids.push_back(docid);
+    }
+    ASSERT_TRUE(index->bulk_build(lids, nullptr));
+    commit();
+    EXPECT_EQ(0u, index->flush_disk_gain()) << "a bulk build frees nothing";
+
+    uint64_t extent_bytes = uint64_t(cfg.posting_capacity) * index->entry_bytes();
+    bool     saw_below = false;
+    bool     saw_above = false;
+    uint32_t next_docid = initial + 1;
+    for (uint32_t round = 0; round < 40 && !saw_above; ++round) {
+        for (const auto& op : heavy_mutations(gen, next_docid, initial, 100)) {
+            if (op.kind == Op::Kind::ADD) {
+                next_docid = std::max(next_docid, op.docid + 1);
+            }
+            apply(op);
+        }
+        auto     stats = index->get_stats();
+        uint64_t pinned = stats.pinned_extents * extent_bytes;
+        uint64_t live = stats.live_entries * index->entry_bytes();
+        if (pinned > 0 && pinned < live) {
+            EXPECT_EQ(0u, index->flush_disk_gain()) << "pinned " << pinned << " < live " << live;
+            saw_below = true;
+        } else if (pinned >= live) {
+            EXPECT_EQ(pinned, index->flush_disk_gain());
+            saw_above = true;
+        }
+    }
+    EXPECT_TRUE(saw_below);
+    ASSERT_TRUE(saw_above) << "the churn never pinned as many bytes as are live";
+
+    save_to(path("s10.nnidx"), 10);
+    index->on_snapshot_valid(10);
+    commit();
+    EXPECT_EQ(0u, index->get_stats().pinned_extents);
+    EXPECT_EQ(0u, index->flush_disk_gain()) << "a valid snapshot frees what the flush pinned";
+}
+
+TEST_F(IvfPersistenceTest, flush_disk_gain_is_off_at_pinned_ratio_zero) {
+    constexpr uint32_t dims = 16;
+    auto               cfg = config(16);
+    cfg.flush_pinned_ratio = 0.0;
+    make_named_index(CellType::FLOAT, dims, DistanceMetric::Euclidean, cfg, path("p.ivfpostings"));
+    Generator gen(CellType::FLOAT, dims, 30, 0.5, 67);
+    for (uint32_t docid = 1; docid <= 500; ++docid) {
+        add(docid, gen.sample());
+    }
+    for (const auto& op : heavy_mutations(gen, 501, 500, 3000)) {
+        apply(op);
+    }
+    EXPECT_GT(index->get_stats().pinned_extents * uint64_t(cfg.posting_capacity),
+              index->get_stats().live_entries);
+    EXPECT_EQ(0u, index->flush_disk_gain());
+}
+
 TEST_F(IvfPersistenceTest, saves_that_never_become_valid_keep_the_old_snapshot_loadable) {
     constexpr uint32_t dims = 16;
     constexpr uint32_t initial = 3000;
@@ -1603,6 +1671,24 @@ TEST(IvfAttributeTest, ivf_params_in_attribute_config_select_the_ivf_index) {
     EXPECT_EQ(IvfFilterProbeMode::ADAPTIVE, ivf_of(*ivf_attr)->config().filter_probe_mode);
     EXPECT_TRUE(ivf_of(*ivf_attr)->persistent());
     EXPECT_EQ(attr_name + ".ivfpostings", ivf_of(*ivf_attr)->posting_path());
+}
+
+TEST(IvfAttributeTest, dense_tensor_attribute_reports_the_index_flush_disk_gain) {
+    search::test::DirectoryHandler     dir_handler(attr_dir);
+    DefaultNearestNeighborIndexFactory factory;
+    search::attribute::IvfIndexParams  params({{"posting-capacity", "8"}, {"flush-pinned-ratio", "0.01"}});
+    auto                               attr = make_attr(factory, params);
+    ASSERT_NE(nullptr, ivf_of(*attr));
+    ASSERT_TRUE(ivf_of(*attr)->persistent());
+    EXPECT_EQ(0.01, ivf_of(*attr)->config().flush_pinned_ratio);
+    Generator gen(CellType::FLOAT, 8, 20, 0.5, 71);
+    for (uint32_t round = 0; round < 3; ++round) {
+        for (uint32_t docid = 1; docid <= 300; ++docid) {
+            set_tensor(*attr, docid, gen.sample());
+        }
+    }
+    EXPECT_GT(ivf_of(*attr)->flush_disk_gain(), 0u);
+    EXPECT_EQ(ivf_of(*attr)->flush_disk_gain(), attr->flush_disk_gain());
 }
 
 TEST(IvfAttributeTest, posting_file_lives_in_the_attribute_directory) {

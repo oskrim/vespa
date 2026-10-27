@@ -82,6 +82,7 @@ struct IvfIndexConfig {
     double             filter_exact_ratio;
     double             k_entry_factor;
     bool               rebuild_on_load;
+    double             flush_pinned_ratio;
 
     IvfIndexConfig();
 
@@ -399,6 +400,7 @@ public:
     std::unique_ptr<NearestNeighborIndexSaver> make_saver(vespalib::GenericHeader& header,
                                                           uint64_t                 serial_num) override;
     void on_snapshot_valid(uint64_t serial_num) noexcept override;
+    uint64_t flush_disk_gain() const noexcept override;
     std::unique_ptr<NearestNeighborIndexLoader> make_loader(FastOS_FileInterface&          file,
                                                             const vespalib::GenericHeader& header) override;
     bool needs_build_after_load() const noexcept override;
