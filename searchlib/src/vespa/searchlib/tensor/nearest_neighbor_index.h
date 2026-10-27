@@ -146,6 +146,11 @@ public:
     virtual void on_snapshot_valid(uint64_t serial_num) noexcept { (void)serial_num; }
 
     /**
+     * Disk bytes that the next flush of the attribute makes reusable. Read by the flush engine thread.
+     */
+    virtual uint64_t flush_disk_gain() const noexcept { return 0; }
+
+    /**
      * Creates a loader that is used to load the index from the given file.
      *
      * This might throw std::runtime_error.
