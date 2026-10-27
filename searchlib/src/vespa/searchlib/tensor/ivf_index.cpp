@@ -1220,7 +1220,8 @@ void IvfIndex::start_new_file() {
  * extent is live, and every other write (rewrite, split, merge target, GC sweep, bulk build) goes to an extent from
  * the free list. So saved bytes stay intact as long as no extent that the valid snapshot references is on the free
  * list: a freed extent waits in _pending_extents, the next init-save pins it with that snapshot's serial number, and
- * the writer frees it once a snapshot with a newer serial number is valid.
+ * the writer frees it once that snapshot is valid. That snapshot was captured after the extent was freed, so it never
+ * references it; only older snapshots do, and none of them is loaded once it is valid.
  */
 void IvfIndex::release_extent(uint32_t extent) {
     (_persistent ? _pending_extents : _free_extents).push_back(extent);
@@ -1230,7 +1231,7 @@ void IvfIndex::release_extent(uint32_t extent) {
 void IvfIndex::release_pinned_extents() {
     uint64_t valid = _valid_serial.load(std::memory_order_acquire);
     size_t   released = 0;
-    while (released < _pinned_extents.size() && _pinned_extents[released].serial_num < valid) {
+    while (released < _pinned_extents.size() && _pinned_extents[released].serial_num <= valid) {
         const auto& extents = _pinned_extents[released].extents;
         _free_extents.insert(_free_extents.end(), extents.begin(), extents.end());
         ++released;
@@ -1246,8 +1247,8 @@ void IvfIndex::pin_extents_for_save(uint64_t serial_num) {
     assert(_pinned_extents.empty() || _pinned_extents.back().serial_num <= serial_num);
     _pinned_extents.push_back({serial_num, std::move(_pending_extents)});
     _pending_extents.clear();
-    if (_pinned_extents.size() > 2) {
-        LOG(warning, "IVF index %s: %zu saved snapshots are not valid yet; their freed extents are not reused",
+    if (_pinned_extents.size() > 1) {
+        LOG(warning, "IVF index %s: %zu earlier save(s) not valid yet; the extents they pinned are not reused",
             _posting_path.c_str(), _pinned_extents.size() - 1);
     }
     update_extent_counters();

@@ -195,7 +195,7 @@ private:
         uint32_t length;
     };
 
-    // Extents freed before the snapshot with this serial number was saved; reusable once a newer one is valid.
+    // Extents freed before the snapshot with this serial number was saved; reusable once that snapshot is valid.
     struct PinnedExtents {
         uint64_t              serial_num;
         std::vector<uint32_t> extents;
