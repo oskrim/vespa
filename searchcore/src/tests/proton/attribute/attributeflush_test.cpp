@@ -1,6 +1,12 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
+#include <vespa/eval/eval/fast_value.h>
+#include <vespa/eval/eval/tensor_spec.h>
+#include <vespa/eval/eval/value_codec.h>
+#include <vespa/eval/eval/value_type.h>
 #include <vespa/searchcommon/attribute/config.h>
+#include <vespa/searchcommon/attribute/hnsw_index_params.h>
+#include <vespa/searchcommon/attribute/ivf_index_params.h>
 #include <vespa/searchcore/proton/attribute/attribute_writer.h>
 #include <vespa/searchcore/proton/attribute/attributedisklayout.h>
 #include <vespa/searchcore/proton/attribute/attributemanager.h>
@@ -12,6 +18,7 @@
 #include <vespa/searchlib/common/flush_token.h>
 #include <vespa/searchlib/common/indexmetainfo.h>
 #include <vespa/searchlib/index/dummyfileheadercontext.h>
+#include <vespa/searchlib/tensor/tensor_attribute.h>
 #include <vespa/searchlib/test/directory_handler.h>
 #include <vespa/searchlib/util/file_settings.h>
 #include <vespa/searchlib/util/filekit.h>
@@ -24,6 +31,7 @@
 
 #include <cinttypes>
 #include <filesystem>
+#include <random>
 #include <thread>
 
 #include <vespa/log/log.h>
@@ -355,6 +363,51 @@ TEST(AttributeFlushTest, require_that_cleanup_is_performed_after_flush) {
     EXPECT_EQ(30u, info.snapshots()[0].syncToken);
     EXPECT_FALSE(fs::exists(fs::path(snap10)));
     EXPECT_FALSE(fs::exists(fs::path(snap20)));
+}
+
+TEST(AttributeFlushTest, require_that_ivf_pinned_bytes_count_as_disk_gain_until_a_flush) {
+    using search::attribute::DistanceMetric;
+    Fixture f;
+    fs::create_directories(fs::path("flush/ivf"));
+    AVConfig cfg(AVBasicType::TENSOR, AVCollectionType::SINGLE);
+    cfg.setTensorType(vespalib::eval::ValueType::from_spec("tensor<float>(x[4])"));
+    cfg.set_distance_metric(DistanceMetric::Euclidean);
+    cfg.set_hnsw_index_params(search::attribute::HnswIndexParams(16, 100, DistanceMetric::Euclidean));
+    cfg.set_ivf_index_params(
+        search::attribute::IvfIndexParams({{"posting-capacity", "8"}, {"flush-pinned-ratio", "0.01"}}));
+    AttributeVector::SP av = AttributeFactory::createAttribute("flush/ivf/ivf", cfg);
+    auto&               tensor_attr = dynamic_cast<search::tensor::TensorAttribute&>(*av);
+    std::mt19937        rng(73);
+    std::uniform_real_distribution<float> cell(-1.0f, 1.0f);
+    uint64_t                              serial = 1;
+    for (uint32_t round = 0; round < 3; ++round) {
+        for (uint32_t docid = 1; docid <= 300; ++docid) {
+            while (av->getNumDocs() <= docid) {
+                uint32_t new_docid = 0;
+                av->addDoc(new_docid);
+            }
+            vespalib::eval::TensorSpec spec("tensor<float>(x[4])");
+            for (uint32_t i = 0; i < 4; ++i) {
+                spec.add({{"x", i}}, cell(rng));
+            }
+            tensor_attr.setTensor(docid, *vespalib::eval::value_from_spec(spec, vespalib::eval::FastValueBuilderFactory::get()));
+            av->commit(CommitParam(++serial, CommitParam::UpdateStats::SKIP));
+        }
+    }
+    uint64_t gain = av->flush_disk_gain();
+    EXPECT_GT(gain, 0u);
+    auto               diskLayout = AttributeDiskLayout::create("flush");
+    FlushableAttribute fa(av, diskLayout->createAttributeDir("ivf"), TuneFileAttributes(), f._fileHeaderContext,
+                          f._attributeFieldWriter, f._hwInfo);
+    EXPECT_EQ(av->size_on_disk() + gain, uint64_t(fa.getApproxDiskGain().getBefore()));
+    EXPECT_EQ(av->getEstimatedSaveByteSize(), uint64_t(fa.getApproxDiskGain().getAfter()));
+
+    auto task = fa.initFlush(serial, std::make_shared<search::FlushToken>());
+    ASSERT_TRUE(task);
+    task->run();
+    av->commit(CommitParam(++serial, CommitParam::UpdateStats::SKIP));
+    EXPECT_EQ(0u, av->flush_disk_gain()) << "the flush made the pinned extents reusable";
+    EXPECT_EQ(av->size_on_disk(), uint64_t(fa.getApproxDiskGain().getBefore()));
 }
 
 TEST(AttributeFlushTest, require_that_flush_stats_are_updated) {

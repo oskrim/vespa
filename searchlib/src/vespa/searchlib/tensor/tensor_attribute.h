@@ -69,6 +69,7 @@ public:
                     const NearestNeighborIndexFactory& index_factory);
     ~TensorAttribute() override;
     const ITensorAttribute* asTensorAttribute() const override;
+    uint64_t flush_disk_gain() const override;
 
     [[nodiscard]] bool is_quantized() const noexcept final { return _is_quantized; }
     [[nodiscard]] const vespalib::eval::ValueType& unquantized_tensor_type() const noexcept final;

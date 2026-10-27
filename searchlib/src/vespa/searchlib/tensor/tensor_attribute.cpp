@@ -363,6 +363,10 @@ void TensorAttribute::on_snapshot_valid(uint64_t serial_num) {
     }
 }
 
+uint64_t TensorAttribute::flush_disk_gain() const {
+    return _index ? _index->flush_disk_gain() : 0;
+}
+
 void TensorAttribute::setTensor(DocId docId, const Value& tensor) {
     checkTensorType(tensor);
     internal_set_tensor(docId, tensor);

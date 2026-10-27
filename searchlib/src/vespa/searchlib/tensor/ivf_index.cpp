@@ -498,7 +498,8 @@ IvfIndexConfig::IvfIndexConfig()
       filter_adaptive_stop(IvfAdaptiveStop::ENTRIES),
       filter_exact_ratio(0.0),
       k_entry_factor(4.0),
-      rebuild_on_load(false) {
+      rebuild_on_load(false),
+      flush_pinned_ratio(1.0) {
 }
 
 const std::vector<std::string>& IvfIndexConfig::knob_names() {
@@ -538,7 +539,8 @@ const std::vector<std::string>& IvfIndexConfig::knob_names() {
                                                    "FILTER_ADAPTIVE_STOP",
                                                    "FILTER_EXACT_RATIO",
                                                    "K_ENTRY_FACTOR",
-                                                   "REBUILD_ON_LOAD"};
+                                                   "REBUILD_ON_LOAD",
+                                                   "FLUSH_PINNED_RATIO"};
     return names;
 }
 
@@ -582,6 +584,7 @@ IvfIndexConfig IvfIndexConfig::from_lookup(const Lookup& lookup) {
     reader.read("FILTER_EXACT_RATIO", cfg.filter_exact_ratio);
     reader.read("K_ENTRY_FACTOR", cfg.k_entry_factor);
     reader.read("REBUILD_ON_LOAD", cfg.rebuild_on_load);
+    reader.read("FLUSH_PINNED_RATIO", cfg.flush_pinned_ratio);
     cfg.sanitize();
     return cfg;
 }
@@ -642,6 +645,7 @@ void IvfIndexConfig::sanitize() {
     check_range("BULK_COARSE_K", bulk_coarse_k, def.bulk_coarse_k, 0u, 1u << 20);
     check_range("FILE_GROW_EXTENTS", file_grow_extents, def.file_grow_extents, 1u, 1u << 20);
     check_range("FILE_GROW_FRACTION", file_grow_fraction, def.file_grow_fraction, 0.0, 4.0);
+    check_range("FLUSH_PINNED_RATIO", flush_pinned_ratio, def.flush_pinned_ratio, 0.0, 1000.0);
     check_range("MEDOID_SAMPLE", medoid_sample, def.medoid_sample, 2u, 4096u);
     check_range("MEDOID_ROUNDS", medoid_rounds, def.medoid_rounds, 0u, 100u);
     check_range("FILTER_MAX_EXAMINED", filter_max_examined, def.filter_max_examined, 1u, 1u << 20);
@@ -2062,6 +2066,17 @@ std::unique_ptr<NearestNeighborIndexSaver> IvfIndex::make_saver(GenericHeader& h
     return std::make_unique<IvfIndexSaver>(capture_save_state(), std::move(lid_reader), _fd, _posting_path);
 }
 
+// Pinned bytes become reusable after the next flush. They count as disk gain once they reach flush-pinned-ratio of
+// the live entry bytes, so proton's disk bloat rule flushes the attribute; a flush rewrites the whole attribute file.
+uint64_t IvfIndex::flush_disk_gain() const noexcept {
+    if (!_persistent || _cfg.flush_pinned_ratio <= 0.0) {
+        return 0;
+    }
+    uint64_t pinned = get(_counters.pinned_extents) * _extent_bytes;
+    uint64_t live = get(_counters.live_entries) * _entry_bytes;
+    return (pinned > 0 && double(pinned) >= _cfg.flush_pinned_ratio * double(live)) ? pinned : 0;
+}
+
 // The flush thread only records the serial number; the writer frees the pinned extents at its next commit.
 void IvfIndex::on_snapshot_valid(uint64_t serial_num) noexcept {
     uint64_t valid = _valid_serial.load(std::memory_order_relaxed);
@@ -2189,6 +2204,7 @@ void IvfIndex::populate_state(vespalib::slime::Cursor& object) const {
     object.setLong("gc_compactions", stats.gc_compactions);
     object.setLong("merges", stats.merges);
     object.setLong("pinned_extents", stats.pinned_extents);
+    object.setLong("flush_disk_gain", flush_disk_gain());
     object.setBool("persistent", _persistent);
     object.setString("posting_file", _posting_path);
     object.setLong("valid_snapshot_serial", _valid_serial.load(std::memory_order_relaxed));
@@ -2234,6 +2250,7 @@ void IvfIndex::populate_state(vespalib::slime::Cursor& object) const {
     cfg.setDouble("filter_exact_ratio", _cfg.filter_exact_ratio);
     cfg.setDouble("k_entry_factor", _cfg.k_entry_factor);
     cfg.setBool("rebuild_on_load", _cfg.rebuild_on_load);
+    cfg.setDouble("flush_pinned_ratio", _cfg.flush_pinned_ratio);
     cfg.setLong("entry_bytes", _entry_bytes);
 }
 
