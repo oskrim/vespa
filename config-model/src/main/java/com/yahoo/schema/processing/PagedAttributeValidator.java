@@ -37,6 +37,10 @@ public class PagedAttributeValidator extends Processor {
             for (var attribute : field.getAttributes().values()) {
                 if (attribute.isPaged()) {
                     validatePagedSetting(field, attribute);
+                } else if (attribute.getType() == Attribute.Type.TENSOR && attribute.ivfIndexParams().isPresent()) {
+                    warn(schema.getName(), field.getName(), "The 'ivf' index stores vectors on disk, but the attribute " +
+                         "keeps its own copy in memory unless it is 'paged'; add 'attribute: paged' to keep the vectors " +
+                         "out of memory");
                 }
             }
         }
@@ -46,7 +50,8 @@ public class PagedAttributeValidator extends Processor {
         if (!isSupportedType(attribute)) {
             fail(schema, field, "The 'paged' attribute setting is not supported for fast-rank tensor and predicate types");
         }
-        if (attribute.getType() == Attribute.Type.TENSOR && attribute.hnswIndexParams().isPresent()) {
+        if (attribute.getType() == Attribute.Type.TENSOR && attribute.hnswIndexParams().isPresent() &&
+            attribute.ivfIndexParams().isEmpty()) {
             warn(schema.getName(), field.getName(), "The 'paged' attribute setting in combination with " +
                             "HNSW indexing is strongly discouraged, see " + disavantagesUrl + " for details");
         }

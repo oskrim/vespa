@@ -58,6 +58,7 @@ protected:
     }
     bool onLoad(vespalib::Executor* executor) override;
     std::unique_ptr<AttributeSaver> onInitSave(std::string_view fileName) override;
+    void on_snapshot_valid(uint64_t serial_num) override;
     bool tensor_cells_are_unchanged(DocId docid, VectorBundle vectors) const;
 
     void prefetch_docid(DocId docid) const noexcept override { _refVector.prefetch_elem_ref(docid); }
@@ -68,6 +69,7 @@ public:
                     const NearestNeighborIndexFactory& index_factory);
     ~TensorAttribute() override;
     const ITensorAttribute* asTensorAttribute() const override;
+    uint64_t flush_disk_gain() const override;
 
     [[nodiscard]] bool is_quantized() const noexcept final { return _is_quantized; }
     [[nodiscard]] const vespalib::eval::ValueType& unquantized_tensor_type() const noexcept final;

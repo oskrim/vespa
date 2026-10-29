@@ -336,6 +336,18 @@ public:
     /** Saves this attribute vector using the given saveTarget and fileName **/
     bool save(IAttributeSaveTarget& saveTarget, std::string_view fileName);
 
+    /**
+     * Called by the flush thread after the snapshot saved for serial_num has been marked valid, so it is the one a
+     * restart loads. The default does nothing.
+     */
+    virtual void on_snapshot_valid(uint64_t serial_num) { (void)serial_num; }
+
+    /**
+     * Disk bytes that the next flush makes reusable, on top of the saved files' own size change. Read by the flush
+     * engine thread. The default is 0.
+     */
+    virtual uint64_t flush_disk_gain() const { return 0; }
+
     attribute::AttributeHeader createAttributeHeader(std::string_view fileName) const;
 
     /** Returns whether this attribute has load data files on disk **/

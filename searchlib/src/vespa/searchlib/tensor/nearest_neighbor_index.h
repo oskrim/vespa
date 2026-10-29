@@ -18,6 +18,7 @@ class FastOS_FileInterface;
 
 namespace vespalib {
 class Deadline;
+class Executor;
 class GenericHeader;
 struct StateExplorer;
 } // namespace vespalib
@@ -86,6 +87,18 @@ public:
     virtual void add_document(uint32_t docid) = 0;
 
     /**
+     * Builds the index from scratch for the given documents, whose vectors are already in the attribute.
+     *
+     * Returns false when not supported, and the caller then adds the documents one by one. Called by the attribute
+     * writer thread while loading. The executor, which may be nullptr, can run helper tasks.
+     */
+    virtual bool bulk_build(const std::vector<uint32_t>& lids, vespalib::Executor* executor) {
+        (void)lids;
+        (void)executor;
+        return false;
+    }
+
+    /**
      * Performs the prepare step in a two-phase operation to add a document to the index.
      *
      * This function can be called by any thread.
@@ -121,8 +134,21 @@ public:
      *
      * This function is always called by the attribute write thread,
      * and the caller ensures that an attribute read guard is held during the lifetime of the saver.
+     * serial_num is the serial number of the attribute snapshot being saved.
      */
-    virtual std::unique_ptr<NearestNeighborIndexSaver> make_saver(vespalib::GenericHeader& header) const = 0;
+    virtual std::unique_ptr<NearestNeighborIndexSaver> make_saver(vespalib::GenericHeader& header,
+                                                                  uint64_t                 serial_num) = 0;
+
+    /**
+     * Called by the flush thread after the attribute snapshot with the given serial number was marked valid.
+     * Must not change state that the attribute write thread owns.
+     */
+    virtual void on_snapshot_valid(uint64_t serial_num) noexcept { (void)serial_num; }
+
+    /**
+     * Disk bytes that the next flush of the attribute makes reusable. Read by the flush engine thread.
+     */
+    virtual uint64_t flush_disk_gain() const noexcept { return 0; }
 
     /**
      * Creates a loader that is used to load the index from the given file.
@@ -131,6 +157,12 @@ public:
      */
     virtual std::unique_ptr<NearestNeighborIndexLoader> make_loader(FastOS_FileInterface&          file,
                                                                     const vespalib::GenericHeader& header) = 0;
+
+    /**
+     * Whether the index is still empty after loading from the index file, because it rejected the file, and must be
+     * built from the attribute.
+     */
+    virtual bool needs_build_after_load() const noexcept { return false; }
 
     virtual std::vector<Neighbor> find_top_k(Stats& stats, uint32_t k, const BoundDistanceFunction& df,
                                              uint32_t explore_k, double exploration_slack, bool prefetch_tensors,

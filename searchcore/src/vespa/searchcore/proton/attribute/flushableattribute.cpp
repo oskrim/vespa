@@ -116,6 +116,7 @@ bool FlushableAttribute::Flusher::flush() {
         return false;
     }
     _writer->markValidSnapshot(_syncToken);
+    _fattr._attr->on_snapshot_valid(_syncToken);
     _writer->setLastFlushTime(search::FileKit::getModificationTime(vespalib::dirname(_flushFile)));
     return true;
 }
@@ -189,7 +190,7 @@ IFlushTarget::MemoryGain FlushableAttribute::getApproxMemoryGain() const {
 }
 
 IFlushTarget::DiskGain FlushableAttribute::getApproxDiskGain() const {
-    return DiskGain(_attr->size_on_disk(), _attr->getEstimatedSaveByteSize());
+    return DiskGain(_attr->size_on_disk() + _attr->flush_disk_gain(), _attr->getEstimatedSaveByteSize());
 }
 
 IFlushTarget::Time FlushableAttribute::getLastFlushTime() const {

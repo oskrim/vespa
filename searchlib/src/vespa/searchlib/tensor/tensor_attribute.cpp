@@ -2,6 +2,7 @@
 
 #include "tensor_attribute.h"
 
+#include "ivf_index.h"
 #include "nearest_neighbor_index.h"
 #include "nearest_neighbor_index_factory.h"
 #include "nearest_neighbor_index_saver.h"
@@ -125,7 +126,8 @@ TensorAttribute::TensorAttribute(std::string_view name, const Config& cfg, Tenso
         // Note that we always pass the dimensionality of the unquantized (original) tensor type
         size_t vector_size = cfg.unquantized_tensor_type().dense_subspace_size();
         _index = index_factory.make(*this, vector_size, !_is_dense, cfg.tensorType().cell_type(),
-                                    cfg.hnsw_index_params().value(), cfg.quantization_params());
+                                    cfg.hnsw_index_params().value(), cfg.quantization_params(),
+                                    cfg.ivf_index_params(), getBaseFileName());
     }
 }
 
@@ -343,13 +345,26 @@ bool TensorAttribute::onLoad(vespalib::Executor* executor) {
 std::unique_ptr<AttributeSaver> TensorAttribute::onInitSave(std::string_view fileName) {
     set_memory_usage_at_save_start(getStatus().get_used_minus_dead_and_onhold());
     auto guard(getGenerationHandler().takeGuard());
+    if (dynamic_cast<const IvfIndex*>(_index.get()) == nullptr) {
+        IvfIndex::remove_posting_file(std::string(fileName));
+    }
     auto header = this->createAttributeHeader(fileName);
-    auto index_saver =
-        (_index ? _index->make_saver(header.get_extra_tags()) : std::unique_ptr<NearestNeighborIndexSaver>());
+    auto index_saver = (_index ? _index->make_saver(header.get_extra_tags(), getStatus().getLastSyncToken())
+                               : std::unique_ptr<NearestNeighborIndexSaver>());
     return std::make_unique<TensorAttributeSaver>(
         std::move(guard), std::move(header),
         attribute::make_entry_ref_vector_snapshot(_refVector, getCommittedDocIdLimit()), _tensorStore,
         std::move(index_saver));
+}
+
+void TensorAttribute::on_snapshot_valid(uint64_t serial_num) {
+    if (_index) {
+        _index->on_snapshot_valid(serial_num);
+    }
+}
+
+uint64_t TensorAttribute::flush_disk_gain() const {
+    return _index ? _index->flush_disk_gain() : 0;
 }
 
 void TensorAttribute::setTensor(DocId docId, const Value& tensor) {

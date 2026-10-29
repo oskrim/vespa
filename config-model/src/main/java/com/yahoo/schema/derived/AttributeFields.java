@@ -247,6 +247,11 @@ public class AttributeFields extends Derived {
             ib.hnsw.maxlinkspernode(params.maxLinksPerNode());
             ib.hnsw.neighborstoexploreatinsert(params.neighborsToExploreAtInsert());
             ib.hnsw.multithreadedindexing(params.multiThreadedIndexing());
+            attribute.ivfIndexParams().ifPresent(ivf -> {
+                ib.ivf.enabled(true);
+                ivf.params().forEach((name, value) ->
+                        ib.ivf.param(new AttributesConfig.Attribute.Index.Ivf.Param.Builder().name(name).value(value)));
+            });
             aaB.index(ib);
         }
         if (attribute.quantizationParams().isPresent()) {

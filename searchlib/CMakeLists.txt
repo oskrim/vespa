@@ -253,6 +253,7 @@ vespa_define_module(
     src/tests/tensor/hnsw_index
     src/tests/tensor/hnsw_nodeid_mapping
     src/tests/tensor/hnsw_saver
+    src/tests/tensor/ivf_index
     src/tests/tensor/tensor_buffer_operations
     src/tests/tensor/tensor_buffer_store
     src/tests/tensor/tensor_buffer_type_mapper

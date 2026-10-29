@@ -32,6 +32,7 @@ import com.yahoo.schema.document.Case;
 import com.yahoo.schema.document.MatchType;
 import com.yahoo.schema.document.MatchAlgorithm;
 import com.yahoo.schema.document.HnswIndexParams;
+import com.yahoo.schema.document.IvfIndexParams;
 import com.yahoo.schema.document.Sorting;
 import com.yahoo.schema.document.Stemming;
 import com.yahoo.schema.document.TokensMode;
@@ -309,6 +310,7 @@ TOKEN :
 | < DENSE_POSTING_LIST_THRESHOLD: "dense-posting-list-threshold" >
 | < ENABLE_BM25: "enable-bm25" >
 | < HNSW: "hnsw" >
+| < IVF: "ivf" >
 | < MAX_LINKS_PER_NODE: "max-links-per-node" >
 | < DOUBLE_KEYWORD: "double" >
 | < FLOAT_KEYWORD: "float" >
@@ -1813,6 +1815,7 @@ void indexBody(ParsedIndex index) :
       | <DENSE_POSTING_LIST_THRESHOLD> <COLON> threshold = floatValue() { index.setDensePostingListThreshold(threshold); }
       | <ENABLE_BM25>                                                { index.setEnableBm25(true); }
       | hnswIndex(index)                                             { }
+      | ivfIndex(index)                                              { }
     )
 }
 
@@ -1827,6 +1830,30 @@ void hnswIndex(ParsedIndex index) :
     {
         index.setHnswIndexParams(params.build());
     }
+}
+
+void ivfIndex(ParsedIndex index) :
+{
+    IvfIndexParams.Builder params = new IvfIndexParams.Builder();
+}
+{
+    ( LOOKAHEAD(<IVF> lbrace())
+      <IVF> ( (lbrace() (ivfIndexBody(params) (<NL>)*)* <RBRACE>) ) |
+      <IVF> )
+    {
+        index.setIvfIndexParams(params.build());
+    }
+}
+
+void ivfIndexBody(IvfIndexParams.Builder params) :
+{
+    String name;
+    String value;
+}
+{
+    name = identifierWithDash() <COLON>
+    ( ( <DOUBLE> | <INTEGER> ) { value = token.image; } | value = identifierWithDash() )
+    { params.set(name, value); }
 }
 
 void hnswIndexBody(HnswIndexParams.Builder params) :
@@ -3203,6 +3230,7 @@ String identifier() : { }
       | <GRAM>
       | <HASH>
       | <HNSW>
+      | <IVF>
       | <ID>
       | <IDENTICAL>
       | <IDENTIFIER>
