@@ -15,6 +15,7 @@
 #include <vespa/searchlib/tensor/empty_subspace.h>
 #include <vespa/searchlib/tensor/ivf_index.h>
 #include <vespa/searchlib/tensor/ivf_kmeans.h>
+#include <vespa/searchlib/tensor/ivf_page_allocator.h>
 #include <vespa/searchlib/tensor/nearest_neighbor_index_loader.h>
 #include <vespa/searchlib/tensor/nearest_neighbor_index_saver.h>
 #include <vespa/searchlib/tensor/subspace_type.h>
@@ -840,6 +841,170 @@ TEST(IvfKmeansTest, two_means_separates_clusters_and_falls_back_for_identical_po
     EXPECT_EQ(4, std::count(fallback.side.begin(), fallback.side.end(), 1));
 }
 
+TEST(IvfSizeClassesTest, classes_grow_in_pages_and_end_at_the_posting_capacity) {
+    for (uint32_t entry_bytes : {8u, 112u, 2056u, 8200u}) {
+        for (uint32_t max_entries : {4u, 100u, 256u, 65536u}) {
+            for (uint32_t per_doubling : {0u, 1u, 4u, 16u}) {
+                for (uint32_t min_entries : {1u, 4u}) {
+                    ivf::SizeClasses classes(entry_bytes, max_entries, min_entries, per_doubling);
+                    SCOPED_TRACE(testing::Message() << "E=" << entry_bytes << " C=" << max_entries
+                                                    << " per_doubling=" << per_doubling << " min=" << min_entries);
+                    ASSERT_GE(classes.count(), 1u);
+                    ASSERT_LE(classes.count(), ivf::SizeClasses::max_classes);
+                    if (per_doubling == 0) {
+                        EXPECT_EQ(1u, classes.count());
+                    }
+                    EXPECT_EQ(max_entries, classes.capacity(classes.largest()));
+                    EXPECT_GE(classes.capacity(0), std::min(min_entries, max_entries));
+                    for (uint32_t cls = 0; cls < classes.count(); ++cls) {
+                        EXPECT_EQ(std::min<uint64_t>(max_entries,
+                                                     uint64_t(classes.pages(cls)) * ivf::page_bytes / entry_bytes),
+                                  classes.capacity(cls));
+                        if (cls > 0) {
+                            EXPECT_GT(classes.pages(cls), classes.pages(cls - 1));
+                            EXPECT_GT(classes.capacity(cls), classes.capacity(cls - 1));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // Realm: 2048 int8 cells + 8 header bytes; 256 entries need 128.5 pages.
+    ivf::SizeClasses realm(2056, 256, 4, 4);
+    EXPECT_EQ(3u, realm.pages(0));
+    EXPECT_EQ(129u, realm.pages(realm.largest()));
+}
+
+TEST(IvfSizeClassesTest, fit_is_the_smallest_class_with_headroom_and_a_free_slot) {
+    for (uint32_t entry_bytes : {112u, 2056u}) {
+        ivf::SizeClasses classes(entry_bytes, 256, 4, 4);
+        for (double headroom : {0.0, 0.33, 1.0}) {
+            for (uint32_t n = 1; n <= 256; ++n) {
+                uint32_t cls = classes.fit(n, headroom);
+                uint64_t want = std::max<uint64_t>(n + 1, uint64_t(std::ceil(n * (1.0 + headroom))));
+                SCOPED_TRACE(testing::Message() << "E=" << entry_bytes << " n=" << n << " headroom=" << headroom);
+                if (want > 256) {
+                    EXPECT_EQ(classes.largest(), cls);
+                } else {
+                    EXPECT_GE(classes.capacity(cls), want);
+                    if (cls > 0) {
+                        EXPECT_LT(classes.capacity(cls - 1), want);
+                    }
+                }
+            }
+        }
+    }
+}
+
+TEST(IvfSizeClassesTest, lid_slots_of_disjoint_ranges_do_not_overlap) {
+    for (uint32_t entry_bytes : {112u, 2056u, 8200u}) {
+        ivf::SizeClasses                           classes(entry_bytes, 256, 4, 4);
+        ivf::PageAllocator                         alloc;
+        std::mt19937                               rng(5);
+        std::vector<std::pair<uint32_t, uint32_t>> ranges; // (page, class)
+        for (uint32_t i = 0; i < 2000; ++i) {
+            if (!ranges.empty() && rng() % 3 == 0) {
+                size_t pick = rng() % ranges.size();
+                alloc.free(ranges[pick].first, classes.pages(ranges[pick].second));
+                ranges.erase(ranges.begin() + pick);
+            } else {
+                uint32_t cls = rng() % classes.count();
+                auto     page = alloc.allocate(classes.pages(cls), 1u << 30);
+                ASSERT_TRUE(page.has_value());
+                ranges.emplace_back(*page, cls);
+            }
+        }
+        std::vector<std::pair<uint64_t, uint64_t>> slots; // [first, end)
+        for (auto [page, cls] : ranges) {
+            uint64_t first = classes.first_lid_slot(page);
+            slots.emplace_back(first, first + classes.capacity(cls));
+        }
+        std::sort(slots.begin(), slots.end());
+        for (size_t i = 1; i < slots.size(); ++i) {
+            EXPECT_LE(slots[i - 1].second, slots[i].first) << "E=" << entry_bytes;
+        }
+    }
+}
+
+TEST(IvfPageAllocatorTest, best_fit_coalesces_and_lowers_the_limit) {
+    ivf::PageAllocator alloc;
+    EXPECT_EQ(0u, alloc.allocate(4, 1000).value());
+    EXPECT_EQ(4u, alloc.allocate(2, 1000).value());
+    EXPECT_EQ(6u, alloc.allocate(8, 1000).value());
+    EXPECT_EQ(14u, alloc.allocate(3, 1000).value());
+    EXPECT_EQ(17u, alloc.limit());
+    alloc.free(0, 4);
+    alloc.free(6, 8);
+    EXPECT_EQ(2u, alloc.free_ranges());
+    EXPECT_EQ(0u, alloc.allocate(3, 1000).value()) << "best fit: the 4-page hole, not the 8-page one";
+    EXPECT_EQ(6u, alloc.allocate(5, 1000).value());
+    alloc.free(0, 3);
+    alloc.free(4, 2);
+    EXPECT_EQ(2u, alloc.free_ranges()) << "0..2, 3 and 4..5 merge into 0..5; 11..13 stays apart";
+    EXPECT_EQ(9u, alloc.free_pages());
+    alloc.free(14, 3);
+    EXPECT_EQ(11u, alloc.limit()) << "the free tail 11..16 lowers the limit";
+    EXPECT_EQ(6u, alloc.free_pages());
+    EXPECT_FALSE(alloc.allocate(7, 17).has_value()) << "no hole fits and 11 + 7 > 17";
+    EXPECT_EQ(0u, alloc.allocate(6, 17).value()) << "a hole that fits beats raising the limit";
+    EXPECT_EQ(0u, alloc.free_pages());
+    EXPECT_STREQ("", alloc.check());
+}
+
+TEST(IvfPageAllocatorTest, reset_frees_the_gaps_between_used_ranges) {
+    ivf::PageAllocator alloc;
+    alloc.reset({{10, 5}, {0, 2}, {20, 1}});
+    EXPECT_STREQ("", alloc.check());
+    EXPECT_EQ(21u, alloc.limit());
+    EXPECT_EQ(13u, alloc.free_pages()) << "2..9 is 8 pages, 15..19 is 5";
+    EXPECT_EQ(2u, alloc.free_ranges());
+}
+
+TEST(IvfPageAllocatorTest, random_operations_match_a_page_map) {
+    ivf::PageAllocator                         alloc;
+    std::mt19937                               rng(17);
+    std::vector<int>                           owner; // per page: -1 free, else the range id
+    std::vector<std::pair<uint32_t, uint32_t>> live;
+    uint64_t                                   max_limit = 5000;
+    for (uint32_t op = 0; op < 100000; ++op) {
+        if (!live.empty() && (rng() % 100) < 48) {
+            size_t pick = rng() % live.size();
+            auto [page, pages] = live[pick];
+            alloc.free(page, pages);
+            for (uint32_t p = page; p < page + pages; ++p) {
+                owner[p] = -1;
+            }
+            live[pick] = live.back();
+            live.pop_back();
+        } else {
+            uint32_t pages = 1 + (rng() % 40);
+            auto     page = alloc.allocate(pages, max_limit);
+            if (!page.has_value()) {
+                continue;
+            }
+            ASSERT_LE(uint64_t(*page) + pages, max_limit);
+            owner.resize(std::max<size_t>(owner.size(), *page + pages), -1);
+            for (uint32_t p = *page; p < *page + pages; ++p) {
+                ASSERT_EQ(-1, owner[p]) << "page " << p << " handed out twice at op " << op;
+                owner[p] = int(live.size());
+            }
+            live.emplace_back(*page, pages);
+        }
+        uint32_t used_end = 0;
+        uint64_t used = 0;
+        for (auto [page, pages] : live) {
+            used_end = std::max(used_end, page + pages);
+            used += pages;
+        }
+        ASSERT_EQ(used_end, alloc.limit()) << "op " << op;
+        ASSERT_EQ(alloc.limit() - used, alloc.free_pages()) << "op " << op;
+        ASSERT_LE(alloc.free_ranges(), live.size() + 1) << "op " << op;
+        if ((op % 1000) == 0) {
+            ASSERT_STREQ("", alloc.check()) << "op " << op;
+        }
+    }
+}
+
 TEST_F(IvfIndexTest, replicas_store_copies_and_versions_hide_all_of_them) {
     constexpr uint32_t dims = 16;
     constexpr uint32_t num_docs = 6000;
@@ -1481,8 +1646,7 @@ TEST_F(IvfPersistenceTest, flush_disk_gain_is_off_at_pinned_ratio_zero) {
     for (const auto& op : heavy_mutations(gen, 501, 500, 3000)) {
         apply(op);
     }
-    EXPECT_GT(index->get_stats().pinned_extents * uint64_t(cfg.posting_capacity),
-              index->get_stats().live_entries);
+    EXPECT_GT(index->get_stats().pinned_extents * uint64_t(cfg.posting_capacity), index->get_stats().live_entries);
     EXPECT_EQ(0u, index->flush_disk_gain());
 }
 
