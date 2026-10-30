@@ -5,6 +5,7 @@
 #include "distance_function_factory.h"
 #include "doc_vector_access.h"
 #include "ivf_kmeans.h"
+#include "ivf_page_allocator.h"
 #include "ivf_save_file.h"
 #include "nearest_neighbor_index.h"
 #include "prepare_result.h"
@@ -83,6 +84,10 @@ struct IvfIndexConfig {
     double             k_entry_factor;
     bool               rebuild_on_load;
     double             flush_pinned_ratio;
+    uint32_t           size_classes_per_doubling;
+    uint32_t           min_posting_size;
+    double             posting_headroom;
+    double             bulk_headroom;
 
     IvfIndexConfig();
 
@@ -114,16 +119,18 @@ struct IvfIndexStats {
     uint64_t dropped_steps;
     uint64_t dropped_entries;
     uint64_t prepared_retired;
-    uint64_t extents;
-    uint64_t free_extents;
+    uint64_t pages;      // page limit: pages below it are allocated, free, pinned or on hold
+    uint64_t free_pages; // in free ranges below the page limit
+    uint64_t free_ranges;
     uint64_t file_bytes;
     uint64_t bytes_written;
     uint64_t bulk_builds;
     uint64_t gc_checks;
     uint64_t gc_compactions;
     uint64_t merges;
-    uint64_t pinned_extents;
+    uint64_t pinned_pages; // freed after the last init-save, or pinned by a save that is not valid yet
     uint64_t reassign_evaluated;
+    uint64_t growth_copies; // full postings copied to a larger size class
 };
 
 enum class IvfLoadSource { NONE, SAVE_FILE, BULK_BUILD };
@@ -163,15 +170,16 @@ struct PreparedAdd final : public PrepareResult {
 /**
  * Experimental inverted file (IVF) index with posting lists stored on disk.
  *
- * RAM holds centroids, one atomic posting reference per centroid and a version per docid. Each posting is a
- * fixed-size extent in an unlinked file. Entries are {docid, version, cells}, and an entry is live only while its
- * version equals the docid's current version. A vector can be stored in several postings (SPANN replicas). Full
- * postings are compacted or split in two, and vectors near a split are reassigned (SPFresh LIRE).
+ * RAM holds centroids, one atomic posting reference per centroid and a version per docid. Each posting is a range of
+ * whole pages in the posting file, sized by a size class with some free room, so appends write in place until the
+ * posting is full and it is copied to a larger class. Entries are {docid, version, cells}, and an entry is live only
+ * while its version equals the docid's current version. A vector can be stored in several postings (SPANN replicas).
+ * Full postings are compacted or split in two, and vectors near a split are reassigned (SPFresh LIRE).
  *
- * A lid table in RAM mirrors the docid of every entry slot of every extent, so filtered searches can count matches
+ * A lid table in RAM mirrors the docid of every entry slot of every posting, so filtered searches can count matches
  * per posting before reading it.
  *
- * Supports 1 writer thread and multiple reader threads without mutexes. Retired extents and centroid slots are
+ * Supports 1 writer thread and multiple reader threads without mutexes. Retired page ranges and centroid slots are
  * reused only after a generation hold cycle.
  *
  * The posting file is named after the attribute and lives in the attribute's directory. An attribute flush saves the
@@ -189,17 +197,20 @@ private:
     using AtomicVersion = vespalib::datastore::AtomicValueWrapper<uint32_t>;
     using VersionVector = vespalib::TypeStableVector<AtomicVersion>;
     using IdHoldList = vespalib::GenerationHoldList<uint32_t, false, true>;
+    using RangeHoldList = vespalib::GenerationHoldList<uint64_t, false, true>;
     using SlotDistances = std::vector<std::pair<double, uint32_t>>;
 
     struct Posting {
-        uint32_t extent;
+        uint32_t page;
+        uint32_t size_class;
         uint32_t length;
     };
 
-    // Extents freed before the snapshot with this serial number was saved; reusable once that snapshot is valid.
-    struct PinnedExtents {
+    // Page ranges (range_key) freed before the snapshot with this serial number was saved; reusable once that
+    // snapshot is valid.
+    struct PinnedRanges {
         uint64_t              serial_num;
-        std::vector<uint32_t> extents;
+        std::vector<uint64_t> ranges;
     };
 
     struct ReassignTask {
@@ -228,16 +239,18 @@ private:
         std::atomic<uint64_t> dropped_steps{0};
         std::atomic<uint64_t> dropped_entries{0};
         std::atomic<uint64_t> prepared_retired{0};
-        std::atomic<uint64_t> extents{0};
-        std::atomic<uint64_t> free_extents{0};
+        std::atomic<uint64_t> pages{0};
+        std::atomic<uint64_t> free_pages{0};
+        std::atomic<uint64_t> free_ranges{0};
         std::atomic<uint64_t> file_bytes{0};
         std::atomic<uint64_t> bytes_written{0};
         std::atomic<uint64_t> bulk_builds{0};
         std::atomic<uint64_t> gc_checks{0};
         std::atomic<uint64_t> gc_compactions{0};
         std::atomic<uint64_t> merges{0};
-        std::atomic<uint64_t> pinned_extents{0};
+        std::atomic<uint64_t> pinned_pages{0};
         std::atomic<uint64_t> reassign_evaluated{0}; // live entries checked by reassign; not saved
+        std::atomic<uint64_t> growth_copies{0};
     };
 
     const DocVectorAccess&                   _vectors;
@@ -247,8 +260,8 @@ private:
     size_t                                   _vector_size;
     size_t                                   _vector_bytes;
     size_t                                   _entry_bytes;
-    size_t                                   _extent_bytes;
     size_t                                   _centroid_bytes;
+    ivf::SizeClasses                         _classes;
     ivf::VectorSpace                         _space;
     std::string                              _posting_path; // empty for an unlinked file
     bool                                     _persistent;
@@ -262,23 +275,23 @@ private:
     uint64_t*             _slot_refs;
     char*                 _centroids;
     std::atomic<uint32_t> _slot_limit;
-    uint32_t*             _extent_lids;
+    uint32_t*             _lids; // indexed by _classes.first_lid_slot(page) + entry index
     size_t                _lid_table_bytes;
-    uint32_t              _max_extents;
+    uint32_t              _max_pages;
 
     VersionVector         _versions;
     std::atomic<uint32_t> _version_limit;
 
     vespalib::GenerationHandler _generation_handler;
     IdHoldList                  _slot_hold;
-    IdHoldList                  _extent_hold;
+    RangeHoldList               _range_hold;
+    uint64_t                    _held_pages;
     std::vector<uint32_t>       _free_slots;
-    std::vector<uint32_t>       _free_extents;
-    std::vector<uint32_t>       _pending_extents;
-    std::vector<PinnedExtents>  _pinned_extents;
+    ivf::PageAllocator          _alloc;
+    std::vector<uint64_t>       _pending_ranges;
+    std::vector<PinnedRanges>   _pinned_ranges;
     std::atomic<uint64_t>       _valid_serial; // newest snapshot marked valid, set by the flush thread
-    uint32_t                    _extent_limit;
-    uint32_t                    _file_extents;
+    uint32_t                    _file_pages;
     uint32_t                    _gc_cursor;
 
     std::deque<ReassignTask>   _reassign_queue;
@@ -291,13 +304,14 @@ private:
     std::string                _load_rejected; // reason the last save file was not used; written before readers exist
 
     // Reader safe accessors.
-    static uint64_t make_ref(uint32_t extent, uint32_t length) noexcept {
-        return ivf::make_posting_ref(extent, length);
+    static uint64_t make_ref(Posting posting) noexcept {
+        return ivf::make_posting_ref(posting.page, posting.size_class, posting.length);
     }
     static Posting decode_ref(uint64_t ref) noexcept {
-        return {ivf::posting_ref_extent(ref), ivf::posting_ref_length(ref)};
+        return {ivf::posting_ref_page(ref), ivf::posting_ref_class(ref), ivf::posting_ref_length(ref)};
     }
-    uint64_t extent_offset(uint32_t extent) const noexcept;
+    static uint64_t range_key(uint32_t page, uint32_t pages) noexcept { return (uint64_t(page) << 32) | pages; }
+    uint64_t page_offset(uint32_t page) const noexcept;
     uint64_t acquire_ref(uint32_t slot) const noexcept;
     void release_ref(uint32_t slot, uint64_t ref) noexcept;
     TypedCells centroid(uint32_t slot) const noexcept;
@@ -309,8 +323,8 @@ private:
     SlotDistances top_slots(const BoundDistanceFunction& df, uint32_t count, uint32_t exclude_a, uint32_t exclude_b,
                             Stats* stats) const;
     void read_posting(Posting posting, std::vector<char>& buf) const;
-    uint32_t lid_at(uint32_t extent, uint32_t index) const noexcept;
-    void set_lids(uint32_t extent, uint32_t first, const char* entries, uint32_t count) noexcept;
+    uint32_t lid_at(uint32_t page, uint32_t index) const noexcept;
+    void set_lids(uint32_t page, uint32_t first, const char* entries, uint32_t count) noexcept;
     std::vector<Neighbor> search_exact(Stats& stats, uint32_t k, const BoundDistanceFunction& df,
                                        const GlobalFilter& filter, const vespalib::Deadline& doom,
                                        double distance_threshold) const;
@@ -328,12 +342,13 @@ private:
 
     // Writer only.
     void open_posting_file();
-    void grow_file(uint64_t new_file_extents);
+    void grow_file(uint64_t new_file_pages);
     void start_new_file();
-    void release_extent(uint32_t extent);
-    void pin_extents_for_save(uint64_t serial_num);
-    void release_pinned_extents();
-    void update_extent_counters() noexcept;
+    void free_range(uint64_t key);
+    void release_range(uint64_t key);
+    void pin_ranges_for_save(uint64_t serial_num);
+    void release_pinned_ranges();
+    void update_page_counters() noexcept;
     ivf::SaveLayout layout() const noexcept;
     ivf::SaveState capture_save_state() const;
     std::string check_save_state(const ivf::SaveState& state) const;
@@ -342,13 +357,13 @@ private:
     void check_cells(TypedCells cells) const;
     void encode_entry(char* dst, uint32_t docid, uint32_t version, TypedCells cells) const noexcept;
     uint32_t bump_version(uint32_t docid);
-    uint32_t allocate_extent();
-    void retire_extent(uint32_t extent);
+    uint32_t allocate_pages(uint32_t pages);
+    void retire_posting(Posting posting);
     uint32_t slots_available() const noexcept;
-    uint32_t create_posting(const char* entries, uint32_t count, TypedCells centroid_cells);
+    uint32_t create_posting(const char* entries, uint32_t count, TypedCells centroid_cells, double headroom);
     void retire_slot(uint32_t slot);
     void drop_entries(uint32_t docid, uint32_t count);
-    uint32_t write_new_extent(const char* entries, uint32_t count);
+    Posting write_new_posting(const char* entries, uint32_t count, double headroom);
     using PreparedSlots = std::vector<std::vector<uint32_t>>;
     ivf::ReplicaRule replica_rule() const noexcept;
     std::vector<uint32_t> select_postings(TypedCells cells) const;
@@ -452,6 +467,9 @@ public:
     std::vector<std::pair<uint64_t, uint64_t>> live_posting_ranges() const;
     // (length, live entries) of every live posting; reads each posting from the file. Writer only; used by the bench.
     std::vector<std::pair<uint32_t, uint32_t>> posting_fill() const;
+    // Empty when live postings, free, pending, pinned and held page ranges exactly cover the pages below the limit
+    // without overlap; else the first problem found. Writer only; used by tests.
+    std::string check_storage() const;
 };
 
 } // namespace search::tensor

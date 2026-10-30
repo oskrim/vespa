@@ -118,6 +118,10 @@ void PageAllocator::reset(std::vector<std::pair<uint32_t, uint32_t>> used) {
     _limit = cursor;
 }
 
+std::vector<std::pair<uint32_t, uint32_t>> PageAllocator::free_list() const {
+    return {_by_page.begin(), _by_page.end()};
+}
+
 const char* PageAllocator::check() const {
     if (_by_page.size() != _by_size.size()) {
         return "the two free indexes differ in size";

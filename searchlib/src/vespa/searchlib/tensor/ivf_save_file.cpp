@@ -157,21 +157,24 @@ void write_layout(HashingWriter& out, const SaveLayout& layout) {
     out.write_value(layout.posting_capacity);
     out.write_value(layout.entry_bytes);
     out.write_value(layout.centroid_bytes);
+    out.write_value(layout.size_classes_per_doubling);
+    out.write_value(layout.min_posting_size);
 }
 
 bool read_layout(CheckingReader& in, SaveLayout& layout) {
     return in.read_value(layout.cell_type) && in.read_value(layout.vector_size) && in.read_value(layout.metric) &&
            in.read_value(layout.posting_capacity) && in.read_value(layout.entry_bytes) &&
-           in.read_value(layout.centroid_bytes);
+           in.read_value(layout.centroid_bytes) && in.read_value(layout.size_classes_per_doubling) &&
+           in.read_value(layout.min_posting_size);
 }
 
 } // namespace
 
 SaveState::SaveState()
-    : layout{0, 0, 0, 0, 0, 0},
+    : layout{0, 0, 0, 0, 0, 0, 0, 0},
       file_id(0),
       slot_limit(0),
-      extent_limit(0),
+      page_limit(0),
       gc_cursor(0),
       max_squared_norm(-1.0),
       counters(),
@@ -195,7 +198,7 @@ void write_save_file(BufferWriter& writer, const SaveState& state, const LidRead
     write_layout(out, state.layout);
     out.write_value(state.file_id);
     out.write_value(state.slot_limit);
-    out.write_value(state.extent_limit);
+    out.write_value(state.page_limit);
     out.write_value(state.gc_cursor);
     out.write_value(uint32_t(state.free_slots.size()));
     out.write_value(uint32_t(state.versions.size()));
@@ -215,7 +218,7 @@ void write_save_file(BufferWriter& writer, const SaveState& state, const LidRead
             continue;
         }
         lids.resize(posting_ref_length(ref));
-        lid_reader(posting_ref_extent(ref), posting_ref_length(ref), lids.data());
+        lid_reader(posting_ref_page(ref), posting_ref_length(ref), lids.data());
         out.write_vector(lids);
     }
     out.finish();
@@ -252,7 +255,7 @@ std::string read_save_file(FastOS_FileInterface& file, SaveState& state) {
     uint32_t rng_bytes = 0;
     uint32_t reserved = 0;
     if (!read_layout(in, state.layout) || !in.read_value(state.file_id) || !in.read_value(state.slot_limit) ||
-        !in.read_value(state.extent_limit) || !in.read_value(state.gc_cursor) || !in.read_value(free_slot_count) ||
+        !in.read_value(state.page_limit) || !in.read_value(state.gc_cursor) || !in.read_value(free_slot_count) ||
         !in.read_value(version_count) || !in.read_value(counter_count) || !in.read_value(rng_bytes) ||
         !in.read_value(reserved) || !in.read_value(state.max_squared_norm))
     {

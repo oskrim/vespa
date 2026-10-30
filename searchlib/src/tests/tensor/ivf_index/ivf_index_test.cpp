@@ -38,6 +38,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iterator>
 #include <limits>
 #include <map>
@@ -1094,6 +1095,10 @@ TEST(IvfConfigTest, knobs_are_parsed_and_bad_values_fall_back_to_defaults) {
                                               {"REPLICA_CANDIDATES", "2"},
                                               {"REBUILD_ON_LOAD", "true"},
                                               {"FLUSH_PINNED_RATIO", "0.5"},
+                                              {"SIZE_CLASSES_PER_DOUBLING", "8"},
+                                              {"MIN_POSTING_SIZE", "0"},
+                                              {"POSTING_HEADROOM", "0.4"},
+                                              {"BULK_HEADROOM", "9"},
                                               {"PREFETCH", "0"}};
     auto                               lookup = [&env](const char* knob) -> const char* {
         auto it = env.find(knob);
@@ -1117,7 +1122,12 @@ TEST(IvfConfigTest, knobs_are_parsed_and_bad_values_fall_back_to_defaults) {
     EXPECT_FALSE(cfg.prefetch);
     EXPECT_DOUBLE_EQ(1.0, def.flush_pinned_ratio);
     EXPECT_DOUBLE_EQ(0.5, cfg.flush_pinned_ratio);
-    EXPECT_EQ(38u, IvfIndexConfig::knob_names().size());
+    EXPECT_EQ(8u, cfg.size_classes_per_doubling);
+    EXPECT_EQ(def.min_posting_size, cfg.min_posting_size) << "0 is out of range";
+    EXPECT_DOUBLE_EQ(0.4, cfg.posting_headroom);
+    EXPECT_DOUBLE_EQ(def.bulk_headroom, cfg.bulk_headroom) << "9 is out of range";
+    EXPECT_EQ(0u, def.size_classes_per_doubling);
+    EXPECT_EQ(42u, IvfIndexConfig::knob_names().size());
 }
 
 TEST_F(IvfIndexTest, two_phase_add_with_prepare_on_other_thread) {
@@ -1279,7 +1289,7 @@ Bytes read_ranges(const std::string& path, const std::vector<std::pair<uint64_t,
     return result;
 }
 
-void expect_same_counters(const IvfIndexStats& a, const IvfIndexStats& b, bool same_extents) {
+void expect_same_counters(const IvfIndexStats& a, const IvfIndexStats& b, bool same_pages) {
     EXPECT_EQ(a.postings, b.postings);
     EXPECT_EQ(a.slot_limit, b.slot_limit);
     EXPECT_EQ(a.entries, b.entries);
@@ -1297,8 +1307,9 @@ void expect_same_counters(const IvfIndexStats& a, const IvfIndexStats& b, bool s
     EXPECT_EQ(a.gc_checks, b.gc_checks);
     EXPECT_EQ(a.gc_compactions, b.gc_compactions);
     EXPECT_EQ(a.merges, b.merges);
-    if (same_extents) {
-        EXPECT_EQ(a.extents, b.extents);
+    EXPECT_EQ(a.growth_copies, b.growth_copies);
+    if (same_pages) {
+        EXPECT_EQ(a.pages, b.pages);
         EXPECT_EQ(a.file_bytes, b.file_bytes);
     }
 }
@@ -1369,7 +1380,22 @@ protected:
 
 IvfPersistenceTest::~IvfPersistenceTest() = default;
 
-TEST_F(IvfPersistenceTest, save_and_load_restore_search_results_and_counters) {
+// Persistence tests that run with fixed-size postings (0) and with 4 size classes per doubling. The variable layout
+// uses a small headroom, so postings change class often.
+class IvfLayoutTest : public IvfPersistenceTest, public ::testing::WithParamInterface<uint32_t> {
+protected:
+    IvfIndexConfig config(uint32_t posting_capacity) const {
+        IvfIndexConfig cfg = IvfPersistenceTest::config(posting_capacity);
+        cfg.size_classes_per_doubling = GetParam();
+        cfg.posting_headroom = 0.1;
+        return cfg;
+    }
+};
+
+INSTANTIATE_TEST_SUITE_P(Layouts, IvfLayoutTest, ::testing::Values(0u, 4u),
+                         [](const auto& layout) { return (layout.param == 0) ? "fixed" : "classes"; });
+
+TEST_P(IvfLayoutTest, save_and_load_restore_search_results_and_counters) {
     constexpr uint32_t dims = 16;
     auto               cfg = config(32);
     make_named_index(CellType::FLOAT, dims, DistanceMetric::Euclidean, cfg, path("p.ivfpostings"));
@@ -1409,7 +1435,7 @@ TEST_F(IvfPersistenceTest, save_and_load_restore_search_results_and_counters) {
     }
 }
 
-TEST_F(IvfPersistenceTest, old_save_plus_replay_gives_the_live_index) {
+TEST_P(IvfLayoutTest, old_save_plus_replay_gives_the_live_index) {
     constexpr uint32_t dims = 16;
     constexpr uint32_t initial = 3000;
     auto               cfg = config(32);
@@ -1447,7 +1473,8 @@ TEST_F(IvfPersistenceTest, old_save_plus_replay_gives_the_live_index) {
     EXPECT_GT(live_stats.compactions + live_stats.gc_compactions,
               saved_stats.compactions + saved_stats.gc_compactions);
     EXPECT_GT(live_stats.merges, saved_stats.merges);
-    EXPECT_GT(live_stats.pinned_extents, 0u);
+    EXPECT_GT(live_stats.pinned_pages, 0u);
+    EXPECT_EQ("", index->check_storage());
     EXPECT_EQ(saved_bytes, read_ranges(posting, saved_ranges)) << "a posting of the old save was overwritten";
     std::vector<Bytes> queries;
     for (uint32_t i = 0; i < 50; ++i) {
@@ -1471,9 +1498,10 @@ TEST_F(IvfPersistenceTest, old_save_plus_replay_gives_the_live_index) {
     }
     EXPECT_EQ(live_results, run_queries(queries, 16));
     expect_same_counters(live_stats, index->get_stats(), false);
+    EXPECT_EQ("", index->check_storage());
 }
 
-TEST_F(IvfPersistenceTest, a_valid_snapshot_frees_the_extents_it_pinned) {
+TEST_P(IvfLayoutTest, a_valid_snapshot_frees_the_pages_it_pinned) {
     constexpr uint32_t dims = 16;
     make_named_index(CellType::FLOAT, dims, DistanceMetric::Euclidean, config(16), path("p.ivfpostings"));
     Generator gen(CellType::FLOAT, dims, 30, 0.5, 43);
@@ -1487,34 +1515,41 @@ TEST_F(IvfPersistenceTest, a_valid_snapshot_frees_the_extents_it_pinned) {
     };
     feed(1000);
     auto     stats = index->get_stats();
-    uint64_t pinned_at_10 = stats.pinned_extents;
+    uint64_t pinned_at_10 = stats.pinned_pages;
     EXPECT_GT(pinned_at_10, 0u);
-    EXPECT_EQ(0u, stats.free_extents);
+    EXPECT_EQ(0u, stats.free_pages);
 
     save_to(path("s10.nnidx"), 10);
     feed(1000);
-    EXPECT_EQ(0u, index->get_stats().free_extents) << "snapshot 10 is saved but not valid yet";
-    uint64_t pinned_before_valid = index->get_stats().pinned_extents;
+    stats = index->get_stats();
+    EXPECT_EQ(0u, stats.free_pages) << "snapshot 10 is saved but not valid yet";
+    uint64_t pinned_before_valid = stats.pinned_pages;
+    uint64_t pages_before_valid = stats.pages;
+    // Released pages either become free ranges or, at the end of the file, lower the page limit.
+    auto released = [&pages_before_valid](const IvfIndexStats& now) {
+        return now.free_pages + (pages_before_valid - now.pages);
+    };
 
     index->on_snapshot_valid(10);
-    EXPECT_EQ(0u, index->get_stats().free_extents) << "the writer frees pinned extents at its next commit";
+    EXPECT_EQ(0u, released(index->get_stats())) << "the writer frees pinned pages at its next commit";
     commit();
     stats = index->get_stats();
-    EXPECT_EQ(pinned_at_10, stats.free_extents) << "snapshot 10 never references what it pinned";
-    EXPECT_EQ(pinned_before_valid - pinned_at_10, stats.pinned_extents);
+    EXPECT_EQ(pinned_at_10, released(stats)) << "snapshot 10 never references what it pinned";
+    EXPECT_EQ(pinned_before_valid - pinned_at_10, stats.pinned_pages);
 
     save_to(path("s20.nnidx"), 20);
-    uint64_t pinned_at_20 = index->get_stats().pinned_extents;
+    uint64_t pinned_at_20 = index->get_stats().pinned_pages;
     EXPECT_GT(pinned_at_20, 0u);
     save_to(path("s30.nnidx"), 30);
     index->on_snapshot_valid(20);
     commit();
     stats = index->get_stats();
-    EXPECT_EQ(pinned_at_10 + pinned_at_20, stats.free_extents);
-    EXPECT_EQ(0u, stats.pinned_extents) << "snapshot 30 pinned nothing, since nothing was freed after 20";
+    EXPECT_EQ(pinned_at_10 + pinned_at_20, released(stats));
+    EXPECT_EQ(0u, stats.pinned_pages) << "snapshot 30 pinned nothing, since nothing was freed after 20";
+    EXPECT_EQ("", index->check_storage());
 }
 
-TEST_F(IvfPersistenceTest, reusing_extents_released_at_a_valid_snapshot_keeps_it_loadable) {
+TEST_P(IvfLayoutTest, reusing_pages_released_at_a_valid_snapshot_keeps_it_loadable) {
     constexpr uint32_t dims = 16;
     constexpr uint32_t initial = 3000;
     auto               cfg = config(32);
@@ -1548,11 +1583,16 @@ TEST_F(IvfPersistenceTest, reusing_extents_released_at_a_valid_snapshot_keeps_it
     for (uint32_t docid = 0; docid < vectors->docid_limit(); ++docid) {
         saved_docs.push_back(vectors->has(docid) ? vectors->raw(docid) : Bytes());
     }
-    auto saved_ranges = index->live_posting_ranges();
-    auto saved_bytes = read_ranges(posting, saved_ranges);
+    auto     saved_ranges = index->live_posting_ranges();
+    auto     saved_bytes = read_ranges(posting, saved_ranges);
+    uint64_t pages_before_release = index->get_stats().pages;
+    // Pages that can be handed out again: free ranges plus the pages between the limit and the old limit.
+    auto reusable = [&pages_before_release](const IvfIndexStats& now) {
+        return now.free_pages + (pages_before_release - std::min<uint64_t>(pages_before_release, now.pages));
+    };
     index->on_snapshot_valid(20);
     commit();
-    uint64_t released = index->get_stats().free_extents;
+    uint64_t released = reusable(index->get_stats());
     EXPECT_GT(released, 0u);
 
     // Snapshot 30 is saved but never valid: what it pins is still referenced by snapshot 20.
@@ -1561,7 +1601,8 @@ TEST_F(IvfPersistenceTest, reusing_extents_released_at_a_valid_snapshot_keeps_it
     auto more = run(2000);
     ops.insert(ops.end(), more.begin(), more.end());
     auto live_stats = index->get_stats();
-    EXPECT_LT(live_stats.free_extents, released) << "the released extents were reused";
+    EXPECT_LT(reusable(live_stats), released) << "the released pages were reused";
+    EXPECT_EQ("", index->check_storage());
     EXPECT_EQ(saved_bytes, read_ranges(posting, saved_ranges)) << "a posting of the valid snapshot was overwritten";
     std::vector<Bytes> queries;
     for (uint32_t i = 0; i < 50; ++i) {
@@ -1602,7 +1643,6 @@ TEST_F(IvfPersistenceTest, flush_disk_gain_appears_only_past_the_pinned_ratio) {
     commit();
     EXPECT_EQ(0u, index->flush_disk_gain()) << "a bulk build frees nothing";
 
-    uint64_t extent_bytes = uint64_t(cfg.posting_capacity) * index->entry_bytes();
     bool     saw_below = false;
     bool     saw_above = false;
     uint32_t next_docid = initial + 1;
@@ -1614,7 +1654,7 @@ TEST_F(IvfPersistenceTest, flush_disk_gain_appears_only_past_the_pinned_ratio) {
             apply(op);
         }
         auto     stats = index->get_stats();
-        uint64_t pinned = stats.pinned_extents * extent_bytes;
+        uint64_t pinned = stats.pinned_pages * ivf::page_bytes;
         uint64_t live = stats.live_entries * index->entry_bytes();
         if (pinned > 0 && pinned < live) {
             EXPECT_EQ(0u, index->flush_disk_gain()) << "pinned " << pinned << " < live " << live;
@@ -1630,7 +1670,7 @@ TEST_F(IvfPersistenceTest, flush_disk_gain_appears_only_past_the_pinned_ratio) {
     save_to(path("s10.nnidx"), 10);
     index->on_snapshot_valid(10);
     commit();
-    EXPECT_EQ(0u, index->get_stats().pinned_extents);
+    EXPECT_EQ(0u, index->get_stats().pinned_pages);
     EXPECT_EQ(0u, index->flush_disk_gain()) << "a valid snapshot frees what the flush pinned";
 }
 
@@ -1646,11 +1686,12 @@ TEST_F(IvfPersistenceTest, flush_disk_gain_is_off_at_pinned_ratio_zero) {
     for (const auto& op : heavy_mutations(gen, 501, 500, 3000)) {
         apply(op);
     }
-    EXPECT_GT(index->get_stats().pinned_extents * uint64_t(cfg.posting_capacity), index->get_stats().live_entries);
+    EXPECT_GT(index->get_stats().pinned_pages * ivf::page_bytes,
+              index->get_stats().live_entries * index->entry_bytes());
     EXPECT_EQ(0u, index->flush_disk_gain());
 }
 
-TEST_F(IvfPersistenceTest, saves_that_never_become_valid_keep_the_old_snapshot_loadable) {
+TEST_P(IvfLayoutTest, saves_that_never_become_valid_keep_the_old_snapshot_loadable) {
     constexpr uint32_t dims = 16;
     constexpr uint32_t initial = 3000;
     auto               cfg = config(32);
@@ -1749,6 +1790,54 @@ TEST_F(IvfPersistenceTest, unusable_save_files_are_rejected_and_leave_the_index_
     auto rebuild = cfg;
     rebuild.rebuild_on_load = true;
     expect_rejected(rebuild, good, "rebuild-on-load", "rebuild-on-load");
+    auto classes = cfg;
+    classes.size_classes_per_doubling = 4;
+    expect_rejected(classes, good, "other size classes", "size classes");
+
+    // A save file with valid framing and checksum but bad posting references.
+    auto edited = [&](const std::function<void(ivf::SaveState&)>& edit) {
+        FastOS_File file(path("good.nnidx").c_str());
+        EXPECT_TRUE(file.OpenReadOnly());
+        ivf::SaveState state;
+        EXPECT_EQ("", ivf::read_save_file(file, state));
+        edit(state);
+        size_t         next_lid = 0;
+        ivf::LidReader lid_reader = [&state, &next_lid](uint32_t, uint32_t length, uint32_t* lids) noexcept {
+            for (uint32_t i = 0; i < length; ++i, ++next_lid) {
+                lids[i] = (next_lid < state.lids.size()) ? state.lids[next_lid] : 0;
+            }
+        };
+        search::test::VectorBufferWriter writer;
+        ivf::write_save_file(writer, state, lid_reader);
+        return writer.output;
+    };
+    auto live_slots = [](const ivf::SaveState& state) {
+        std::vector<uint32_t> slots;
+        for (uint32_t slot = 0; slot < state.refs.size(); ++slot) {
+            if (state.refs[slot] != 0) {
+                slots.push_back(slot);
+            }
+        }
+        return slots;
+    };
+    expect_rejected(cfg, edited([&](ivf::SaveState& state) {
+                        uint64_t& ref = state.refs[live_slots(state)[0]];
+                        ref = ivf::make_posting_ref(ivf::posting_ref_page(ref), 254, ivf::posting_ref_length(ref));
+                    }),
+                    "class out of range", "bad posting reference");
+    expect_rejected(cfg, edited([&](ivf::SaveState& state) {
+                        uint64_t& ref = state.refs[live_slots(state)[0]];
+                        ref = ivf::make_posting_ref(ivf::posting_ref_page(ref), ivf::posting_ref_class(ref), 33);
+                    }),
+                    "length above the class capacity", "bad posting reference");
+    expect_rejected(cfg, edited([&](ivf::SaveState& state) {
+                        auto      slots = live_slots(state);
+                        uint64_t  first = state.refs[slots[0]];
+                        uint64_t& second = state.refs[slots[1]];
+                        second = ivf::make_posting_ref(ivf::posting_ref_page(first), ivf::posting_ref_class(second),
+                                                       ivf::posting_ref_length(second));
+                    }),
+                    "overlapping postings", "overlap");
 
     reopen_index(DistanceMetric::Euclidean, cfg, posting);
     load_from(path("good.nnidx"));
@@ -1766,6 +1855,176 @@ TEST_F(IvfPersistenceTest, unusable_save_files_are_rejected_and_leave_the_index_
     commit();
     EXPECT_GT(index->get_stats().postings, 0u);
     expect_rejected(cfg, good, "posting file rewritten", "rewritten");
+}
+
+TEST_F(IvfPersistenceTest, variable_postings_start_on_pages_and_storage_stays_consistent) {
+    constexpr uint32_t dims = 64; // 264-byte entries: 15 per page, so ranges rarely end on a page
+    auto               cfg = config(64);
+    cfg.size_classes_per_doubling = 4;
+    cfg.posting_headroom = 0.1;
+    cfg.gc_steps = 64;
+    cfg.merge_fraction = 0.25;
+    make_named_index(CellType::FLOAT, dims, DistanceMetric::Euclidean, cfg, path("p.ivfpostings"));
+    Generator gen(CellType::FLOAT, dims, 40, 0.5, 71);
+    for (uint32_t docid = 1; docid <= 3000; ++docid) {
+        add(docid, gen.sample());
+    }
+    commit();
+    for (const auto& op : heavy_mutations(gen, 3001, 3000, 6000)) {
+        apply(op);
+    }
+    auto stats = index->get_stats();
+    EXPECT_GT(stats.growth_copies, 0u);
+    EXPECT_GT(stats.merges, 0u);
+    EXPECT_EQ(0u, stats.dropped_entries);
+    EXPECT_EQ("", index->check_storage());
+    for (const auto& [offset, bytes] : index->live_posting_ranges()) {
+        EXPECT_EQ(0u, offset % ivf::page_bytes) << "posting at byte " << offset;
+    }
+    save_to(path("s10.nnidx"), 10);
+    index->on_snapshot_valid(10);
+    commit();
+    EXPECT_EQ("", index->check_storage()) << "after the pinned pages are freed";
+    for (uint32_t docid = 1; docid < vectors->docid_limit(); docid += 13) {
+        if (!vectors->has(docid)) {
+            continue;
+        }
+        NearestNeighborIndex::Stats search_stats;
+        IvfProbeStats               probe_stats;
+        auto result = query(vectors->raw(docid).data(), 1, stats.postings, nullptr, search_stats, probe_stats);
+        ASSERT_EQ(1u, result.size()) << "docid " << docid;
+        EXPECT_EQ(0.0, result[0].distance) << "docid " << docid;
+    }
+}
+
+TEST_F(IvfPersistenceTest, a_posting_grows_and_shrinks_through_the_size_classes) {
+    constexpr uint32_t dims = 256; // 1032-byte entries: 3.97 per page
+    auto               cfg = config(64);
+    cfg.size_classes_per_doubling = 4;
+    cfg.posting_headroom = 0.0;
+    cfg.gc_steps = 65536;
+    make_index(CellType::FLOAT, dims, DistanceMetric::Euclidean, cfg);
+    ivf::SizeClasses classes(index->entry_bytes(), 64, cfg.min_posting_size, 4);
+    Generator        gen(CellType::FLOAT, dims, 1, 0.0, 73);
+    Bytes            same = gen.sample();
+    uint32_t         expected_copies = 0;
+    uint32_t         capacity = classes.capacity(classes.fit(1, 0.0));
+    for (uint32_t docid = 1; docid <= 40; ++docid) {
+        if (docid > 1 && docid - 1 == capacity) {
+            ++expected_copies;
+            capacity = classes.capacity(classes.fit(docid, 0.0));
+        }
+        add(docid, same);
+    }
+    commit();
+    auto stats = index->get_stats();
+    ASSERT_EQ(1u, stats.postings) << "40 equal vectors stay in one posting below the split size";
+    EXPECT_EQ(40u, stats.entries);
+    EXPECT_GT(expected_copies, 3u);
+    EXPECT_EQ(expected_copies, stats.growth_copies);
+    EXPECT_EQ(0u, stats.compactions);
+    EXPECT_EQ(classes.pages(classes.fit(40, 0.0)), stats.pages - stats.free_pages)
+        << "only the last class is allocated once the old ranges are reclaimed";
+    EXPECT_EQ("", index->check_storage());
+
+    for (uint32_t docid = 1; docid <= 35; ++docid) {
+        remove(docid);
+    }
+    index->inc_generation();
+    index->consider_compact(vespalib::datastore::CompactionStrategy());
+    commit();
+    stats = index->get_stats();
+    EXPECT_EQ(1u, stats.gc_compactions);
+    EXPECT_EQ(5u, stats.entries);
+    EXPECT_EQ(classes.pages(classes.fit(5, 0.0)), stats.pages - stats.free_pages) << "the rewrite shrank the class";
+    EXPECT_EQ("", index->check_storage());
+    for (uint32_t docid = 36; docid <= 40; ++docid) {
+        EXPECT_TRUE(contains(query(same, 10), docid)) << docid;
+    }
+}
+
+TEST_F(IvfPersistenceTest, bulk_build_fits_each_posting_and_leaves_no_free_ranges) {
+    constexpr uint32_t dims = 256;
+    auto               cfg = config(64);
+    cfg.size_classes_per_doubling = 4;
+    cfg.bulk_headroom = 0.33;
+    make_index(CellType::FLOAT, dims, DistanceMetric::Euclidean, cfg);
+    Generator             gen(CellType::FLOAT, dims, 30, 0.5, 79);
+    std::vector<uint32_t> lids;
+    for (uint32_t docid = 1; docid <= 3000; ++docid) {
+        vectors->set(docid, gen.sample());
+        lids.push_back(docid);
+    }
+    ASSERT_TRUE(index->bulk_build(lids, nullptr));
+    commit();
+    ivf::SizeClasses classes(index->entry_bytes(), 64, cfg.min_posting_size, 4);
+    uint64_t         pages = 0;
+    for (const auto& [length, live] : index->posting_fill()) {
+        EXPECT_EQ(length, live);
+        pages += classes.pages(classes.fit(length, 0.33));
+    }
+    auto stats = index->get_stats();
+    EXPECT_EQ(pages, stats.pages);
+    EXPECT_EQ(0u, stats.free_pages);
+    EXPECT_EQ(0u, stats.free_ranges);
+    EXPECT_EQ("", index->check_storage());
+}
+
+TEST_F(IvfPersistenceTest, size_classes_pack_postings_tighter_than_fixed_extents_at_equal_recall) {
+    constexpr uint32_t dims = 256;
+    struct Result {
+        double allocated_per_live;
+        double recall;
+    };
+    auto run = [&](uint32_t per_doubling) {
+        auto cfg = config(64);
+        cfg.size_classes_per_doubling = per_doubling;
+        cfg.gc_steps = 64;
+        make_index(CellType::FLOAT, dims, DistanceMetric::Euclidean, cfg);
+        Generator gen(CellType::FLOAT, dims, 60, 0.5, 83);
+        for (uint32_t docid = 1; docid <= 4000; ++docid) {
+            add(docid, gen.sample());
+        }
+        for (const auto& op : heavy_mutations(gen, 4001, 4000, 4000)) {
+            apply(op);
+        }
+        std::vector<Bytes> queries;
+        for (uint32_t i = 0; i < 100; ++i) {
+            queries.push_back(gen.sample());
+        }
+        auto rows = recall_table(queries, 10, {8}, nullptr);
+        auto stats = index->get_stats();
+        EXPECT_EQ("", index->check_storage());
+        return Result{double((stats.pages - stats.free_pages) * ivf::page_bytes) /
+                          double(stats.live_entries * index->entry_bytes()),
+                      rows[0].recall};
+    };
+    Result fixed = run(0);
+    Result variable = run(4);
+    fprintf(stderr, "allocated / live: fixed %.3f, classes %.3f; recall@10 np8: fixed %.4f, classes %.4f\n",
+            fixed.allocated_per_live, variable.allocated_per_live, fixed.recall, variable.recall);
+    EXPECT_LT(variable.allocated_per_live, 0.8 * fixed.allocated_per_live);
+    EXPECT_LT(variable.allocated_per_live, 1.75);
+    EXPECT_NEAR(fixed.recall, variable.recall, 0.03);
+}
+
+TEST_F(IvfPersistenceTest, fixed_layout_has_one_class_and_never_copies_to_grow) {
+    constexpr uint32_t dims = 64;
+    auto               cfg = config(32);
+    cfg.size_classes_per_doubling = 0;
+    make_index(CellType::FLOAT, dims, DistanceMetric::Euclidean, cfg);
+    Generator gen(CellType::FLOAT, dims, 40, 0.5, 89);
+    for (uint32_t docid = 1; docid <= 2000; ++docid) {
+        add(docid, gen.sample());
+    }
+    for (const auto& op : heavy_mutations(gen, 2001, 2000, 3000)) {
+        apply(op);
+    }
+    auto             stats = index->get_stats();
+    ivf::SizeClasses classes(index->entry_bytes(), 32, cfg.min_posting_size, 0);
+    EXPECT_EQ(0u, stats.growth_copies);
+    EXPECT_EQ(stats.postings * classes.pages(0), stats.pages - stats.free_pages);
+    EXPECT_EQ("", index->check_storage());
 }
 
 namespace {

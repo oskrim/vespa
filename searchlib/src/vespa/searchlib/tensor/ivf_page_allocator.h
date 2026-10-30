@@ -58,6 +58,8 @@ public:
     uint32_t limit() const noexcept { return _limit; }
     uint64_t free_pages() const noexcept { return _free_pages; }
     size_t free_ranges() const noexcept { return _by_page.size(); }
+    // (first page, pages) of every free range, in page order.
+    std::vector<std::pair<uint32_t, uint32_t>> free_list() const;
     // Empty when the invariants hold, else the first one broken. Linear time; for tests.
     const char* check() const;
 
