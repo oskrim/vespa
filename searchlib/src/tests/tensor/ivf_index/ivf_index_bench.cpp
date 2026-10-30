@@ -687,10 +687,10 @@ void print_ivf_stats(const char* label, const IvfIndex& index) {
     auto s = index.get_stats();
     auto mu = index.memory_usage();
     printf("%s: postings=%lu entries=%lu live=%lu splits=%lu compactions=%lu reassign_checks=%lu moves=%lu "
-           "dropped_steps=%lu dropped_entries=%lu prepared_retired=%lu extents=%lu free_extents=%lu file_bytes=%lu "
+           "dropped_steps=%lu dropped_entries=%lu prepared_retired=%lu pages=%lu free_pages=%lu file_bytes=%lu "
            "bytes_written=%lu ram_allocated=%zu ram_used=%zu\n",
            label, s.postings, s.entries, s.live_entries, s.splits, s.compactions, s.reassign_checks, s.moves,
-           s.dropped_steps, s.dropped_entries, s.prepared_retired, s.extents, s.free_extents, s.file_bytes,
+           s.dropped_steps, s.dropped_entries, s.prepared_retired, s.pages, s.free_pages, s.file_bytes,
            s.bytes_written, mu.allocatedBytes(), mu.usedBytes());
 }
 
